@@ -1,9 +1,3 @@
-Of course. I've restructured and refined the `README.md` to create a more logical flow, integrating the project deliverables and clarifying the overall architecture and usage. The new structure guides the user from the high-level objective down to the technical details and operational commands.
-
-Here is the revised and completed `README.md` file:
-
------
-
 # Options Bot 🤖
 
 An automated financial research pipeline that synthesizes data from multiple sources (YouTube, News, Reddit, FRED, SEC filings, and market data) to generate daily paper-trading options ideas. The system uses a Qdrant vector database for knowledge management and a locally-hosted LLM (via Ollama) within a multi-agent framework to produce structured analysis reports.
