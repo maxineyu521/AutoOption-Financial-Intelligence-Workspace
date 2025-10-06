@@ -115,7 +115,7 @@ docker exec -it financial_agent_app_prod python src/tools/create_options_expert.
 This repository fulfills the following project requirements:
 
   * **Full Codebase & Containerization**: The complete, containerized application is available in this private GitHub repository.
-  * **Model Selection Memo**: The rationale for choosing the default LLM, including comparisons and trade-offs, is documented in `PRODUCTION_OPS_NOTES.md`.
+  * **Model Selection Memo**: The rationale for choosing the default LLM, including comparisons and trade-offs, is documented in `model_selection_memo.md`.
   * **Example Run**: An example of the system's inputs, outputs, and logs is also included in `PRODUCTION_OPS_NOTES.md`.
   * **Additional Signal Sources**: A note documenting other high-signal data sources that could be integrated is available in `PRODUCTION_OPS_NOTES.md`.
   * **Compliance Note**: A section covering API usage terms, scraping restrictions, and disclosure rules is detailed in `PRODUCTION_OPS_NOTES.md`.
