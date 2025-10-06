@@ -1,0 +1,132 @@
+# options_bot Architecture Overview
+
+## Entry Point
+- `src/main.py`
+  - CLI bootstrap and environment loading (`.env`).
+  - Constructs `AgentWorkflow` (connects to Qdrant and Ollama).
+  - Runs `run_data_pipeline(agent_workflow)` to collect multi-source data and store it.
+  - Interactive mode: user question → `agent_workflow.run()` → structured report output.
+
+## Orchestration Core
+- `src/agent_system.py`
+  - Class `AgentWorkflow`:
+    - `_ensure_collection_exists()`: ensure Qdrant collection exists (dimension based on embedding size).
+    - `embed_and_store(documents)`: vectorize documents and upsert into Qdrant.
+    - `_retrieve_context(query, top_k)`: retrieve relevant context from Qdrant.
+    - `_run_agent(agent_name, prompt)`: call sub-agents via Ollama.
+    - `run(user_query)`: retrieve context + inject financial background (`financial_config`) + chain four agents (Analyst → Fact Checker → Adversarial Critic → Synthesizer) → produce `FinalReport` JSON.
+  - Dependencies:
+    - `data_models.FinalReport`
+    - `financial_config.get_financial_context`, `get_role_based_prompt`
+    - Qdrant / Ollama / fastembed
+
+## Data Models
+- `src/data_models.py`
+  - `FinalReport` (Pydantic): defines the structured output (`summary`, `key_findings`, `counter_arguments`, `confidence_score`, `uncertainty_notes`).
+
+## Financial Domain Context
+- `src/financial_config.py`
+  - Financial terminology, analysis frameworks, regulations, professional role prompts.
+  - `get_financial_context(query)`: assemble domain context by keywords.
+  - `get_role_based_prompt(role)`: return role prompts.
+
+## Data Collection Components (invoked by `main.run_data_pipeline`)
+- `src/market_data_scraper.py`
+  - `scrape_market_data(tickers)`: market data → documents.
+- `src/fred_scraper.py`
+  - `scrape_fred_data(series_ids)`: FRED macro data → documents.
+- `src/news_scraper.py`
+  - `scrape_news_data(keywords, limit)`: news → documents.
+- `src/reddit_scraper.py`
+  - `scrape_reddit_data(subreddits, keywords, limit_per_subreddit)`: Reddit posts → documents.
+- `src/youtube_scraper.py`
+  - `load_channel_ids_from_file()`: read channel IDs (`src/tools/Youtube_channel_ID`).
+  - `get_channel_videos(channel_id, max_results)`: list videos via Data API (or RSS fallback) and include description.
+  - `get_transcript_with_fallback(video_id)` / `try_alternative_transcript_methods(video_id)`: `list_transcripts` + multilingual/translation + backoff.
+  - `process_transcript_data(...)`: cleaning, keyword and sentiment analysis, document assembly.
+  - `scrape_youtube_data(...)`:
+    - Prefilters by caption flag, skips live/upcoming
+    - Saves fallback doc (title + cleaned description + URL) when no transcript declared or fetch fails
+    - Aggregates all documents
+- `src/sec_scraper.py`
+  - `get_sec_filings()`: SEC insider trading/filings → documents.
+
+## Utility Scripts
+- `src/tools/fetch_youtube_channels.py` / `src/tools/update_compose_channels.py`
+  - Search/update candidate financial channels.
+- `src/tools/generate_production_report.py` / `src/tools/create_options_expert.py`
+  - Production reports / options expert model creation (may call `yfinance_client`).
+  
+- `src/yahoo_finance_scraper.py`
+  - Lists Yahoo Finance videos via RSS
+  - Fetches transcripts via `youtube_transcript_api` (same caption rules as YouTube)
+  - Saves fallback doc (title + cleaned description + URL) when no transcript or too short
+
+## External Clients & Runtime
+- `src/yfinance_client.py`: yfinance and API helpers (mainly for tools).
+- `docker-compose.prod.yml`: production stack (current). Services `qdrant_vdb`, `ollama_llm`; container names `*_prod`; `OLLAMA_MODEL=options-expert`.
+- `modelfile`: Ollama model configuration.
+- `requirements.txt`: Python dependencies.
+
+## High-Level Flow
+1. Run: `python -m src.main` (or `python src/main.py`).
+2. `main.py` → construct `AgentWorkflow`.
+3. `run_data_pipeline(agent_workflow)` calls in order:
+   - `market_data_scraper.scrape_market_data`
+   - `fred_scraper.scrape_fred_data`
+   - `news_scraper.scrape_news_data`
+   - `reddit_scraper.scrape_reddit_data`
+   - `youtube_scraper.scrape_youtube_data`
+   - `yahoo_finance_scraper.scrape_yahoo_finance_transcripts`
+   - `sec_scraper.get_sec_filings`
+4. `agent_workflow.embed_and_store(all_documents)` persists into Qdrant.
+5. Interactive: `agent_workflow.run(user_query)` → retrieval + financial context + multi-agent reasoning → `FinalReport`.
+
+---
+
+## LLM Fine-Tuning and the Options Expert Model
+
+This project creates a specialized options/futures-options expert model `options-expert` by generating a Modelfile and using Ollama's create API.
+
+### Files & Services
+- `src/tools/create_options_expert.py`
+  - Generates the Modelfile, fetches training data from Qdrant, calls Ollama to create the model, then smoke-tests it.
+  - Depends on:
+    - Qdrant (collection `financial_signals`)
+    - Ollama (port 11434)
+- `modelfile`
+  - Generated by `create_modelfile()` within `create_options_expert.py`.
+  - Encodes system prompt (options expertise) and inference parameters (temperature, top_p, num_ctx, etc.).
+- `docker-compose.prod.yml`
+  - Sets `OLLAMA_MODEL=options-expert` in the app service for runtime usage.
+
+### Training Data Source
+- During the data pipeline, `AgentWorkflow.embed_and_store()` writes multi-source documents into Qdrant `financial_signals`.
+- `fetch_training_data()` in `create_options_expert.py` reads payloads from that collection to form training material.
+
+### Model Creation Flow (via script)
+1. Read training data from Qdrant.
+2. Generate `modelfile` at repo root.
+3. Call Ollama create API (`/api/create`) with name `options-expert`.
+4. Verify with `/api/generate`.
+
+### Common Commands (prod stack)
+- Create model inside the app container (script uses Ollama API):
+```bash
+docker exec -it financial_agent_app_prod python src/tools/create_options_expert.py
+```
+
+- Manual Modelfile-based creation inside Ollama container (alternative):
+```bash
+# Generate Modelfile if not already present
+docker exec financial_agent_app_prod python src/tools/create_options_expert.py
+# Copy Modelfile to host, then into Ollama container
+docker cp financial_agent_app_prod:/app/modelfile ./modelfile
+docker cp ./modelfile ollama_llm_prod:/modelfile
+# Create and test in Ollama container
+docker exec -it ollama_llm_prod ollama create options-expert -f /modelfile
+docker exec -it ollama_llm_prod ollama run options-expert
+```
+
+### Notes
+- You are currently running the prod stack (container names `*_prod`). To switch to a dev stack, bring down prod with `docker compose -f docker-compose.prod.yml down`, start the dev compose, and align hostnames/model names in scripts and env vars.
