@@ -1,0 +1,29 @@
+﻿
+fastembed
+qdrant-client==1.9.0
+ollama
+python-dotenv
+pydantic  
+
+
+praw                   # Reddit API
+youtube-transcript-api>=0.6.0  # YouTube 
+google-api-python-client>=2.0.0  # YouTube API
+google-auth>=2.0.0     # Google authentication
+google-auth-oauthlib>=0.5.0  # OAuth2 for Google APIs
+google-auth-httplib2>=0.1.0  # HTTP library for Google APIs
+oauth2client<4.0.0     
+sec-api                # SEC Filings API
+yfinance               # Yahoo Finance for market data
+fredapi                # FRED API for economic data
+newsapi-python         # NewsAPI for news articles
+
+
+rich                   
+numpy
+scipy
+requests               # HTTP requests
+nltk                   
+
+
+

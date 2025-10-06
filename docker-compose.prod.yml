@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: financial_agent_app_prod
+    stdin_open: true
+    tty: true
+    environment:
+      - QDRANT_HOST=qdrant_vdb
+      - OLLAMA_HOST=http://ollama_llm:11434
+      - OLLAMA_MODEL=options-expert
+      - YOUTUBE_API_KEY=AIzaSyD1hA6jbyKxj6x3m96FM87Dci_MBttsHBY
+      - YOUTUBE_CHANNEL_IDS=UCxiCqC3t-v4sM-i7-B7L_yg,UCK7tptUDHh-RYDsdxO1-5QQ,UCGy7SkBjcIAgTiwkXEtPnYg,UCUvvj5lwue7PspotMDjk5UA,UCn3rGS5AtyYJ1uNl4gS8qDg,UCb-yR6Q_E-qL8zF2NnE0UBA,UCT3EznhW_CNFcfOlyDNTLLw,UCtqYfJvM_5iH5n_e9R4F9_g,UCXq_QyB5g8F5_sBw-5B8-2Q,UCQ7_GMxQe4_S66w-oX9JvAg,UC0n9yiP-AD2DpuuYCDwlNxQ,UCZRlaA_QK7tE6P6B6L7P-8w,UCYXwqqzEyUOGWmFQc4JjQ_w,UCg3Z29Husv_W8oT61j82GqA,UC2X8F50H6R-4yI726J_z68Q,UC26jQ450yWz838N0H7T5Dkg,UCxX8R7nI93o2I93sYJg3JGA,UCU6X4B36jQxL1m9kKxK3x6A,UCX_R0gXv_W-hEw7fG7dJ0qQ,UCx6d_wY9eGzX7tFw8dY1l7g
+      - YOUTUBE_VIDEOS_PER_CHANNEL=3
+      - FRED_API_KEY=${FRED_API_KEY}
+      - NEWS_API_KEY=${NEWS_API_KEY}
+      - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID}
+      - REDDIT_CLIENT_SECRET=${REDDIT_CLIENT_SECRET}
+      - REDDIT_USER_AGENT=${REDDIT_USER_AGENT}
+      - SEC_API_KEY=${SEC_API_KEY}
+    volumes:
+      - ./src:/app/src
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+    depends_on:
+      - qdrant_vdb
+      - ollama_llm
+    networks:
+      - financial_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  qdrant_vdb:
+    image: qdrant/qdrant:v1.9.2
+    container_name: qdrant_vdb_prod
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - financial_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 6333 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  ollama_llm:
+    image: ollama/ollama:latest
+    container_name: ollama_llm_prod
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - financial_net
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 11434 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+
+volumes:
+  qdrant_data:
+  ollama_data:
+
+networks:
+  financial_net:
+    driver: bridge

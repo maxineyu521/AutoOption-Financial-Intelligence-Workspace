@@ -1,0 +1,24 @@
+# .dockerignore
+
+# 忽略 Python 虚拟环境
+venv/
+.venv/
+
+# 忽略 Python 缓存文件
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 忽略 IDE 和编辑器配置文件
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# 忽略 Git 目录
+.git/
+.gitignore
+
+# 忽略 Docker 本地缓存
+.docker/
