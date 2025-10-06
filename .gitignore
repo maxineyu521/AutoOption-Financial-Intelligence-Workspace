@@ -1,0 +1,30 @@
+# Python cache and virtual environments
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Large model files
+# Assuming Ollama stores models in a default or custom directory
+.ollama/
+models/
+options-expert
+
+# Environment variables and secrets
+.env
+*.env
+
+# Data and Logs
+data/
+logs/
+*.log
+Youtube_channel_ID
+
+# IDE and OS-specific files
+.idea/
+.vscode/
+.DS_Store
+
+# Qdrant data and monitoring folders
+qdrant_storage/
+monitoring/
