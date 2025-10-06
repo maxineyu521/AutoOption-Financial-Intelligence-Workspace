@@ -226,7 +226,7 @@ def clean_transcript_text(text: str) -> str:
 
 def extract_financial_keywords(text: str) -> Dict[str, int]:
     """
-    从文本中提取金融关键词并计算频率
+    keywords
     """
     if not text:
         return {}
@@ -235,7 +235,7 @@ def extract_financial_keywords(text: str) -> Dict[str, int]:
     keyword_counts = {}
     
     for keyword in FINANCIAL_KEYWORDS:
-        # 计算关键词出现次数（支持部分匹配）
+        # Count keywords Frequency
         count = len(re.findall(r'\b' + re.escape(keyword.lower()) + r'\b', text_lower))
         if count > 0:
             keyword_counts[keyword] = count
@@ -511,7 +511,7 @@ def analyze_channel_topics(documents: List[Dict[str, Any]]) -> Dict[str, Any]:
         if "financial_relevance" in metadata:
             total_financial_relevance += metadata["financial_relevance"]
     
-    # 计算平均金融相关性
+    # calculate financial_relevance
     avg_financial_relevance = total_financial_relevance / len(documents) if documents else 0
     
     return {
