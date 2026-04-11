@@ -1,43 +1,64 @@
-# Macro & Market Data Pipeline Documentation
+# Macro and market data — `macro_data_pipeline.py`
+
+The pipeline bridges the gap between high-frequency market data (Stock indices, Volatility) and low-frequency economic indicators (Inflation, Interest rates).
 
 This documentation details the `macro_data_pipeline.py` script, which automates the collection of global market data and macroeconomic indicators for financial analysis and RAG (Retrieval-Augmented Generation) applications.
 
-## 🎯 Project Purpose
-The pipeline bridges the gap between high-frequency market data (Stock indices, Volatility) and low-frequency economic indicators (Inflation, Interest rates). By structuring this data into LLM-friendly Markdown and machine-readable Parquet formats, it enables AI agents to ground their financial reasoning in current economic reality.
+---
+
+## 1. What this source provides (for downstream analysis)
+
+- **Market snapshot:** Latest levels and **day-over-day % change** for major indices and ETFs (^GSPC, ^IXIC, ^VIX, DX-Y.NYB, GLD, SLV) to anchor regime, risk-on/off, and precious-metals proxies.
+- **Macro snapshot:** Latest **FRED** monthly series (Fed funds, CPI, unemployment) with **MoM** and **YoY** % changes for inflation and labor momentum.
+- **Dual delivery:** One dated Parquet table for quant work; Markdown brief for RAG and a stable `latest_macro_context.md` for agents.
 
 ---
 
-## 🔄 Strategy Workflow
-The script executes a multi-source ingestion process:
+## 2. Architecture and strategy workflow
 
-1.  **Environment Setup:** Loads API keys (FRED) and dynamically constructs directory hierarchies for logs and data.
-2.  **Market Data Extraction (YFinance):** Downloads the last 5 days of price action for major indices and commodities to calculate the most recent daily percentage change.
-3.  **Economic Data Extraction (FRED):** Queries the Federal Reserve Economic Data API for key monthly indicators.
-4.  **Statistical Enrichment:** * Calculates **Daily Change %** for market assets.
-    * Calculates **Month-over-Month (MoM)** and **Year-over-Year (YoY)** changes for economic indicators.
-5.  **Dual-Stream Output:** * Generates a **Natural Language Summary** (Markdown) for immediate LLM context.
-    * Generates a **Structured Dataset** (Parquet) for historical analysis and quantitative queries.
+### High-level flow (architecture)
 
----
+1. **Environment setup:** Load API keys (FRED) and build directory hierarchies for logs and data.
+2. **Market data extraction (YFinance):** Download the last 5 days of price action for major indices and commodities; compute the most recent daily percentage change.
+3. **Economic data extraction (FRED):** Query the Federal Reserve Economic Data API for key monthly indicators.
+4. **Statistical enrichment:**
+   - **Daily change %** for market assets.
+   - **Month-over-Month (MoM)** and **Year-over-Year (YoY)** changes for economic indicators.
+5. **Dual-stream output:**
+   - **Natural language summary** (Markdown) for immediate LLM context.
+   - **Structured dataset** (Parquet) for historical analysis and quantitative queries.
 
-## 📥 Input
-* **External APIs:** * `yfinance`: For S&P 500, NASDAQ, VIX, DXY, GLD, and SLV.
-    * `fredapi`: For Federal Funds Rate, CPI (Inflation), and Unemployment Rate.
-* **Environment Variables:** Requires `FRED_API_KEY` stored in a `.env` file.
+### Implementation steps (scraping and assembly)
 
----
-
-## 📤 Output Files
-The script organizes outputs into specific sub-directories:
-
-* **Markdown Contexts:** `Data/Macro_History/Context_Briefs/macro_context_{YYYY-MM-DD}.md` (and a `latest_macro_context.md` copy for easy access).
-* **Structured Data:** `Data/Macro_History/macro_snapshot_{YYYY-MM-DD}.parquet`.
-* **Logs:** `logs/{YYYY-MM-DD}/macro_pipeline.log`.
+1. **Config:** Resolve `Data/`, `logs/`, `Data/Agent_Context/`; load `.env` and require `FRED_API_KEY`.
+2. **Yahoo Finance:** `yf.download` for configured tickers (`period="5d"`, `threads=False`); take last two closes to compute `daily_change_pct`; emit one row per market ticker with `frequency="Daily"`.
+3. **FRED:** For each series ID, take latest point and compute MoM (vs prior month) and YoY (vs 12 months prior); `daily_change_pct` is null for macro rows.
+4. **Merge:** Concatenate all rows; write Markdown report (daily block + macro block); write Parquet; copy full Markdown to `Data/Agent_Context/latest_macro_context.md`.
 
 ---
 
-## 📊 Data Schema & Metadata
-Each record in the pipeline contains the following fields:
+## 3. Pipeline strategy (inputs, outputs, frequency)
+
+| Item | Detail |
+| :--- | :--- |
+| **Inputs** | **Environment:** `FRED_API_KEY` in `.env`. **No local input files.** APIs: Yahoo Finance (`yfinance`), FRED (`fredapi`). |
+| **Outputs** | See table below. |
+| **Update frequency** | **Every trading day** per `collect_data.py` (06:30). Monday–Friday only (scheduler does not exclude US exchange holidays). |
+
+### Output paths
+
+| Artifact | Path |
+| :--- | :--- |
+| Parquet | `Data/2_Silver_Processed/Macro_History/{YYYY-MM-DD}/macro_snapshot_{YYYY-MM-DD}.parquet` |
+| RAG Markdown (dated) | `Data/3_Gold_Semantic/Macro_Narratives/{YYYY-MM-DD}/macro_context_{YYYY-MM-DD}.md` |
+| Agent “latest” copy | `Data/Agent_Context/latest_macro_context.md` |
+| Log | `logs/{YYYY-MM-DD}/macro_pipeline.log` |
+
+---
+
+## 4. Data shapes and metadata
+
+### Parquet schema (`macro_snapshot_{date}.parquet`)
 
 | Field | Description | Type |
 | :--- | :--- | :--- |
@@ -52,11 +73,12 @@ Each record in the pipeline contains the following fields:
 | `mom_change_pct` | Monthly momentum (Macro data only). | Float |
 | `yoy_change_pct` | Annualized growth/inflation (Macro data only). | Float |
 
+**Series coverage (from code):** `^GSPC`, `^IXIC`, `^VIX`, `DX-Y.NYB`, `GLD`, `SLV`; FRED: `FEDFUNDS`, `CPIAUCSL`, `UNRATE`.
+
 ---
 
-## 🛠 Technical Dependencies
-* **yfinance:** Multi-threaded market data retrieval.
-* **fredapi:** Interface for the St. Louis Fed's economic database.
-* **pandas:** Core engine for data manipulation and change-rate calculations.
-* **python-dotenv:** Secure management of API credentials.
-* **pyarrow/fastparquet:** Backend engines for optimized Parquet storage.
+## 5. Dependencies
+
+```bash
+pip install yfinance pandas fredapi python-dotenv pyarrow
+```

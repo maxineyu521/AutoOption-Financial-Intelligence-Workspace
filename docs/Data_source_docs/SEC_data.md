@@ -1,65 +1,97 @@
-# SEC Data Ingestion and Processing Pipeline Documentation
+# SEC data ingestion and processing
 
-This documentation details the SEC data pipeline, comprising `sec_scraper.py` and `sec_processor.py`. This system is designed to automatically ingest, parse, and semantically enrich SEC Form 4 (Insider Trading) and Form 8-K (Current Reports) filings, preparing them for vector database (Qdrant) integration and RAG applications.
+## 1. What this source provides (for downstream analysis)
 
-## 🎯 Project Purpose
-The pipeline transforms raw, complex SEC regulatory filings into structured, actionable insights. By applying expert financial rules to insider trades and utilizing Large Language Models (LLMs) to summarize corporate events, it provides quantitative "tone scores" and summaries suitable for AI-driven financial analysis.
-
----
-
-## 🏗 Architecture & Strategy Workflow
-
-The pipeline operates in a robust, two-phase architecture: **Ingestion (Scraping)** and **Enrichment (Processing)**.
-
-### Phase 1: Ingestion & Parsing (`sec_scraper.py`)
-1. **Target Identification:** Loads target NASDAQ tickers and maps them to SEC CIK (Central Index Key) numbers using a local dictionary to minimize API overhead.
-2. **Resilient Querying:** Queries the SEC EDGAR submissions API for recent Form 4 and Form 8-K filings (past 7 days). Uses an industrial-grade retry decorator with exponential backoff to handle rate limits (HTTP 429) and network jitter.
-3. **Document Retrieval & Parsing:**
-   * **Form 4 (XML):** Extracts reporting owner details, roles, and itemized non-derivative transactions (shares, prices, acquisition/disposition codes, 10b5-1 plan flags).
-   * **Form 8-K (HTML):** Strips unnecessary HTML tags, converts the core text to Markdown, and chunks the document based on SEC "Item" headers.
-4. **Raw Archival:** Saves the parsed structural data into daily JSONL files and generates a statistical summary report.
-
-### Phase 2: Enrichment & LLM Processing (`sec_processor.py`)
-1. **State Management:** Loads a global registry of previously processed accession numbers to ensure idempotency and prevent duplicate vector embeddings.
-2. **Concurrent Execution:** Utilizes a `ThreadPoolExecutor` to process multiple filings simultaneously, significantly reducing the bottleneck caused by LLM inference times.
-3. **Contextual Enrichment:**
-   * **Form 4 Expert Rules:** Applies a rule-based engine to calculate a "Tone Score". It weighs the net transaction value, flags 10b5-1 planned sales (less negative), and applies multipliers if the insider is C-suite (+2 for buys, -2 for sells). Zero-dollar share changes are classified as neutral vesting events.
-   * **Form 8-K LLM Analysis:** Passes the Markdown chunks to a local LLM (`ChatOllama` running `llama3`). The LLM is prompted to return strict JSON containing a concise summary, a tone score (-5 to +5), and relevant topic tags.
-4. **Vector DB Preparation:** Outputs the fully enriched data into a single `qdrant_ready.jsonl` file.
+- **Form 4 (insider activity):** Parsed transactions (codes, shares, prices, 10b5-1 hints) and structured metadata for recent filings.
+- **Form 8-K (material events):** HTML → markdown (full doc or per-Item chunks) for event summarization.
+- **Processed layer:** Rule-based **tone_score** and narrative for Form 4; **LLM (Llama 3 JSON)** summary and tone for 8-K; deduplication by **accession number** for idempotent Qdrant upserts.
 
 ---
 
-## 📥 Inputs
-* **Config Files:** `SEC_tickers.json` (target companies) and `ticker_to_cik.json` (CIK mapping).
-* **Environment:** `SEC_USER_AGENT` (Required by SEC guidelines to prevent IP blocking) and LLM configuration parameters.
-* **External APIs:** SEC EDGAR REST APIs.
-* **Local Service:** Ollama service running the `llama3` model on `localhost:11434`.
+## 2. Architecture and strategy workflow
+
+The pipeline runs in two phases: **ingestion (scraping)** and **enrichment (processing)**.
+
+### Phase A — Ingestion (`scrapers/sec_ingestion.py`)
+
+#### Architecture workflow
+
+1. **Target identification:** Load NASDAQ tickers and map to SEC CIK (Central Index Key) via a local file to limit API calls.
+2. **Resilient querying:** SEC EDGAR submissions API for Form 4 and Form 8-K in the **past 7 days**; retries with exponential backoff for rate limits (HTTP 429) and network jitter.
+3. **Document retrieval and parsing**
+   - **Form 4 (XML):** Reporting owner, role, non-derivative transactions (shares, prices, codes, 10b5-1 flags).
+   - **Form 8-K (HTML):** Strip noise, markdownify, optional chunking by SEC “Item” headers.
+4. **Raw archival:** Daily JSONL per ticker plus a cross-ticker summary file.
+
+#### Scraping strategy workflow
+
+1. Load **`config/SEC_Ingestion/SEC_tickers.json`** (ticker list) and **`config/SEC_Ingestion/ticker_to_cik.json`** (CIK map).
+2. For each ticker, call SEC **`data.sec.gov/submissions/CIK{cik}.json`**, filter **Form 4** and **8-K** with `filingDate` in the **last 7 days**.
+3. **Form 4:** Fetch XML (normalize URL), parse transactions and owner metadata.
+4. **8-K:** Fetch HTML, strip boilerplate, markdownify, optionally split by `Item X.XX` headers.
+5. Append one JSON object per filing to **`Data/1_Bronze_Raw/SEC_Parsed_JSON/{date}/{ticker}.jsonl`**; write **`_SUMMARY.json`** across tickers.
+
+### Phase B — Processing (`processors/sec_processor.py`)
+
+#### Architecture workflow
+
+1. **State management:** Global registry of processed accession numbers for idempotency and no duplicate embeddings.
+2. **Concurrent execution:** `ThreadPoolExecutor` to overlap LLM-bound work.
+3. **Contextual enrichment**
+   - **Form 4 expert rules:** Tone score from net value, 10b5-1 planned sales (less negative), C-suite multipliers (+2 buys / −2 sells), neutral treatment for zero-dollar vesting-style flows.
+   - **Form 8-K LLM analysis:** Markdown passed to local LLM (`ChatOllama`, `llama3`); strict JSON with summary, tone (−5 to +5), and topic tags.
+4. **Vector DB preparation:** Single append-friendly `qdrant_ready.jsonl` output.
+
+#### Scraping strategy workflow
+
+1. Read all `*.jsonl` from the same date folder (CLI `--date`, default today).
+2. Skip accession numbers present in **`config/SEC_Processing/global_processed_registry.json`**.
+3. **Form 4:** Apply net buy/sell rules, C-suite and 10b5-1 adjustments; produce one-line summary and scores.
+4. **8-K:** Call **ChatOllama** (`llama3`, JSON mode, `http://localhost:11434`) for summary, `transaction_date`, `tone_score`, `topics`.
+5. Append **`text` + merged `metadata`** to **`qdrant_ready.jsonl`**; register accession after each successful write (thread pool, max 4 workers).
 
 ---
 
-## 📤 Output Files
-The pipeline generates files organized by execution date:
+## 3. Pipeline strategy (inputs, outputs, frequency)
 
-* **Raw Data:** `Data/SEC/Raw_SEC/{YYYY-MM-DD}/raw_{ticker}.jsonl`
-* **Daily Statistics:** `Data/SEC/Raw_SEC/{YYYY-MM-DD}/_SUMMARY.json`
-* **Processed Data (Target):** `Data/SEC/Qdrant_SEC/{YYYY-MM-DD}/qdrant_ready.jsonl`
-* **State tracking:** `Data/SEC/global_processed_registry.json`
-* **Logs:** Stored in `logs/` and `logs/SEC/{YYYY-MM-DD}/`.
+| Script | Inputs | Outputs | Frequency (`collect_data.py`) |
+| :--- | :--- | :--- | :--- |
+| **sec_ingestion.py** | `config/SEC_Ingestion/SEC_tickers.json`, `ticker_to_cik.json`; env **`SEC_USER_AGENT`** (required by SEC); SEC EDGAR APIs | `Data/1_Bronze_Raw/SEC_Parsed_JSON/{YYYY-MM-DD}/{TICKER}.jsonl`, `_SUMMARY.json`; logs under `logs/{date}/SEC_Ingestion/` | Weekly **Sunday** 08:00 |
+| **sec_processor.py** | Same-date Bronze JSONL; Ollama **`llama3`**; registry file | `Data/3_Gold_Semantic/SEC_Insider_Trades/{YYYY-MM-DD}/qdrant_ready.jsonl`; updates `config/SEC_Processing/global_processed_registry.json` | Weekly **Sunday** 09:00 |
+
+**Ingestion log file:** `logs/{YYYY-MM-DD}/SEC_Ingestion/ingestion_progress_{YYYY-MM-DD}.log`
 
 ---
 
-## 📊 Data Schema & Metadata
+## 4. Data shapes and metadata
 
-The final output in `qdrant_ready.jsonl` is structured specifically for vector database ingestion. Each line is a JSON object representing a single filing:
+### Bronze JSONL (one object per line)
 
-### Final Output Schema
+| Field | Description |
+| :--- | :--- |
+| `metadata` | See below (ingestion) |
+| `parsed_data` | Form 4: `reporting_owner`, `role`, `transactions[]`. 8-K: `is_chunked`, `item_chunks` **or** `full_markdown`, etc. |
+| `raw_text` | Placeholder string noting parse status |
+
+#### `metadata` (ingestion — complete tags)
+
+| Tag | Type | Description |
+| :--- | :--- | :--- |
+| `ticker` | string | Symbol |
+| `form_type` | string | `"4"` or `"8-K"` |
+| `filed_at` | string | SEC filing date `YYYY-MM-DD` |
+| `accession_no` | string | SEC accession number |
+| `url` | string | Primary document URL |
+| `ingested_at` | string | ISO timestamp when written |
+
+### Processed: `qdrant_ready.jsonl`
 
 | Field | Description | Type |
 | :--- | :--- | :--- |
 | `text` | The human-readable summary. For Form 4, it's a generated sentence describing the trade. For 8-K, it's the LLM-generated summary. | String |
 | `metadata` | A nested dictionary containing all structured data to be used as payload/filters in Qdrant. | Object |
 
-### `metadata` Object Structure
+#### `metadata` (processed — ingestion fields plus enrichment; complete tags)
 
 | Key | Description | Type |
 | :--- | :--- | :--- |
@@ -76,8 +108,16 @@ The final output in `qdrant_ready.jsonl` is structured specifically for vector d
 
 ---
 
-## 🛠 Technical Dependencies
-* **Network & Parsing:** `requests`, `BeautifulSoup` (bs4), `xml.etree.ElementTree`, `markdownify`.
-* **Concurrency:** `concurrent.futures.ThreadPoolExecutor`.
-* **AI/LLM:** `langchain_ollama.ChatOllama` (Requires local Ollama instance).
-* **Configuration:** `python-dotenv` for environment variable management.
+## 5. Dependencies
+
+**Ingestion:**
+
+```bash
+pip install requests beautifulsoup4 markdownify python-dotenv
+```
+
+**Processor (plus local Ollama with `llama3`):**
+
+```bash
+pip install langchain-ollama python-dotenv
+```
