@@ -25,6 +25,4 @@ Youtube_channel_ID
 .vscode/
 .DS_Store
 
-# Qdrant data and monitoring folders
-qdrant_storage/
-monitoring/
+
