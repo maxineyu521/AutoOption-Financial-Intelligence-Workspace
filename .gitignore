@@ -16,8 +16,6 @@ options-expert
 
 # Data and Logs
 data/
-logs/
-*.log
 Youtube_channel_ID
 
 # IDE and OS-specific files
