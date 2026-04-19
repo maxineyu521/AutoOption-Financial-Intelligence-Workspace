@@ -31,10 +31,7 @@ project_root = str(Path(__file__).resolve().parents[2])
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-try:
-    from Scripts.vector_store.connection import get_qdrant_client, get_embedding_model
-except ImportError:
-    from .connection import get_qdrant_client, get_embedding_model
+from Scripts.vector_store.connection import get_qdrant_client, get_embedding_model
 
 load_dotenv(override=True)
 
@@ -246,7 +243,6 @@ class QdrantHybridIngestor:
                     states = {
                         "news": last_run_keys.get("news_daily", today),
                         "gpr": last_run_keys.get("gpr_monthly", current_month),
-                        # 假设你以后会有 sec_daily，如果没有这里会默认用今天
                         "sec": last_run_keys.get("sec_daily", today) 
                     }
                 logger.info(f"📄 Successfully loaded upstream states: {states}")
@@ -257,7 +253,7 @@ class QdrantHybridIngestor:
         # Fallback
         return {"news": today, "gpr": current_month, "sec": today}
 
-    def run_pipeline(self, full_refresh: bool = False):
+    def run_pipeline(self, full_refresh: bool = True):
         """
         执行管线。
         :param full_refresh: 如果为 True，则无视状态文件，强行全量重跑。
