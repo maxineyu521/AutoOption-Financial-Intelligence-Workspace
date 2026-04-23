@@ -89,7 +89,82 @@ class QdrantHybridIngestor:
         except Exception:
             return 0
 
+    # ======================================================================
+    # Canonical payload-index schema (single source of truth).
+    #
+    # Every key the retriever filters on MUST appear here. Qdrant rejects a
+    # Range filter with `400 Bad Request: Index required but not found for …`
+    # if the payload key is not indexed as `integer`/`float`, so missing a
+    # key here is NOT a silent perf regression — it's a hard pipeline break.
+    #
+    # Production audit 2026-04-22 caught exactly this: the Gold retriever
+    # filters on `unified_timestamp` OR `publish_timestamp` (nested should),
+    # but only `unified_timestamp` was indexed → every query 400'd whenever
+    # source_type picked up a payload without `unified_timestamp`.
+    # ======================================================================
+    _REQUIRED_INDEXES: list = [
+        # -- Keyword filters (exact match / array contains) --
+        ("ticker",            models.PayloadSchemaType.KEYWORD),
+        ("form_type",         models.PayloadSchemaType.KEYWORD),
+        ("action_direction",  models.PayloadSchemaType.KEYWORD),
+        ("source_type",       models.PayloadSchemaType.KEYWORD),
+        ("topic",             models.PayloadSchemaType.KEYWORD),
+        ("topics",            models.PayloadSchemaType.KEYWORD),
+        ("impacted_assets",   models.PayloadSchemaType.KEYWORD),
+        ("entities",          models.PayloadSchemaType.KEYWORD),
+        # -- Numeric range filters (Gold time barrier) --
+        # BOTH keys must be indexed because the retriever uses nested
+        # `should=[unified_timestamp, publish_timestamp]` to heal legacy
+        # payloads that only carry one of the two.
+        ("unified_timestamp", models.PayloadSchemaType.INTEGER),
+        ("publish_timestamp", models.PayloadSchemaType.INTEGER),
+        # -- Optional numeric auxiliary filters (News tone ranges) --
+        ("tone_score",        models.PayloadSchemaType.INTEGER),
+        ("llm_tone_score",    models.PayloadSchemaType.INTEGER),
+    ]
+
+    def _ensure_payload_indexes(self) -> None:
+        """Idempotently create every index in `_REQUIRED_INDEXES`.
+
+        Safe to call on both fresh and existing collections:
+          - Fresh collection → creates all indexes.
+          - Existing collection missing one index → creates only the missing
+            ones (the "already exists" branch raises a benign 400 that we
+            swallow and log at INFO).
+          - Existing collection already fully indexed → every call is a
+            no-op; no drop, no re-vectorise, no downtime.
+
+        This is the auto-heal path that saved the 2026-04-22 outage: the
+        collection had been created back when only `unified_timestamp` was
+        in the schema, and the retriever's `publish_timestamp` Range filter
+        was 400-ing until this method was promoted out of the "if not
+        exists" branch.
+        """
+        for field, schema in self._REQUIRED_INDEXES:
+            try:
+                self.client.create_payload_index(
+                    self.collection_name, field_name=field, field_schema=schema,
+                )
+                logger.info(f"✅ Payload Index ensured: {field} ({schema})")
+            except Exception as e:
+                # Qdrant returns 400/409 for "index already exists" — treat
+                # as success but keep the message so operators can confirm
+                # the index is there. Any *other* error surfaces loudly.
+                msg = str(e).lower()
+                if "already exists" in msg or "conflict" in msg or "409" in msg:
+                    logger.info(f"ℹ️ Payload Index already present: {field}")
+                else:
+                    logger.error(f"❌ Failed to ensure index for {field}: {e}")
+                    raise
+
     def init_collection_with_indexes(self):
+        """Create the collection if missing, then always reconcile indexes.
+
+        Index reconciliation runs on EVERY call (not just at collection-
+        create time) so schema additions in `_REQUIRED_INDEXES` propagate to
+        existing production collections on the next ingest run — no manual
+        drop-and-recreate required.
+        """
         if not self.client.collection_exists(self.collection_name):
             logger.info(f"🚀 Creating new Hybrid Collection: {self.collection_name}")
             self.client.create_collection(
@@ -101,31 +176,12 @@ class QdrantHybridIngestor:
                     "sparse": SparseVectorParams()
                 }
             )
-            
-            # ==========================================
-            # 严格按照架构要求的 Payload 索引策略
-            # ==========================================
-            index_schemas = [
-                # 1. 强匹配/精确过滤 (Keyword)
-                ("ticker", models.PayloadSchemaType.KEYWORD),
-                ("form_type", models.PayloadSchemaType.KEYWORD),
-                ("action_direction", models.PayloadSchemaType.KEYWORD),
-                ("source_type", models.PayloadSchemaType.KEYWORD),
-                
-                # 2. 数组包含过滤 (Qdrant 的 KEYWORD 天然支持 Array of Strings 包含查询)
-                ("topics", models.PayloadSchemaType.KEYWORD),
-                ("impacted_assets", models.PayloadSchemaType.KEYWORD),
-                ("entities", models.PayloadSchemaType.KEYWORD),
-                
-                # 3. 时间范围过滤 (Integer)
-                ("unified_timestamp", models.PayloadSchemaType.INTEGER),
-            ]
-            
-            for field, schema in index_schemas:
-                self.client.create_payload_index(self.collection_name, field_name=field, field_schema=schema)
-                logger.info(f"✅ Payload Index created for: {field}")
         else:
-            logger.info(f"✅ Collection '{self.collection_name}' already exists. Skipping initialization.")
+            logger.info(f"✅ Collection '{self.collection_name}' already exists. Reconciling payload indexes…")
+
+        # Always ensure indexes — auto-heals collections that predate a
+        # schema addition (e.g. `publish_timestamp` in 2026-04-22).
+        self._ensure_payload_indexes()
 
     def process_and_upsert_file(self, file_path: Path, source_type: str) -> int:
         points = []
@@ -302,5 +358,32 @@ class QdrantHybridIngestor:
         logger.info("="*50)
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="Qdrant Hybrid Ingestor (init + upsert pipeline)."
+    )
+    parser.add_argument(
+        "--indexes-only",
+        action="store_true",
+        help=(
+            "Only reconcile payload indexes on the existing collection — "
+            "no embedding, no upsert. Use this to auto-heal a collection "
+            "that predates a new index (e.g. publish_timestamp added "
+            "2026-04-22) without re-vectorising data."
+        ),
+    )
+    parser.add_argument(
+        "--no-full-refresh",
+        action="store_true",
+        help="Only process files matching the upstream watermark (default is full refresh).",
+    )
+    args = parser.parse_args()
+
     ingestor = QdrantHybridIngestor()
-    ingestor.run_pipeline()
+    if args.indexes_only:
+        # Fast path for the 400 "Index required but not found" auto-heal.
+        # Completes in ~1s regardless of collection size.
+        ingestor.init_collection_with_indexes()
+        logger.info("🔧 Index-only reconciliation complete.")
+    else:
+        ingestor.run_pipeline(full_refresh=not args.no_full_refresh)
