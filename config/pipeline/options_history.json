@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "description": "Parameters for Scripts/data_collection/scrapers/yfinance_options_history.py. Business logic (derived metrics, is_liquid flag) is NOT governed here and stays in code.",
+
+  "universe_role": "options.scrape",
+
+  "scrape": {
+    "request_delay_sec": 1.0,
+    "inter_symbol_delay_sec": 2.0,
+    "near_term_expirations": 10
+  },
+
+  "storage": {
+    "strategy": "legacy",
+    "comment": "Active strategy is `legacy`. Keep this value until Silver read-side (Scripts/retrieval/sql_tools.py:options_glob) is migrated to Hive-partitioned glob. Supported strategies:",
+    "strategies": {
+      "legacy": {
+        "path_template": "{data_root}/2_Silver_Processed/Options_Market_Data/{snapshot_date}/{symbol}_options_{snapshot_date}.parquet",
+        "description": "Current layout. 1 file per (ticker, day). Preserves backward compatibility with sql_tools.py's `*/*.parquet` glob.",
+        "files_per_year_at_53_tickers": 13356
+      },
+      "hive_v1": {
+        "path_template": "{data_root}/2_Silver_Processed/Options_Market_Data/snapshot_date={snapshot_date}/asset_class={asset_class}/{symbol}.parquet",
+        "description": "Hive-partitioned by (snapshot_date, asset_class). Enables DuckDB partition pruning via hive_partitioning=1. Requires read-side glob update to `**/*.parquet`.",
+        "files_per_year_at_53_tickers": 13356,
+        "migration_checklist": [
+          "1. Update Scripts/retrieval/sql_tools.py:options_glob to use hive_partitioning=1.",
+          "2. Backfill: re-run snapshot or one-off migration copying legacy files into new tree.",
+          "3. Flip storage.strategy to `hive_v1` here.",
+          "4. Update docs/Data_source_docs/options_historial_data.md path example."
+        ]
+      },
+      "monthly_rollup": {
+        "path_template_raw": "{data_root}/2_Silver_Processed/Options_Market_Data/raw/snapshot_date={snapshot_date}/{symbol}.parquet",
+        "path_template_rollup": "{data_root}/2_Silver_Processed/Options_Market_Data/rollup/snapshot_month={yyyy_mm}/options_chain.parquet",
+        "description": "Dual-tier: hot raw (last N days) + monthly compacted roll-up. Single rollup file per month instead of ~1100 per month. Requires a compaction job (see docs/storage_migration.md).",
+        "target_files_per_year": 12,
+        "notes": "Recommended final state once universe grows beyond 50 tickers. Not yet implemented."
+      }
+    }
+  },
+
+  "liquidity_thresholds_by_role": {
+    "_comment": "Reference values only — NOT read by yfinance_options_history.py today. The scraper still applies its hard-coded global thresholds (volume>=50 & open_interest>=100 & bid>0). Promote these to code only after per-role tuning is validated.",
+    "etf.broad_market":   {"volume": 50, "open_interest": 100},
+    "etf.commodity":      {"volume": 30, "open_interest":  50},
+    "equity.single_name": {"volume": 20, "open_interest":  50}
+  }
+}

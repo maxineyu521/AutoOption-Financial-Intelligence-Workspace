@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "description": "Asset universe registry. Each entry maps a semantic role to a ticker-list file and declares downstream capabilities.",
+  "last_reviewed": "2026-04-22",
+  "roles": {
+    "equity.single_name": {
+      "file": "equity_single_name.json",
+      "description": "Single-name equities filed with SEC (subset of Nasdaq-100). Source of truth for SEC ingestion filers and equity options scraping.",
+      "asset_class": "equity",
+      "has_options": true,
+      "has_sec_filings": true,
+      "coverage_start": "2026-04-08",
+      "owner": "data-platform",
+      "notes": "Expansion beyond 48 tickers requires updating config/reference/ticker_to_cik.json via Scripts/tools/SEC_generate_cik_map.py."
+    },
+    "etf.broad_market": {
+      "file": "etf_broad_market.json",
+      "description": "Broad-market equity index ETFs. Primary sentiment / beta benchmarks.",
+      "asset_class": "etf",
+      "has_options": true,
+      "has_sec_filings": false,
+      "coverage_start": "2025-10-01",
+      "owner": "data-platform"
+    },
+    "etf.commodity": {
+      "file": "etf_commodity.json",
+      "description": "Commodity-backed ETFs used as safe-haven / inflation proxies.",
+      "asset_class": "etf",
+      "has_options": true,
+      "has_sec_filings": false,
+      "coverage_start": "2025-10-01",
+      "owner": "data-platform"
+    }
+  },
+  "composite_roles": {
+    "etf.all": {
+      "union_of": ["etf.broad_market", "etf.commodity"],
+      "description": "All ETFs we track (broad market + commodity)."
+    },
+    "options.scrape": {
+      "union_of": ["equity.single_name", "etf.broad_market", "etf.commodity"],
+      "description": "Full universe for yfinance options-chain scraping (single-names + ETFs)."
+    },
+    "sec.filers": {
+      "union_of": ["equity.single_name"],
+      "description": "Tickers to be fed to the SEC EDGAR ingester (10-K/10-Q/8-K/Form-4). Alias for equity.single_name."
+    }
+  }
+}
