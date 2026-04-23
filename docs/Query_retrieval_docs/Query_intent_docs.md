@@ -1,109 +1,200 @@
-# Context-Anchored Query Transformation Engine
+# Query Intent & Transformation Layer
 
-This documentation details the `query_transform.py` module, which serves as the intelligent vanguard of the retrieval pipeline. It intercepts user queries and transforms them into highly structured, database-ready parameters.
+_Scope: `Scripts/retrieval/query_transform.py` +
+`Scripts/retrieval/master_retriever.py::router_llm`._
 
-## 1. Strategic Objective (Goal)
-The primary goal of this module is to operate as an **industrial-grade, two-stage query transformation engine**. It eliminates the ambiguity of raw human questions by parsing them into deterministic filters (Metadata Extraction) while simultaneously enhancing semantic retrieval through synthetic document generation (HyDE). This drastically reduces the "needle in a haystack" problem during vector searches and ensures downstream multi-agent workflows receive perfectly clean data.
-
----
-
-## 2. System Architecture
-The module is built upon a **Fully Decoupled Prompt & Guardrail Architecture**, ensuring high stability and preventing Large Language Model (LLM) hallucinations:
-
-* **Ontology-Driven Constraints:** Tightly coupled with `financial_ontology.py` to enforce strict adherence to allowed vocabularies (`ALLOWED_METRICS`, `ALLOWED_SOURCES`).
-* **Schema Enforcement:** Utilizes Pydantic schemas (defined in `schema.py`) to guarantee that the LLM's output is consistently parsed into strongly-typed objects.
-* **Asynchronous AI Pipeline:** Built natively with `asyncio` and `ChatOllama`, allowing for non-blocking execution of LLM prompts, significantly reducing latency during the two-stage transformation.
+This document defines **how a raw user question becomes a pair of
+deterministic structured artefacts** (routing decision + transformation
+payload) that the rest of the retrieval pipeline treats as a hard
+contract.
 
 ---
 
-## 3. Code Strategy & Execution Workflow
-The code executes a sequential, two-stage AI strategy designed to maximize the fidelity of the final Retrieval-Augmented Generation (RAG) context.
+## 1. Strategic Objective
 
-1.  **Stage 1: Analytical Metadata Extraction**
-    The engine passes the query to the LLM equipped with the `EXTRACTOR_SYSTEM_PROMPT`. The LLM identifies target tickers, maps financial metrics to database-friendly column names, and deduces time windows.
-2.  **Stage 2: HyDE (Hypothetical Document Embeddings) Generation**
-    Using the reasoning from Stage 1 and the `HYDE_WRITER_SYSTEM_PROMPT`, the LLM drafts a fake, textbook-perfect "financial report paragraph" that directly answers the user's question. This paragraph is embedded to find the closest real documents in the Gold Semantic Layer.
+The intent layer is the **policy gate** of the retrieval subsystem. It
+converts ambiguous natural language into:
+
+1. a **route** (Gold-only, Silver-only, or hybrid), and
+2. a **structured extraction** (tickers, metrics, time window, action
+   direction) plus a HyDE expansion used for dense retrieval.
+
+Without this layer, downstream retrievers would have to parse the
+query themselves — a recipe for drift, duplicated logic, and
+non-deterministic behaviour across agents.
+
+---
+
+## 2. Two Cooperating Sub-Components
+
+| Sub-component | File | Model | Purpose |
+| --- | --- | --- | --- |
+| **Intent Router** | `master_retriever.py::MasterRetriever.router_llm` | `llama3:latest` (env `OLLAMA_ROUTER_MODEL`) | Pick `gold_only` / `silver_only` / `hybrid_both`. Short JSON output. |
+| **Query Transformer** | `query_transform.py::QueryTransformer` | `options-expert-v1:latest` (env `OLLAMA_CUSTOM_MODEL_NAME`) | Two-stage metadata extraction + HyDE generation. |
+
+> **Model rationale.** The router only classifies into three buckets —
+> using the fine-tuned 70B here would burn 30–60 s per query for no
+> accuracy gain. The transformer, in contrast, has to reason about
+> options terminology, SEC form types, macro indicators, etc., so it
+> runs on the fine-tuned model. See `docs/LLM_Pool.md` §1 for the full
+> model inventory.
+
+---
+
+## 3. Execution Workflow
 
 ```text
 [ Raw User Query ]
         │
         ▼
-[ Stage 1: Metadata Extractor ]
-  ├─► Validate via Financial Ontology
-  └─► Extract: Tickers, Metrics, Action Direction, Time Window
+┌─────────────────────────────────────────────────────┐
+│ 3.1  MasterRetriever.router_llm (llama3:latest)     │
+│      → QueryIntent(primary_route=...)               │
+└─────────────────────────────────────────────────────┘
         │
         ▼
-[ Stage 2: HyDE Generator ]
-  └─► Generate: Hypothetical Financial Paragraph
+┌─────────────────────────────────────────────────────┐
+│ 3.2  QueryTransformer.transform_for_dual_rag        │
+│      (options-expert-v1:latest, 70B, 2 stages)      │
+│                                                     │
+│  Stage 1 — EXTRACTOR                                │
+│    ├─► Ontology-constrained metadata                │
+│    ├─► Ticker whitelist guardrail                   │
+│    └─► TimeWindow enum normalization                │
+│                                                     │
+│  Stage 2 — HyDE                                     │
+│    ├─► hyde_paragraph (dense channel)               │
+│    └─► rerank_query   (sparse + rerank channel)     │
+└─────────────────────────────────────────────────────┘
         │
         ▼
-[ Output: FullTransformationResult ]
-  └─► Handed off to Qdrant Retriever & SQL Tools
+[ FullTransformationResult + QueryIntent ]
+        │
+        ▼
+   handed to QdrantRetriever / SilverSQLTool
 ```
 
 ---
 
-## 4. Output Data Schema & Routing
-The engine produces an in-memory `FullTransformationResult` object. It does not save to a physical file path; instead, it dynamically routes this structured payload directly into the retrieval pipeline.
+## 4. Time Anchoring Contract
 
-### Schema: `FullTransformationResult`
+The transformer emits a `TimeWindow` enum (`yesterday`, `past_week`,
+`past_month`, …). These enum values are **not interpreted here** —
+they are resolved downstream by `Scripts/retrieval/time_adapter.py`
+against a fixed anchor:
 
-| Component | Field Name | Data Type | Purpose |
+- The anchor is **always** `RunState.latest_business_day("options")`,
+  read from `config/runtime/collect_data_state.json`. It is *never*
+  `datetime.now()`.
+- `time_adapter.compile_all` returns a `Dict[SourceTimeKey,
+  TimePredicate]` — one window per data source (SEC, options, macro,
+  news). Each source may have different business-day semantics.
+- The resulting predicates are serialised into `AgentState` so that
+  re-queries from `CheckerAgent._rescue_missing_anchors` use the same
+  window as the initial retrieval. This eliminates the `latest_atm_iv`
+  oscillation observed in the 2026-04-22 router_e2e logs.
+
+See `docs/Query_retrieval_docs/Time_Schema_Audit.md` for the full
+time-schema matrix.
+
+---
+
+## 5. Output Schema — `FullTransformationResult`
+
+| Component | Field | Type | Purpose |
 | :--- | :--- | :--- | :--- |
-| **Metadata** | `logical_reasoning` | String | The LLM's step-by-step logic detailing why specific variables were extracted. |
-| **Metadata** | `tickers` | List[String] | Explicit stock or ETF symbols identified (e.g., `["SPY", "NVDA"]`). |
-| **Metadata** | `metrics` | List[String] | Canonical financial metrics requested (e.g., `["iv_skew", "put_call_ratio"]`). |
-| **Metadata** | `action_direction` | String | Identifies categorical actions (e.g., `BUY`, `SELL`, `NEUTRAL`). |
-| **Metadata** | `time_window` | Object | Standardized date range used for temporal pre-filtering in Qdrant. |
-| **HyDE** | `hyde_paragraph` | String | The synthetic financial text used for Dense Vector similarity matching. |
+| **Metadata** | `logical_reasoning` | String | Stage-1 CoT; audit-only. |
+| **Metadata** | `tickers` | List[str] | Guardrail-cleaned tickers. |
+| **Metadata** | `metrics` | List[str] | Canonical metric names from `financial_ontology.ALLOWED_METRICS`. |
+| **Metadata** | `source_types` | List[str] | `sec` / `news` / `options` / `macro`. |
+| **Metadata** | `action_direction` | Enum | `BUY` / `SELL` / `NEUTRAL` / `ANY`. |
+| **Metadata** | `form_type` | Enum | `4`, `8-K`, `13F`, `ANY`. |
+| **Metadata** | `sentiment_target` | Enum | `POSITIVE` / `NEGATIVE` / `ANY`. |
+| **Metadata** | `event_keyword` | String | Short lexical hook for SPLADE. |
+| **Metadata** | `time_window` | Enum | Raw token — resolved downstream. |
+| **HyDE** | `hyde_paragraph` | String | Semantic carrier for dense retrieval. |
+| **HyDE** | `rerank_query` | String | Factual short phrase for sparse + rerank. |
+| **Mapped** | `mapped_physical_columns` | List[str] | Derived via `METRIC_TO_COLUMN_MAPPING`. |
 
 ---
 
-## 5. Verification & Testing Protocol
-The script includes a built-in asynchronous sandbox at the bottom of the file (`if __name__ == "__main__":`), allowing developers to independently verify the LLM's extraction logic and prompt effectiveness without triggering the entire RAG pipeline.
+## 6. Example Output
 
-**How to Test:**
-Run the module directly from your terminal:
-```bash
-python Scripts/retrieval/query_transform.py
-```
-
-**Expected Successful Output:**
-The console will print a distinct separation of stages:
-1.  **[STAGE 1]:** Displays the `🧠 Reasoning`, `📊 Tickers`, `📈 Metrics`, and `🕒 Time Window` extracted from the mock query.
-2.  **[STAGE 2]:** Prints the generated fake financial text designed for vector matching.
 ```json
-{"timestamp": "2026-04-19T21:16:00.977910", 
-"latency_seconds": 107.96, 
-"original_query": "What recent insider buying activity has there been for TSLA and how did the market react?", 
-"primary_route": "hybrid_both", 
-"transformation_result": {
-  "metadata": {
-    "logical_reasoning": "Macro Step: Insider activity. Meso Step: Market reaction. Micro Step: TSLA insiders. Action: BUY.", 
-    "tickers": ["TSLA"], 
-    "metrics": ["Insider Trading", "Price Change (%)"], 
-    "source_types": ["sec", "news"], 
-    "action_direction": "BUY", 
-    "form_type": "4", 
-    "sentiment_target": "ANY", 
-    "event_keyword": "insider_buying", 
-    "time_window": "past_month"}, 
+{
+  "timestamp": "2026-04-19T21:16:00.977910",
+  "latency_seconds": 107.96,
+  "original_query": "What recent insider buying activity has there been for TSLA and how did the market react?",
+  "primary_route": "hybrid_both",
+  "transformation_result": {
+    "metadata": {
+      "logical_reasoning": "Macro Step: Insider activity. Meso: Market reaction. Micro: TSLA insiders. Action: BUY.",
+      "tickers": ["TSLA"],
+      "metrics": ["Insider Trading", "Price Change (%)"],
+      "source_types": ["sec", "news"],
+      "action_direction": "BUY",
+      "form_type": "4",
+      "sentiment_target": "ANY",
+      "event_keyword": "insider_buying",
+      "time_window": "past_month"
+    },
     "hyde": {
-      "hyde_paragraph": "TSLA insiders have recently filed Form 4s indicating buying activity, which may signal confidence in the company's prospects, potentially leading to higher stock prices.", 
-      "rerank_query": "TSLA Form 4 insider buying executives past month"}, "mapped_physical_columns": ["mom_change_pct", "insider_net_flow", "daily_change_pct"]
-    }
+      "hyde_paragraph": "TSLA insiders have recently filed Form 4s indicating buying activity...",
+      "rerank_query": "TSLA Form 4 insider buying executives past month"
+    },
+    "mapped_physical_columns": ["mom_change_pct", "insider_net_flow", "daily_change_pct"]
+  }
 }
-
 ```
 
 ---
 
-## 6. Environment Dependencies
-Ensure your `.env` file is properly configured at the `PROJECT_ROOT` level, and that local Ollama services are active if running local models. 
+## 7. Reliability Controls
 
-**Required Installations:**
-Execute the following one-line command to install the required dependencies for this module:
+- **Ontology-locked output.** Every free-form LLM field is post-checked
+  against `financial_ontology`. Unknown tickers are dropped, not
+  silently persisted.
+- **Ticker-explosion guardrail.** Queries that extract more than 8
+  tickers are truncated to the top 5 to keep Qdrant filters tractable.
+- **Audit trail.** Every transformation is appended to
+  `logs/query_transform/<date>/query_audit_trail.jsonl` with the raw
+  query, mapped columns, chosen route, and latency.
+- **Failure semantics.** Either stage may raise — the upstream caller
+  (`MasterRetriever.retrieve`) converts exceptions into a degraded
+  route (`silver_only` with empty metadata) rather than bubbling up
+  and killing the agent graph.
+
+---
+
+## 8. Verification
 
 ```bash
-pip install langchain-core langchain-ollama pydantic python-dotenv asyncio
+# Exercise the transformer alone (no Qdrant required)
+python Scripts/retrieval/query_transform.py
+
+# Exercise the full MasterRetriever (router + transform + retrieval)
+pytest -xvs Scripts/tests/test_master_retriever.py
+pytest -xvs Scripts/tests/test_router_e2e.py
 ```
+
+Expected STDOUT shape for `query_transform.py`:
+
+1. `[STAGE 1]` — reasoning, tickers, metrics, time window.
+2. `[STAGE 2]` — HyDE paragraph + rerank query.
+3. Final JSON serialisation suitable for pasting into issue reports.
+
+---
+
+## 9. Environment Dependencies
+
+```bash
+pip install langchain-core langchain-ollama pydantic python-dotenv
+```
+
+Required env entries (all present in the standard `.env`):
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `OLLAMA_CUSTOM_MODEL_NAME` | `options-expert-v1:latest` | Transformer (both stages) |
+| `OLLAMA_ROUTER_MODEL` | `llama3:latest` | Intent router in `MasterRetriever` |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint |

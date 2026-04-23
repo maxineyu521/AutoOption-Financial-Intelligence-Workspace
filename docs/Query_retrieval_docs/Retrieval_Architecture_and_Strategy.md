@@ -1,18 +1,32 @@
 # Retrieval Architecture, Strategy, and Workflow
 
+_This document is the authoritative spec of the retrieval subsystem —
+how raw user questions become ranked evidence that the agent graph
+consumes. It supersedes all prior retrieval READMEs._
+
+---
+
 ## I. Mission Profile and System Boundary
 
-This document defines the production retrieval architecture implemented across:
+The retrieval subsystem is implemented across:
 
 - `Scripts/core/financial_ontology.py`
+- `Scripts/core/intent_router_prompt_templates.py`
 - `Scripts/core/prompt_templates.py`
-- `Scripts/core/few_shot_config.py`
+- `Scripts/core/few_shot_intent.py` / `few_shot_config.py`
+- `Scripts/core/trading_calendar.py`
 - `Scripts/retrieval/schema.py`
 - `Scripts/retrieval/query_transform.py`
+- `Scripts/retrieval/time_adapter.py`
+- `Scripts/retrieval/master_retriever.py`
 - `Scripts/retrieval/qdrant_retriever.py`
+- `Scripts/retrieval/sql_tools.py`
 - `Scripts/vector_store/connection.py`
 
-The retrieval subsystem is designed as a **two-stage query transformation pipeline** followed by an **asymmetric hybrid retrieval and reranking pipeline**. Its objective is to convert ambiguous user language into deterministic filters and high-signal retrieval vectors for Qdrant Cloud.
+It is a **two-stage transformation pipeline** followed by a
+**dual-track retrieval-and-merge pipeline** (Gold semantic + Silver
+structured), all anchored on a single `RunState`-owned business-day
+timestamp.
 
 ---
 
@@ -20,187 +34,175 @@ The retrieval subsystem is designed as a **two-stage query transformation pipeli
 
 ### A. Knowledge Governance Layer (`Scripts/core`)
 
-- **Ontology governance** (`financial_ontology.py`):
-  - Defines controlled vocabularies: `ALLOWED_SOURCES`, `ALLOWED_CATEGORIES`, `ALLOWED_METRICS`.
-  - Provides deterministic semantic-to-physical mapping via `METRIC_TO_COLUMN_MAPPING`.
-  - Prevents free-form extraction drift by anchoring output fields to approved values.
-- **Prompt governance** (`prompt_templates.py`):
-  - Stage 1 prompt: strict extractor with explicit output constraints.
-  - Stage 2 prompt: HyDE writer plus concise `rerank_query` generation.
-- **Few-shot calibration** (`few_shot_config.py`):
-  - Injects examples for SEC, macro/news, and options-style queries when available.
+- **Ontology governance** (`financial_ontology.py`)
+  - Controlled vocabularies: `ALLOWED_SOURCES`, `ALLOWED_CATEGORIES`,
+    `ALLOWED_METRICS`.
+  - Deterministic metric→physical-column map
+    (`METRIC_TO_COLUMN_MAPPING`).
+  - Prevents free-form extraction drift.
+- **Prompt governance** (`prompt_templates.py`,
+  `intent_router_prompt_templates.py`)
+  - Stage 1 extractor prompt, Stage 2 HyDE prompt, and the cheap
+    intent-router prompt used by `MasterRetriever.router_llm`.
+- **Few-shot calibration** (`few_shot_intent.py`)
+  - Injects examples for SEC, macro/news, options-style queries.
+- **Trading calendar** (`trading_calendar.py`)
+  - Dependency-free business-day arithmetic (`previous_business_day`,
+    `n_business_days_back`, `clamp_to_business_day`).
 
 ### B. Contract and Type-Safety Layer (`Scripts/retrieval/schema.py`)
 
-- Uses Pydantic models as strict contracts for:
-  - `MetadataExtraction`
-  - `HyDEGeneration`
-  - `FullTransformationResult`
-  - `RetrievedChunk`
-  - `QueryIntent`
-- Uses enums to enforce standardized values (for source, action, form type, time window, sentiment).
+Pydantic models serve as hard contracts:
 
-### C. Transformation Intelligence Layer (`Scripts/retrieval/query_transform.py`)
+- `MetadataExtraction`
+- `HyDEGeneration`
+- `FullTransformationResult`
+- `RetrievedChunk`
+- `QueryIntent`
+- `SourceCitation`
+- Enums for `TimeWindow`, `SourceType`, `ActionDirection`, `FormType`,
+  `SentimentTarget`.
 
-- Executes asynchronous two-stage LLM transformation:
-  1. **Extractor LLM** for structured metadata.
-  2. **HyDE writer LLM** for retrieval-oriented synthetic paragraph and rerank phrase.
-- Applies post-LLM guardrails:
-  - ticker whitelist cleanup
-  - mapped physical column derivation from ontology
-  - audit logging to `logs/query_transform/<date>/query_audit_trail.jsonl`
+### C. Intent Routing Layer (`Scripts/retrieval/master_retriever.py::router_llm`)
 
-### D. Retrieval Execution Layer (`Scripts/retrieval/qdrant_retriever.py`)
+- Cheap vanilla `llama3:latest` decides `gold_only` / `silver_only` /
+  `hybrid_both`. See `docs/LLM_Pool.md` for the two-tier model
+  rationale.
 
-- Performs hybrid retrieval with three components:
-  - Dense embedding retrieval (semantic channel)
-  - Sparse SPLADE retrieval (lexical channel)
-  - Cross-encoder reranking (precision channel)
-- Applies metadata/time filters before fusion.
-- Uses Qdrant `Fusion.RRF` to combine dense + sparse prefetch channels.
-- Produces standardized `List[RetrievedChunk]` and writes retrieval audit logs to `logs/retrieval/<date>/retriever_audit_trail.jsonl`.
+### D. Transformation Intelligence Layer (`Scripts/retrieval/query_transform.py`)
 
-### E. Infrastructure and Connectivity Layer (`Scripts/vector_store/connection.py`)
+- Two-stage asynchronous LLM transformation on the fine-tuned 70B:
+  1. **Extractor** (`OLLAMA_CUSTOM_MODEL_NAME`, `format=json`)
+  2. **HyDE writer** (`OLLAMA_CUSTOM_MODEL_NAME`, higher temp)
+- Post-LLM guardrails: ticker whitelist, ontology mapping, audit JSONL.
 
-- Provides cached singletons for:
-  - Qdrant Cloud client (`get_qdrant_client`)
-  - Embedding provider (`get_embedding_model`)
-- Enforces REST/HTTP path (`prefer_grpc=False`) for firewall resilience.
-- Loads all key runtime settings from `.env`.
+### E. Time Alignment Layer (`Scripts/retrieval/time_adapter.py`)
+
+Single source of truth for retrieval time windows.
+
+- `compile_all(time_window, anchor_date)` →
+  `Dict[SourceTimeKey, TimePredicate]` — one window *per data source*
+  (`SEC`, `OPTIONS`, `NEWS`, `MACRO`).
+- Daily-grain sources are **business-day-aware** via
+  `trading_calendar`. `"yesterday"` on a Monday resolves to Friday.
+- `TimePredicate` is **serialisable** — it is persisted in
+  `AgentState["time_range"]["source_predicates"]` so that the
+  `CheckerAgent` rescue step re-queries Silver with the same window
+  as the initial retrieval. This fixes the `latest_atm_iv` oscillation
+  diagnosed in `docs/test/2026-04-22/router_e2e_deep_analysis.md`.
+
+### F. Retrieval Execution Layer
+
+Two coordinated retrievers, both orchestrated by `MasterRetriever`:
+
+- `qdrant_retriever.py::FinancialHybridRetriever` — Gold semantic
+  (Dense + Sparse + Rerank).
+- `sql_tools.py::SilverSQLTool` — Silver structured (Parquet + metric
+  dispatcher; consumes the same `TimePredicate` objects).
+
+### G. Infrastructure Layer (`Scripts/vector_store/connection.py`)
+
+- Cached singletons for Qdrant client and embedding model.
+- `prefer_grpc=False` for firewall resilience.
+- All credentials loaded from `.env`.
 
 ---
 
 ## III. Retrieval Strategy Blueprint
 
-### A. Why This Is an Asymmetric Hybrid Strategy
+### A. Asymmetric Hybrid — Why Two Texts Feed Two Channels
 
-The system deliberately uses **different texts for different vector channels**:
+| Channel | Input | Model | Rationale |
+| --- | --- | --- | --- |
+| Dense | `hyde_paragraph` (long, synthetic) | `BAAI/bge-base-en-v1.5` | Captures abstract semantic intent ("flight to safety", "IV crush"). |
+| Sparse | `rerank_query` (short, factual) | `prithivida/Splade_PP_en_v1` | Enforces exact lexical match for tickers and form types. |
 
-- **Dense channel input:** `hyde_paragraph` (high-context semantic expansion)
-- **Sparse channel input:** `rerank_query` (short factual lexical target)
+### B. Deterministic Pre-Filtering
 
-This asymmetry balances:
-- semantic recall for abstract phrasing, and
-- exact precision for tickers, forms, and event keywords.
+`_build_smart_filter` narrows search space *before* vector math:
 
-### B. Deterministic Filtering Strategy
+- `ticker`, `source_type` (with Silver-only types stripped)
+- SEC: `action_direction`, `form_type`
+- News: `tone_score > 0` / `< 0`
+- Time: OR over `unified_timestamp` **and** `publish_timestamp`,
+  bounded by the per-source `TimePredicate`.
 
-`_build_smart_filter(...)` applies institutional filtering logic before retrieval:
+### C. Post-Fusion Precision
 
-- ticker matching (`ticker`)
-- source-type matching (`source_type`)
-- SEC action/form constraints (`action_direction`, `form_type`)
-- News sentiment constraints (`tone_score > 0` or `< 0`)
-- time-range bounds via `unified_timestamp`
+After `Fusion.RRF` merges dense and sparse prefetch pools,
+`BAAI/bge-reranker-v2-m3` rescores top-K. Chunks with score ≤ 1e-5 are
+dropped.
 
-This design reduces false positives before vector scoring begins.
+### D. Macro as a First-Class Silver Anchor
 
-### C. Post-Fusion Precision Strategy
-
-After RRF fusion:
-
-- candidate texts are rescored by a cross-encoder reranker,
-- low-score noise is dropped (`score > 0.00001`),
-- top-k finalized records are normalized to `RetrievedChunk`.
+`latest_macro_context.md` (written by the macro pipeline) is parsed
+in `master_retriever.py::_parse_macro_snapshot` and folded into
+`silver_context` as `MACRO_*` anchors. This closes the "macro citation
+trap" where the Analyst cited unattributable macro values.
 
 ---
 
 ## IV. End-to-End Workflow (Execution Graph)
 
 ```text
-[User Query]
-    |
-    v
-[QueryIntent (upstream router/orchestrator)]
-    |
-    v
-[Stage 1: Metadata Extraction | ChatOllama + Pydantic]
-    |- ontology-constrained fields
-    |- ticker whitelist guardrail
-    |- enum-normalized metadata
-    |
-    v
-[Stage 2: HyDE + Rerank Query Generation | ChatOllama + Pydantic]
-    |- hyde_paragraph (semantic carrier)
-    |- rerank_query (lexical carrier)
-    |
-    v
-[Hybrid Vectorization]
-    |- Dense: embed_query(hyde_paragraph)
-    |- Sparse: SPLADE(query_embed(rerank_query))
-    |
-    v
-[Qdrant Prefetch + Fusion.RRF]
-    |- dense prefetch (using="dense")
-    |- sparse prefetch (using="sparse")
-    |- metadata/time smart filter
-    |
-    v
-[Cross-Encoder Rerank]
-    |- pairwise scoring: [rerank_query, candidate_text]
-    |- sort descending
-    |
-    v
-[RetrievedChunk[] Output]
-    |- bronze_ref (accession/url/id fallback)
-    |- source_type, score, metadata
-    |
-    v
-[Audit Logs + downstream agent consumption]
+[ User Query ]
+    │
+    ▼
+[ MasterRetriever.router_llm (llama3:latest) ]            ← route decision
+    │
+    ▼
+[ QueryTransformer (options-expert-v1:latest, 70B) ]      ← 2-stage transform
+    │                                                     ─ EXTRACT (JSON)
+    │                                                     ─ HyDE
+    ▼
+[ time_adapter.compile_all(anchor_date from RunState) ]   ← per-source windows
+    │
+    ├──────────────┬─────────────────────────────────────┐
+    ▼              ▼                                     ▼
+[ Gold ]       [ Silver SQL ]                      [ Macro snapshot ]
+FinancialHybrid  sql_tools.SilverSQLTool           parse latest_macro_context.md
+  Retriever       ├─ handler dispatcher (metrics) → MACRO_* anchors
+  ├─ Dense        ├─ metadata windowed Parquet   │
+  ├─ Sparse       └─ anchors[]                   │
+  ├─ RRF fuse                                    │
+  ├─ Rerank                                      │
+  └─ drop score ≤ 1e-5                           │
+    │                                            │
+    └──────────────┬──────────────────────────────┘
+                   ▼
+            [ MasterRetriever merges → MasterRetrievalResult ]
+                   │
+                   ▼
+              LangGraph Agents (Router → Analyst → Checker → Finalizer)
 ```
 
 ---
 
-## V. Model Registry and Compute Placement (CPU/GPU)
+## V. Model Registry
 
-### A. Query Transformation Models
+This section mirrors `docs/ARCHITECTURE.md` §5. Treat that document as
+canonical; this table is here for reader convenience.
 
-1. **Extractor LLM**
-   - Class: `ChatOllama(...).with_structured_output(MetadataExtraction)`
-   - Env key: `OLLAMA_CUSTOM_MODEL_NAME`
-   - Default: `options-expert-v1:latest`
-   - Purpose: strict metadata extraction and reasoning chain
-   - Compute: managed by Ollama runtime (CPU/GPU selection depends on host Ollama configuration)
+### A. Ollama LLMs
 
-2. **HyDE Writer LLM**
-   - Class: `ChatOllama(...).with_structured_output(HyDEGeneration)`
-   - Env key: `OLLAMA_CUSTOM_MODEL_NAME`
-   - Default: `options-expert-v1:latest`
-   - Purpose: generate `hyde_paragraph` and `rerank_query`
-   - Compute: managed by Ollama runtime (CPU/GPU depends on Ollama deployment)
+| Role | Model | Env | Notes |
+| --- | --- | --- | --- |
+| Intent router | `llama3:latest` | `OLLAMA_ROUTER_MODEL` | `MasterRetriever.router_llm`. Small JSON output. |
+| Metadata extractor | `options-expert-v1:latest` | `OLLAMA_CUSTOM_MODEL_NAME` | `QueryTransformer` Stage 1. Fine-tuned Llama-3.3-70B-Q4. |
+| HyDE writer | `options-expert-v1:latest` | `OLLAMA_CUSTOM_MODEL_NAME` | `QueryTransformer` Stage 2. |
 
-### B. Retrieval Models
+### B. Retrieval models (not Ollama)
 
-1. **Dense Embedding Model**
-   - Source factory: `get_embedding_model()` in `connection.py`
-   - Provider env: `EMBEDDING_PROVIDER` (default `huggingface`)
-   - Model env: `EMBEDDING_MODEL_NAME` (default `BAAI/bge-large-en-v1.5`)
-   - Device env: `EMBEDDING_DEVICE` (default `cpu`)
-   - Compute:
-     - HuggingFace mode: explicit `EMBEDDING_DEVICE` control (`cpu`, `cuda`, `mps`, etc.)
-     - Ollama embedding mode: compute managed by Ollama server (`OLLAMA_HOST`)
+| Purpose | Artefact | Env | Device |
+| --- | --- | --- | --- |
+| Dense encoder | `BAAI/bge-base-en-v1.5` | `EMBEDDING_MODEL_NAME` | `EMBEDDING_DEVICE` (default `cpu`) |
+| Sparse (SPLADE) | `prithivida/Splade_PP_en_v1` | `SPARSE_MODEL_NAME` | CPU, `FASTEMBED_THREADS` |
+| Cross-encoder reranker | `BAAI/bge-reranker-v2-m3` | `RERANKER_MODEL_NAME` | `RETRIEVER_DEVICE` |
 
-2. **Sparse Embedding Model**
-   - Class: `SparseTextEmbedding`
-   - Env key: `SPARSE_MODEL_NAME`
-   - Default: `prithivida/Splade_PP_en_v1`
-   - Threads env: `FASTEMBED_THREADS` (default `4`)
-   - Compute: CPU-oriented thread execution
+### C. Data plane
 
-3. **Reranker Model**
-   - Class: `CrossEncoder`
-   - Env key: `RERANKER_MODEL_NAME`
-   - Default: `BAAI/bge-reranker-v2-m3`
-   - Device env: `RETRIEVER_DEVICE` (default `cpu`)
-   - Compute: explicit PyTorch device control via `RETRIEVER_DEVICE` (CPU or GPU-enabled if available)
-
-### C. Data Plane / Database Runtime
-
-- **Vector database:** Qdrant Cloud
-- **Client:** `QdrantClient`
-- **Connection mode:** HTTP/HTTPS (`prefer_grpc=False`)
-- **Timeout:** `15.0s`
-- **Retry policy:** up to `3` attempts with `2s` delay
+- Vector DB: **Qdrant Cloud** (`QDRANT_HOST`, `QDRANT_API_KEY`)
+- Connection: HTTP/HTTPS, `timeout=15s`, `retries=3 × 2s`.
 
 ---
 
@@ -210,40 +212,59 @@ After RRF fusion:
 | --- | --- | --- |
 | `QDRANT_HOST` | required | Qdrant Cloud endpoint |
 | `QDRANT_API_KEY` | required | Qdrant authentication |
-| `EMBEDDING_PROVIDER` | `huggingface` | Dense embedding backend |
-| `EMBEDDING_MODEL_NAME` | `BAAI/bge-large-en-v1.5` | Dense model selection |
-| `EMBEDDING_DEVICE` | `cpu` | Dense model device placement |
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama embedding server endpoint |
-| `OLLAMA_CUSTOM_MODEL_NAME` | `options-expert-v1:latest` | Query-transform LLM for both stages |
-| `SPARSE_MODEL_NAME` | `prithivida/Splade_PP_en_v1` | Sparse lexical model |
-| `FASTEMBED_THREADS` | `4` | Sparse model thread count |
-| `RERANKER_MODEL_NAME` | `BAAI/bge-reranker-v2-m3` | Cross-encoder model |
-| `RETRIEVER_DEVICE` | `cpu` | Cross-encoder device placement |
+| `EMBEDDING_MODEL_NAME` | `BAAI/bge-base-en-v1.5` | Dense encoder |
+| `EMBEDDING_DEVICE` | `cpu` | Dense encoder device |
+| `SPARSE_MODEL_NAME` | `prithivida/Splade_PP_en_v1` | Sparse encoder |
+| `FASTEMBED_THREADS` | `6` | Sparse encoder threads |
+| `RERANKER_MODEL_NAME` | `BAAI/bge-reranker-v2-m3` | Cross-encoder |
+| `RETRIEVER_DEVICE` | `cpu` | Cross-encoder device |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint |
+| `OLLAMA_CUSTOM_MODEL_NAME` | `options-expert-v1:latest` | Query transform + all agents |
+| `OLLAMA_ROUTER_MODEL` | `llama3:latest` | `MasterRetriever` router |
 
 ---
 
 ## VII. Reliability and Auditability Controls
 
-- **Singleton/caching controls:**
-  - `@lru_cache` for embedding model and Qdrant client
-  - singleton retriever instance via `__new__`
-- **Traceability controls:**
-  - transformation audit JSONL
-  - retrieval audit JSONL with scores, latency, filters, fallback flag
-- **Failure controls:**
-  - retrying Qdrant connection policy
-  - exception-safe retrieval returns empty list with logged diagnostics
+- **Singleton caching** — `@lru_cache` for embeddings, `__new__` for
+  retriever, `llm_pool` for Ollama clients.
+- **Transformation audit** — `logs/query_transform/<date>/query_audit_trail.jsonl`
+- **Retrieval audit** — `logs/retrieval/<date>/retriever_audit_trail.jsonl`
+- **SilverSQL audit** — `logs/Parquet_Query/<date>/*` via the
+  `SilverSQLAudit` logger.
+- **Graceful failure** — any retriever that raises returns `[]` +
+  logged diagnostics; agents never observe an exception.
+- **Time determinism** — `TimePredicate`s serialised into `AgentState`
+  guarantee that Checker rescue re-queries use an identical window to
+  the original retrieval.
 
 ---
 
 ## VIII. Practical Invocation Sequence
 
 ```python
-# Pseudocode-level flow
-intent = QueryIntent(primary_route="hybrid_both")
-transform_result = await QueryTransformer().transform_for_dual_rag(query, intent)
-chunks = await FinancialHybridRetriever().retrieve_async(query, transform_result, top_k=5)
+# Orchestrator-level flow (simplified)
+from Scripts.retrieval.master_retriever import MasterRetriever
+
+retriever = MasterRetriever()
+result = await retriever.retrieve_async(
+    raw_query="What is AAPL's IV skew yesterday and are insiders active?",
+)
+# result.gold_context   — List[RetrievedChunk]
+# result.silver_context — List[AnchorRecord] (including MACRO_* anchors)
+# result.time_range     — {anchor_date, source_predicates: [...]}
 ```
 
-This sequence represents the canonical retrieval path used by downstream agents.
+`result` is the canonical input for `Scripts.agents.router.router_node`.
 
+---
+
+## IX. Change Log
+
+| Date | Change | Rationale |
+| --- | --- | --- |
+| 2026-04-22 | `time_adapter.TimePredicate` serialised into `AgentState` | Eliminates `latest_atm_iv` oscillation across Checker rescue. |
+| 2026-04-22 | Macro snapshot parsed into first-class Silver anchors | Closes the macro citation trap. |
+| 2026-04-22 | Dual time-key OR (`unified_timestamp` OR `publish_timestamp`) | Makes legacy SEC/news filings discoverable. |
+| 2026-04-22 | `MasterRetriever.router_llm` env renamed to `OLLAMA_ROUTER_MODEL` | Separates router tier from expert tier per `docs/LLM_Pool.md`. |
+| 2026-04-22 | Business-day snapping for daily-grain predicates | `"yesterday"` on a Monday → previous Friday. |

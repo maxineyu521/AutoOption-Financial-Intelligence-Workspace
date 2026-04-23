@@ -1,101 +1,202 @@
-# Technical Documentation: Asymmetric Hybrid Retrieval Engine (Gold Layer)
+# Gold-Layer Asymmetric Hybrid Retriever
 
-## 1. Strategic Objective (Goal)
-The primary objective of the `qdrant_retriever.py` module is to serve as the **Asymmetric Hybrid Retrieval Engine** for the system's Gold Semantic Layer. It bridges the gap between the LLM's query transformation (HyDE & Metadata) and the Qdrant vector database. By enforcing deterministic metadata pre-filtering and utilizing Reciprocal Rank Fusion (RRF), it guarantees that downstream multi-agent workflows receive context that is both semantically relevant and highly precise regarding specific financial entities and timeframes.
+_Scope: `Scripts/retrieval/qdrant_retriever.py`._
+
+This document specifies the Gold-layer retrieval engine that turns a
+`FullTransformationResult` into a ranked list of `RetrievedChunk`s.
+
+---
+
+## 1. Strategic Objective
+
+Bridge the LLM's transformation payload (HyDE + metadata) and Qdrant
+Cloud with three guarantees:
+
+- **Temporal alignment** — all filters are built from
+  `TimePredicate` objects produced upstream by `time_adapter`, not from
+  wall-clock time. One anchor, one window, all sources.
+- **Lexical precision** — SPLADE sparse retrieval against the raw
+  query (or `rerank_query`) preserves rare tickers and acronyms that
+  dense embeddings blur.
+- **Post-fusion sharpness** — a cross-encoder reranker rescues the
+  handful of true positives that RRF mixes with noise.
 
 ---
 
 ## 2. System Architecture
-The module is engineered with a focus on high-throughput, low-latency, and fault-tolerant execution:
 
-* **Singleton Resource Management (`_instance`):** Guarantees that heavy assets (database connections, Dense/Sparse embedding models) are loaded into memory exactly once per application lifecycle, preventing VRAM leaks.
-* **Dual-Track Embedding Topology:** * *Dense Track:* Utilizes standard embeddings (e.g., HuggingFace/Nomic) against the LLM-generated HyDE paragraph to capture broad semantic intent (e.g., "flight to safety", "IV crush").
-    * *Sparse Track:* Utilizes `fastembed` (SPLADE) against the raw user query to enforce exact-match lexical scoring for rare tickers or financial acronyms.
-* **Defensive Filtering & RRF:** Employs Qdrant's native `models.Filter` for hard bounds (date ranges, specific tickers) and `models.Fusion.RRF` to mathematically balance Dense and Sparse retrieval scores.
+| Layer | Implementation |
+| --- | --- |
+| **Singleton resources** | `_instance` pattern caches Qdrant client + embedding models per process. |
+| **Asymmetric vectorisation** | Dense ← `hyde_paragraph`, Sparse ← `rerank_query` (or raw query). |
+| **Source-aware time filter** | Per-source `TimePredicate` → OR-joined `unified_timestamp` / `publish_timestamp` range conditions. |
+| **Defensive filtering** | `models.Filter` pre-filter (ticker, source_type, action, form, sentiment). |
+| **RRF fusion** | `Fusion.RRF` combines dense + sparse prefetch channels. |
+| **Cross-encoder rerank** | `CrossEncoder(BAAI/bge-reranker-v2-m3)` rescores top-K. |
 
 ---
 
-## 3. Code Strategy & Execution Workflow
-The execution strategy operates asynchronously, mapping the structured transformation payload into a complex database query, executing it, and standardizing the output.
+## 3. Execution Workflow
 
 ```text
-[ Input: FullTransformationResult & Raw Query ]
+[ FullTransformationResult + raw query + time_predicates ]
         │
         ▼
-[ Step 1: Deterministic Filter Construction ]
-  ├─► Evaluate TimeWindow (Convert to Unix Timestamp constraints)
-  └─► Evaluate Tickers (Generate 'Should' matching filters)
+┌─────────────────────────────────────────────────────────────┐
+│ Step 1 — Deterministic Filter Construction                  │
+│  ├─► ticker match         (models.FieldCondition)           │
+│  ├─► source_type match    (drops Silver-only source_types)  │
+│  ├─► action_direction     (SEC)                             │
+│  ├─► form_type            (SEC)                             │
+│  ├─► sentiment range      (news)                            │
+│  └─► per-source time OR   (unified_timestamp OR publish_ts) │
+└─────────────────────────────────────────────────────────────┘
         │
         ▼
-[ Step 2: Asymmetric Vectorization ]
-  ├─► Embed HyDE Paragraph -> Dense Vector (Semantic)
-  └─► Embed Raw Query -> Sparse Vector (Lexical/BM25)
+┌─────────────────────────────────────────────────────────────┐
+│ Step 2 — Asymmetric Vectorisation                           │
+│  ├─► Dense : HuggingFace `BAAI/bge-base-en-v1.5`            │
+│  │           (hyde_paragraph → dense vector)                │
+│  └─► Sparse: fastembed `Splade_PP_en_v1`                    │
+│              (rerank_query  → sparse vector)                │
+└─────────────────────────────────────────────────────────────┘
         │
         ▼
-[ Step 3: Qdrant Prefetch & Fusion Execution ]
-  └─► Execute Qdrant `FusionQuery(fusion=RRF)`
-  └─► Apply Step 1 Filters to limit search space BEFORE vector math.
+┌─────────────────────────────────────────────────────────────┐
+│ Step 3 — Qdrant Prefetch + Fusion.RRF                       │
+│  using="dense"  prefetch  + filter                          │
+│  using="sparse" prefetch  + filter                          │
+│  → RRF(fusion=RRF) top_k_pool candidates                    │
+└─────────────────────────────────────────────────────────────┘
         │
         ▼
-[ Output: List[RetrievedChunk] ]
-  └─► Mapped & cleansed for the Agent Orchestrator
+┌─────────────────────────────────────────────────────────────┐
+│ Step 4 — Cross-Encoder Rerank                               │
+│  CrossEncoder(BAAI/bge-reranker-v2-m3)                      │
+│  pairwise score([rerank_query, candidate_text]) → top_k     │
+│  drop score ≤ 1e-5                                          │
+└─────────────────────────────────────────────────────────────┘
+        │
+        ▼
+[ List[RetrievedChunk] ]
+  └─► audit → logs/retrieval/<date>/retriever_audit_trail.jsonl
 ```
 
 ---
 
-## 4. Output Data Schema & Routing
-The module does not write to a physical file path. It operates entirely in memory, returning a strictly typed Python list of `RetrievedChunk` objects. This payload is routed directly to the LangGraph agents (Analyst, Checker, Critic).
+## 4. Temporal Alignment Contract
 
-### Schema: `RetrievedChunk` (Mapped Output)
+`retrieve_async` accepts an explicit
+`time_predicates: Dict[SourceTimeKey, TimePredicate]` argument. If
+present it is used directly; if absent the retriever falls back to the
+single `time_window` value inside `FullTransformationResult`.
 
-| Field Name | Data Type | Source/Index | Purpose |
+Two non-negotiable rules:
+
+1. **OR over `unified_timestamp` and `publish_timestamp`.** Some
+   collections only populate one of the two keys; the retriever
+   must accept a hit on either. Without this, SEC/News filings
+   written by the legacy ingestor are invisible.
+2. **Business-day snapping.** Daily-grain predicates (for
+   `source_type=options`) are computed by `trading_calendar.py` so
+   that `"yesterday"` on a Monday resolves to the previous Friday —
+   not an empty Sunday.
+
+> **Ops note on Qdrant indexing.** `publish_timestamp` must be
+> indexed on the collection, otherwise Qdrant raises
+> `400 Index required but not found for "publish_timestamp"`. This
+> is a one-time schema fix on the Qdrant side; see
+> `Scripts/vector_store/ingestion.py` for the canonical index
+> payload.
+
+---
+
+## 5. Output Schema — `RetrievedChunk`
+
+| Field | Type | Source | Purpose |
 | :--- | :--- | :--- | :--- |
-| `chunk_id` | String | Qdrant `id` | Unique UUID of the point for traceability. |
-| `text` | String | Qdrant Payload | The actual financial summary/news text. |
-| `score` | Float | RRF Algorithm | Combined relevance score used for MMR reranking. |
-| `source_type` | Enum / String | Qdrant Payload | Categorizes origin (e.g., `SEC_Form_4`, `GDELT_News`). |
-| `timestamp` | Integer | Qdrant Payload | Unix epoch of publication, critical for temporal weighting. |
-| `bronze_ref` | String | Qdrant Payload | Accession number or URL linking back to the raw Bronze data. |
-| `metadata` | Dictionary | Qdrant Payload | Unpacked entity tags (tickers, impacted assets). |
+| `chunk_id` | String | Qdrant `id` | Unique UUID — traceability. |
+| `text` | String | Qdrant payload | Actual news / SEC / macro text. |
+| `score` | Float | RRF + rerank | Post-rerank relevance. |
+| `source_type` | String | Qdrant payload | `sec` / `news` / `macro` / `gpr`. |
+| `timestamp` | Integer | `unified_timestamp` or `publish_timestamp` | Unix epoch. |
+| `bronze_ref` | String | payload | Accession / URL / UUID fallback. |
+| `metadata` | Dict | payload | Tickers, impacted_assets, form_type, tone_score, … |
 
 ---
 
-## 5. Verification & Testing Protocol
-The script includes an asynchronous sandboxed testing environment (`if __name__ == "__main__":`). It utilizes a mock implementation of the `QueryTransformer` to simulate a full query-to-retrieval lifecycle without requiring the entire system to run.
-
-**How to Test:**
-Execute the script directly from your terminal:
-```bash
-python Scripts/retrieval/qdrant_retriever.py
-```
-
-**Expected Successful Output:**
-1. **Stage 1 (Mock):** Console prints the simulated LLM extraction (Tickers, Time, HyDE generation).
-2. **Stage 2 (Retrieval):** The console prints `🔍 Stage 2: Qdrant Hybrid Retrieving...`.
-3. **Final Result:** Outputs `✅ Final Retrieved: [N] chunks` followed by an enumerated list of results displaying their RRF Scores, Bronze References, Source Types, and primary Tickers.
+## 6. Example Audit Entry
 
 ```json
-{"timestamp": "2026-04-19T21:16:01.849708", 
-"original_query": "What recent insider buying activity has there been for TSLA and how did the market react?", 
-"rerank_query_used": "TSLA Form 4 insider buying executives past month", "filter_applied": {
-  "should": null, 
-  "min_should": null, 
-  "must": [
-    {"key": "ticker", "match": {"any": ["TSLA"]}, "range": null, "geo_bounding_box": null, "geo_radius": null, "geo_polygon": null, "values_count": null, "is_empty": null, "is_null": null}, 
-    {"key": "source_type", "match": {"any": ["sec", "news"]}, "range": null, "geo_bounding_box": null, "geo_radius": null, "geo_polygon": null, "values_count": null, "is_empty": null, "is_null": null}, 
-    {"key": "action_direction", "match": {"any": ["BUY", "ACQUIRE/VEST"]}, "range": null, "geo_bounding_box": null, "geo_radius": null, "geo_polygon": null, "values_count": null, "is_empty": null, "is_null": null}, 
-    {"key": "form_type", "match": {"value": "4"}, "range": null, "geo_bounding_box": null, "geo_radius": null, "geo_polygon": null, "values_count": null, "is_empty": null, "is_null": null}, 
-    {"key": "unified_timestamp", "match": null, "range": {"lt": null, "gt": null, "gte": 1774055761.0, "lte": 1776647761.0}, "geo_bounding_box": null, "geo_radius": null, "geo_polygon": null, "values_count": null, "is_empty": null, "is_null": null}], "must_not": null}, 
-    "fallback_triggered": false, "results_count": 1, "top_k_scores": [0.0145], "latency_sec": 0.857, "status": "SUCCESS", "error_msg": null}
+{
+  "timestamp": "2026-04-19T21:16:01.849708",
+  "original_query": "What recent insider buying activity has there been for TSLA and how did the market react?",
+  "rerank_query_used": "TSLA Form 4 insider buying executives past month",
+  "filter_applied": {
+    "must": [
+      {"key": "ticker", "match": {"any": ["TSLA"]}},
+      {"key": "source_type", "match": {"any": ["sec", "news"]}},
+      {"key": "action_direction", "match": {"any": ["BUY", "ACQUIRE/VEST"]}},
+      {"key": "form_type", "match": {"value": "4"}},
+      {
+        "should": [
+          {"key": "unified_timestamp", "range": {"gte": 1774055761.0, "lte": 1776647761.0}},
+          {"key": "publish_timestamp", "range": {"gte": 1774055761.0, "lte": 1776647761.0}}
+        ]
+      }
+    ]
+  },
+  "fallback_triggered": false,
+  "results_count": 1,
+  "top_k_scores": [0.0145],
+  "latency_sec": 0.857,
+  "status": "SUCCESS"
+}
 ```
 
 ---
 
-## 6. Environment Dependencies
-Ensure your `.env` file contains your Qdrant credentials and HuggingFace cache paths. 
+## 7. Reliability Controls
 
-**One-Line Installation Command:**
+| Control | Mechanism |
+| --- | --- |
+| Singleton resources | `__new__` + `@lru_cache` keeps heavy models loaded once per process. |
+| Connection resilience | Qdrant client opens with `prefer_grpc=False`, `timeout=15s`, `retries=3 × 2s`. |
+| Graceful failure | Any exception in `retrieve_async` logs a `FAILED` audit row and returns `[]` — agents never observe a crash. |
+| Fallback tiers | `drop_ticker_180d` widens the window and drops the ticker filter when the first pass returns 0 chunks. |
+
+---
+
+## 8. Verification
+
+```bash
+python Scripts/retrieval/qdrant_retriever.py
+pytest -xvs Scripts/tests/test_master_retriever.py
+pytest -xvs Scripts/tests/test_router_e2e.py
+```
+
+Expected console shape:
+
+1. `🔍 Stage 2: Qdrant Hybrid Retrieving...`
+2. `✅ Final Retrieved: N chunks` followed by enumerated scores.
+
+---
+
+## 9. Environment Dependencies
+
 ```bash
 pip install qdrant-client fastembed sentence-transformers python-dotenv asyncio
 ```
-*(Note: This module relies on the system's core schemas and connection factory located in `Scripts.vector_store.connection` and `Scripts.retrieval.schema`).*
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `EMBEDDING_MODEL_NAME` | `BAAI/bge-base-en-v1.5` | Dense encoder |
+| `EMBEDDING_DEVICE` | `cpu` | Dense encoder placement |
+| `SPARSE_MODEL_NAME` | `prithivida/Splade_PP_en_v1` | Sparse encoder |
+| `FASTEMBED_THREADS` | `6` | Sparse encoder threads |
+| `RERANKER_MODEL_NAME` | `BAAI/bge-reranker-v2-m3` | Cross-encoder |
+| `RETRIEVER_DEVICE` | `cpu` | Cross-encoder placement |
+| `QDRANT_HOST` / `QDRANT_API_KEY` | required | Qdrant Cloud credentials |
+
+_Depends on `Scripts.vector_store.connection` (clients) and
+`Scripts.retrieval.schema` (Pydantic contracts)._
