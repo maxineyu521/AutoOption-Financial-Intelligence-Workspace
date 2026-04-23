@@ -15,15 +15,21 @@ duckduckgo-search
 # Data Processing & Storage
 pandas
 numpy
+duckdb
 fastparquet
 xlrd
 pyarrow
+tqdm
 
 # AI & LLM Integration
 langchain-ollama
+langchain-core
+langchain-community
+langchain-huggingface
+langgraph
+sentence-transformers
 
 # Environment & Utilities
-python-dotenv
 beautifulsoup4
 markdownify
 rich
