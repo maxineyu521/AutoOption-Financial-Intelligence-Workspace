@@ -33,9 +33,55 @@ class SearchMode(str, Enum):
 
 class TimeWindow(str, Enum):
     TODAY = "today"
+    YESTERDAY = "yesterday"
     PAST_WEEK = "past_week"
     PAST_MONTH = "past_month"
+    PAST_SIX_MONTHS = "past_six_months"
     ALL = "all"
+
+# ---------------------------------------------------------------------
+# Global TimeWindow -> day-count policy (single source of truth).
+#
+# Rationale:
+#   - Kept in schema.py (not master_retriever.py) so the Gold retriever
+#     (qdrant_retriever.py) and the Silver retriever (sql_tools.py) can
+#     both consume it without creating a circular import against the
+#     Master Retriever facade.
+#   - master_retriever.py re-exports `TIME_WINDOW_DAYS` and
+#     `time_window_to_days` at module-level, so downstream callers can
+#     still treat master_retriever as the canonical global access point.
+#   - `ALL` is set to 365 days: treated as the hard ceiling for "all history"
+#     requests. Historical-data checks without an explicit time signal fall
+#     back to PAST_SIX_MONTHS (180 days) via the MetadataExtraction validator
+#     below — NOT to ALL — so default recall doesn't silently scan a year of
+#     data. Gold time filtering can still override via `fallback_days`.
+# ---------------------------------------------------------------------
+TIME_WINDOW_DAYS: Dict[str, int] = {
+    TimeWindow.TODAY.value:           1,
+    # "yesterday" = 2 days so that Friday's anchor still covers Monday queries
+    # (weekend gap). Downstream SQL handlers that pick `ORDER BY DESC LIMIT 1`
+    # will naturally grab the most recent available trading day.
+    TimeWindow.YESTERDAY.value:       2,
+    TimeWindow.PAST_WEEK.value:       7,
+    TimeWindow.PAST_MONTH.value:      30,
+    TimeWindow.PAST_SIX_MONTHS.value: 180,
+    TimeWindow.ALL.value:             365,
+}
+
+
+def time_window_to_days(tw: Any, default: int = 30) -> int:
+    """
+    Translate a metadata.time_window value (str or TimeWindow enum) into
+    a day count using the global `TIME_WINDOW_DAYS` policy.
+
+    Returns `default` when the input is missing or unrecognised. This is
+    the ONLY function both Gold and Silver layers should use to reason
+    about lookback windows — do not hard-code day counts elsewhere.
+    """
+    val = getattr(tw, "value", tw)
+    if not isinstance(val, str):
+        return default
+    return TIME_WINDOW_DAYS.get(val.lower(), default)
 
 class FormTypeFilter(str, Enum):
     FORM_4 = "4"
@@ -76,8 +122,15 @@ class MetadataExtraction(BaseModel):
     @field_validator('time_window', mode='before')
     @classmethod
     def handle_empty_window(cls, v: Any) -> TimeWindow:
+        # Time-window fallback policy (single source of truth):
+        #   - User says "all history" / explicit "all"            -> TimeWindow.ALL     (365 days)
+        #   - User omits time / LLM hallucinates an invalid value -> PAST_SIX_MONTHS    (180 days)
+        #   - All other canonical windows (today / past_week / past_month / past_six_months)
+        #     are passed through unchanged.
+        # Matches the extractor prompt ("Default to 6 months if unspecified") and
+        # the Silver/Gold retrievers that read TIME_WINDOW_DAYS.
         if v not in [item.value for item in TimeWindow]:
-            return TimeWindow.ALL
+            return TimeWindow.PAST_SIX_MONTHS
         return v
 
 class HyDEGeneration(BaseModel):

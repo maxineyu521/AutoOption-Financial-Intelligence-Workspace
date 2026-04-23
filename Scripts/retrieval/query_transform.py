@@ -87,23 +87,31 @@ class QueryTransformer:
 
     def _load_allowed_tickers(self) -> List[str]:
         """Build a global ticker pool (equities + ETFs + macro indices)."""
-        # 1) Load SEC ticker universe.
-        sec_tickers = []
-        ticker_path = PROJECT_ROOT / "config" / "SEC_Ingestion" / "SEC_tickers.json"
+        # 1) Load SEC filer universe through the central UniverseLoader. This is
+        #    now the single source of truth; there is no file-path fallback.
+        sec_tickers: List[str] = []
         try:
-            if ticker_path.exists():
-                with open(ticker_path, 'r') as f:
-                    sec_tickers = [t.upper() for t in json.load(f)]
+            from Scripts.core.universe import universe as _universe
+            sec_tickers = [t.upper() for t in _universe.get("sec.filers")]
         except Exception as e:
-            logger.warning(f"Could not load SEC_tickers.json: {e}")
-            
-        # 2) Add ETF and macro index symbols used by retrieval prompts.
-        macro_and_etf_tickers = [
-            "GLD", "SLV", "SPY", "QQQ", "IWM",  # Options and commodity ETFs.
-            "^GSPC", "^IXIC", "^VIX", "DX-Y.NYB"  # Macro indices.
-        ]
-        
-        return list(set(sec_tickers + macro_and_etf_tickers))
+            logger.warning(
+                f"UniverseLoader unavailable ({e}); allowed-ticker pool will "
+                "only contain the hard-coded macro/ETF baseline."
+            )
+
+        # 2) Add macro-index symbols that are NOT in the universe manifest
+        #    (these are ^-prefixed indices / DX-Y.NYB used by retrieval prompts).
+        macro_index_tickers = ["^GSPC", "^IXIC", "^VIX", "DX-Y.NYB"]
+
+        # 3) Best-effort: pull ETF tickers from the universe too, so adding a
+        #    new ETF to config/universe/ automatically propagates here.
+        try:
+            from Scripts.core.universe import universe as _universe
+            etf_tickers = [t.upper() for t in _universe.get("etf.all")]
+        except Exception:
+            etf_tickers = ["GLD", "SLV", "SPY", "QQQ", "IWM"]
+
+        return list(set(sec_tickers + etf_tickers + macro_index_tickers))
 
     def _build_prompts(self):
         """Build decoupled prompts aligned with external template variables."""
@@ -183,6 +191,27 @@ class QueryTransformer:
             if not metadata.time_window:
                 metadata.time_window = TimeWindow.PAST_SIX_MONTHS
 
+            # [GUARDRAIL 3] Ticker-explosion cap.
+            # Defends against LLM hallucination on vague phrases like
+            # "recommended tickers" / "all major stocks", which on 2026-04-22
+            # produced 57 tickers in a single extraction. Downstream Silver
+            # SQL executes one query per metric × ticker → latency blows up
+            # and the Analyst can't reason over 57 separate anchors.
+            #
+            # Policy:
+            #   - > _TICKER_HARD_CAP (default 8)  => keep first _TICKER_KEEP (default 5),
+            #     drop the rest, log LOUD so the audit trail shows degradation.
+            #   - <= _TICKER_HARD_CAP              => pass through.
+            _TICKER_HARD_CAP = int(os.getenv("TICKER_EXPLOSION_CAP", "8"))
+            _TICKER_KEEP     = int(os.getenv("TICKER_EXPLOSION_KEEP", "5"))
+            if len(metadata.tickers) > _TICKER_HARD_CAP:
+                dropped = metadata.tickers[_TICKER_KEEP:]
+                metadata.tickers = metadata.tickers[:_TICKER_KEEP]
+                logger.warning(
+                    f"⚠️ Guardrail 3 (ticker explosion): original={len(dropped) + _TICKER_KEEP} "
+                    f"kept={metadata.tickers} dropped={dropped}"
+                )
+
             # Map semantic metrics to physical database columns.
             mapped_cols = set()
             for m in metadata.metrics:
@@ -202,6 +231,41 @@ class QueryTransformer:
                     reasoning_chain=metadata.logical_reasoning
                 )
             )
+
+            # [GUARDRAIL 4] HyDE empty-paragraph fallback.
+            # Production audit on 2026-04-22 caught a live case where the
+            # structured-output LLM returned hyde_paragraph="" for a
+            # perfectly well-formed "yesterday PCR + IV Skew for AAPL" query,
+            # blanking out dense retrieval entirely. Rather than let the Gold
+            # engine get an empty vector, we synthesise a deterministic
+            # one-liner from the metadata so the dense embedder always has a
+            # coherent sentence to embed. The rerank_query is also reproduced
+            # so sparse retrieval stays aligned.
+            hyde_para = (hyde_result.hyde_paragraph or "").strip()
+            hyde_rr = (hyde_result.rerank_query or "").strip()
+            if not hyde_para:
+                metric_str = ", ".join(metadata.metrics) if metadata.metrics else "market data"
+                ticker_str = ", ".join(metadata.tickers) if metadata.tickers else "the broader market"
+                tw_val = getattr(metadata.time_window, "value", metadata.time_window) or "recent"
+                hyde_para = (
+                    f"Analysis of {metric_str} for {ticker_str} over the {tw_val} window "
+                    f"reflects the current implied-volatility regime and "
+                    f"options-flow sentiment relevant to the query."
+                )
+                logger.warning(
+                    f"⚠️ Guardrail 4 (HyDE empty): synthesised fallback paragraph "
+                    f"({len(hyde_para)} chars) from metadata."
+                )
+            if not hyde_rr:
+                parts = []
+                if metadata.tickers:
+                    parts.extend(metadata.tickers)
+                if metadata.metrics:
+                    parts.extend(metadata.metrics)
+                if getattr(metadata, "event_keyword", None):
+                    parts.append(metadata.event_keyword)
+                hyde_rr = " ".join(parts) if parts else query
+            hyde_result = HyDEGeneration(hyde_paragraph=hyde_para, rerank_query=hyde_rr)
 
             # Aggregate stage outputs into one typed payload.
             final_result = FullTransformationResult(
