@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import time
 import requests
@@ -19,13 +20,21 @@ from functools import wraps
 BASE_DIR = os.path.abspath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
 )
+# Make Scripts.core.universe importable whether this file is executed directly
+# (`python sec_ingestion.py`) or as a module (`python -m ...sec_ingestion`).
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
 today_str = datetime.now().strftime("%Y-%m-%d")
 
 RAW_FOLDER = os.path.join(BASE_DIR, "Data", "1_Bronze_Raw", "SEC_Parsed_JSON", today_str)
-CONFIG_FOLDER = os.path.join(BASE_DIR, "config", "SEC_Ingestion")
+# LOG_DIR still uses the SEC_Ingestion path prefix INSIDE logs/{date}/ — that is
+# a log-channel name, not a config folder. The retired config/SEC_Ingestion/
+# folder is no longer created here; universe + reference maps are now resolved
+# entirely through Scripts.core.universe.
 LOG_DIR = os.path.join(BASE_DIR, "logs", today_str, "SEC_Ingestion")
 
-for folder in [RAW_FOLDER, CONFIG_FOLDER, LOG_DIR]:
+for folder in [RAW_FOLDER, LOG_DIR]:
     os.makedirs(folder, exist_ok=True)
 
 load_dotenv(dotenv_path=os.path.join(BASE_DIR, '.env'))
@@ -72,26 +81,45 @@ def retry_on_exception(retries=3, delay=2):
     return decorator
 
 def load_local_cik_map() -> dict:
-    """ directly load the static CIK mapping from local JSON file, no API calls needed """
-    file_path = os.path.join(CONFIG_FOLDER, "ticker_to_cik.json")
+    """Thin shim retained for backward compat with external callers.
+
+    Delegates to ``Scripts.core.universe.UniverseLoader.cik_map()``, which reads
+    ``config/reference/ticker_to_cik.json``.
+    """
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            mapping = json.load(f)
-            logger.info(f"✅ Successfully loaded {len(mapping)} CIK mappings from local file")
-            return mapping
-    except FileNotFoundError:
-        logger.error(f"❌ File not found: {file_path}. Please run generate_cik_map.py first")
+        from Scripts.core.universe import universe as _universe
+        mapping = _universe.cik_map()
+        logger.info(f"✅ Successfully loaded {len(mapping)} CIK mappings via UniverseLoader")
+        return mapping
+    except Exception as e:
+        logger.error(f"❌ UniverseLoader.cik_map() failed: {e}. Run SEC_generate_cik_map.py first.")
         return {}
 
 def load_tickers(file_name: str) -> list:
-    file_path = os.path.join(CONFIG_FOLDER, file_name)
+    """Thin shim retained for backward compat.
+
+    Maps the legacy file name ``SEC_tickers.json`` to
+    ``universe.get('sec.filers')``; anything else returns an empty list with a
+    warning.
+    """
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            tickers = json.load(f)
-            logger.info(f"Loaded {len(tickers)} tickers from {file_path}")
-            return tickers
+        from Scripts.core.universe import universe as _universe
     except Exception as e:
-        logger.error(f"Error loading {file_path}: {e}")
+        logger.error(f"UniverseLoader unavailable: {e}")
+        return []
+    if file_name.lower() in ("sec_tickers.json", "equity_single_name.json"):
+        tickers = _universe.get("sec.filers")
+        logger.info(f"Loaded {len(tickers)} tickers via UniverseLoader (sec.filers)")
+        return tickers
+    logger.warning(
+        f"load_tickers({file_name}): no universe-role mapping for this legacy "
+        "filename; returning empty list. Migrate the caller to universe.get(role)."
+    )
+    try:
+        with open(file_name, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading {file_name}: {e}")
         return []
 
 # ==========================================
@@ -292,12 +320,15 @@ def generate_daily_summary():
 if __name__ == "__main__":
     if SEC_USER_AGENT == "DataEngineer (bot@example.com)":
         logger.warning("⚠️ WARNING: You are using the default SEC_USER_AGENT. Please set a custom User-Agent in your .env file to avoid being blocked by SEC.")
-        
-    nasdaq_targets = load_tickers("SEC_tickers.json")
-    
+
+    # Universe + reference maps are resolved through Scripts.core.universe —
+    # the single source of truth (config/universe/ + config/reference/).
+    from Scripts.core.universe import universe as _universe
+    nasdaq_targets = _universe.get("sec.filers")
+    logger.info(f"✅ Loaded {len(nasdaq_targets)} SEC filers via UniverseLoader (role=sec.filers)")
+
     if nasdaq_targets:
-        # 1. Load CIK mapping from local file (no API calls needed)
-        ticker_to_cik = load_local_cik_map()
+        ticker_to_cik = _universe.cik_map()
         
         if not ticker_to_cik:
             logger.error("❌ CIK mapping is empty. Cannot proceed with SEC data ingestion.")

@@ -81,34 +81,41 @@ class JobDefinition:
 class StateStore:
     """
     Persistent state for idempotent scheduling (avoids duplicate runs).
+
+    Thin adapter over :class:`Scripts.orchestration.run_state.RunState` so
+    that the legacy ``SchedulerService`` daemon and the new CLI share the
+    *same* ``config/runtime/collect_data_state.json``. All reads / writes
+    delegate to the orchestration layer — atomic writes, tolerant reads,
+    dataset-anchor mapping all come for free.
     """
 
     def __init__(self, state_file: Path) -> None:
-        self.state_file = state_file
-        self.state: Dict[str, str] = {"last_run_keys": {}}
-        self._load()
+        # Importing here (rather than at module top) keeps this file usable
+        # as a standalone daemon even on environments where the full
+        # orchestration package is still being rolled out.
+        from Scripts.orchestration.run_state import RunState
 
-    def _load(self) -> None:
-        if not self.state_file.exists():
-            return
-        try:
-            self.state = json.loads(self.state_file.read_text(encoding="utf-8"))
-            if "last_run_keys" not in self.state:
-                self.state["last_run_keys"] = {}
-        except Exception:
-            self.state = {"last_run_keys": {}}
+        self.state_file = state_file
+        self._run_state = RunState(state_path=state_file)
+
+    # ---- back-compat surface (used by SchedulerService) --------------
+
+    @property
+    def state(self) -> Dict[str, Dict[str, str]]:
+        """Mirror the pre-refactor ``.state`` dict for callers that touch
+        it directly (``self.state["last_run_keys"][...]``)."""
+        return {"last_run_keys": self._run_state.all_run_keys()}
 
     def save(self) -> None:
-        self.state_file.write_text(
-            json.dumps(self.state, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        # RunState writes atomically after every mutation, so this is a
+        # no-op — kept so existing callers do not raise AttributeError.
+        return None
 
     def get_last_run_key(self, job_name: str) -> str | None:
-        return self.state.get("last_run_keys", {}).get(job_name)
+        return self._run_state.get_run_key(job_name)
 
     def set_last_run_key(self, job_name: str, run_key: str) -> None:
-        self.state.setdefault("last_run_keys", {})[job_name] = run_key
-        self.save()
+        self._run_state.write_run_key(job_name, run_key)
 
 
 class JobRunner:

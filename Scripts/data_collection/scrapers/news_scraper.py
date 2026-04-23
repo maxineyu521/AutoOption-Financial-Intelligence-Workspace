@@ -16,8 +16,21 @@ warnings.filterwarnings('ignore')
 # ==========================================
 # 0. Dynamic Path & Directory Setup
 # ==========================================
-print("Initializing local Llama 3 model as the data cleaning engine...")
-llm = ChatOllama(model="llama3", temperature=0)
+# Ingestion-time sentiment / cleaning model. Canonical tag is `llama3:latest`
+# (vanilla Meta Llama-3 8B). Respect `.env` overrides so ops can swap the
+# model without code changes — see docs/LLM_Pool.md §1 for the two-tier
+# model contract.
+_INGESTION_MODEL = os.getenv(
+    "OLLAMA_INGESTION_MODEL",
+    os.getenv("OLLAMA_ROUTER_MODEL", "llama3:latest"),
+)
+print(f"Initializing local {_INGESTION_MODEL} as the data cleaning engine...")
+llm = ChatOllama(
+    model=_INGESTION_MODEL,
+    temperature=0,
+    base_url=os.getenv("OLLAMA_HOST", "http://localhost:11434"),
+    keep_alive=os.getenv("OLLAMA_KEEP_ALIVE", "30m"),
+)
 
 # 1. Get current system date (Format: YYYY-MM-DD)
 current_date = datetime.now().strftime("%Y-%m-%d")

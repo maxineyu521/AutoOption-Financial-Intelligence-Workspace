@@ -1,11 +1,12 @@
-import yfinance as yf
 import logging
-from typing import Dict, Any, List
-from datetime import datetime
-import pandas as pd
-import numpy as np
 import os
+import sys
 import time
+from datetime import datetime
+from typing import Dict, Any, List
+
+import numpy as np
+import pandas as pd
 
 # ==========================================
 # 0. Dynamic Path & Logging Configuration
@@ -14,6 +15,20 @@ import time
 BASE_DIR = os.path.abspath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
 )
+# Make Scripts.core.* importable when executed directly (python Scripts/...).
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+# ------------------------------------------------------------------
+# yfinance timezone-cache redirect — MUST run before `import yfinance`
+# so the SQLite tz DB lands on a lock-safe filesystem (not NFS/GPFS).
+# See docs/test/2026-04-22/ingestion_and_query_runtime_failures.md.
+# ------------------------------------------------------------------
+from Scripts.core.yfinance_bootstrap import configure_yfinance_cache  # noqa: E402
+configure_yfinance_cache()
+
+import yfinance as yf  # noqa: E402  (intentional post-bootstrap import)
+
 DATA_DIR = os.path.join(BASE_DIR, "Data","2_Silver_Processed", "Options_Market_Data")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 
@@ -127,11 +142,27 @@ class YFinanceClient:
         """
         today = datetime.now()
         today_str = today.strftime("%Y-%m-%d")
-        
-        # [Architecture Update 1]: Create daily subfolder
-        daily_folder = os.path.join(DATA_DIR, today_str)
+
+        # [Architecture Update 1]: Resolve the output path through the
+        # storage-strategy-aware UniversePaths helper. The active strategy
+        # defaults to ``legacy`` (see config/pipeline/options_history.json),
+        # which produces the EXACT same path as the pre-migration code
+        # ({DATA_DIR}/{today_str}/{SYMBOL}_options_{today_str}.parquet). Flip
+        # `storage.strategy` to `hive_v1` or `monthly_rollup` to migrate — no
+        # code change needed here.
+        try:
+            from Scripts.core.universe import paths as _paths
+            file_path_obj = _paths.options_parquet_path(symbol, today_str)
+            file_path = str(file_path_obj)
+            daily_folder = os.path.dirname(file_path)
+        except Exception as _paths_err:
+            logger.warning(
+                f"UniversePaths unavailable ({_paths_err}); using legacy path layout."
+            )
+            daily_folder = os.path.join(DATA_DIR, today_str)
+            file_path = os.path.join(daily_folder, f"{symbol}_options_{today_str}.parquet")
         os.makedirs(daily_folder, exist_ok=True)
-        
+
         logger.info(f"Starting options snapshot for {symbol} ({today_str})...")
         
         # 1. Fetch underlying price
@@ -202,9 +233,8 @@ class YFinanceClient:
                 'last_price', 'bid', 'ask', 'spread_pct', 
                 'volume', 'open_interest', 'implied_volatility', 'in_the_money', 'is_liquid']
         df = df[[c for c in cols if c in df.columns]]
-        
-        # Save into the daily subfolder
-        file_path = os.path.join(daily_folder, f"{symbol}_options_{today_str}.parquet")
+
+        # Save into the daily subfolder (path already resolved above via UniversePaths).
         df.to_parquet(file_path, index=False)
         
         # Log how many contracts are actually highly liquid
@@ -214,16 +244,33 @@ class YFinanceClient:
 
 if __name__ == "__main__":
     client = YFinanceClient()
-    
-    # [Architecture Update 3]: Added broad market baseline symbols
-    # SPY (S&P 500 Large Cap), QQQ (Nasdaq Tech), IWM (Russell 2000 Small Cap)
-    # GLD (Gold), SLV (Silver)
-    target_symbols = ["SPY", "QQQ", "IWM", "GLD", "SLV"]
-    
-    logger.info(f"Initiating daily options data pipeline for {len(target_symbols)} symbols...")
-    
+
+    # [Architecture Update 3]: Universe is now driven by
+    # config/universe/_manifest.json via Scripts.core.universe.
+    #   * role `options.scrape`   = equity.single_name ∪ etf.broad_market ∪ etf.commodity (~53 tickers)
+    #   * role `etf.all`          = etf.broad_market ∪ etf.commodity (5 tickers, legacy default)
+    # The active role is read from config/pipeline/options_history.json
+    # (`universe_role`), with `etf.all` as a safe fallback if the loader or
+    # the config is unavailable — this preserves the pre-migration behaviour
+    # byte-for-byte when run in degraded mode.
+    try:
+        from Scripts.core.universe import universe as _universe, pipelines as _pipelines
+        _role = (_pipelines.load("options_history") or {}).get("universe_role", "etf.all")
+        target_symbols = _universe.get(_role)
+        logger.info(
+            f"Initiating daily options data pipeline for {len(target_symbols)} symbols "
+            f"(universe_role='{_role}')."
+        )
+    except Exception as _universe_err:
+        logger.warning(
+            f"UniverseLoader unavailable ({_universe_err}); "
+            "falling back to hard-coded ETF baseline [SPY, QQQ, IWM, GLD, SLV]."
+        )
+        target_symbols = ["SPY", "QQQ", "IWM", "GLD", "SLV"]
+        logger.info(f"Initiating daily options data pipeline for {len(target_symbols)} symbols (fallback mode).")
+
     for symbol in target_symbols:
         client.snapshot_daily_options_chain(symbol)
         time.sleep(2)
-        
+
     logger.info("Pipeline execution completed successfully.")

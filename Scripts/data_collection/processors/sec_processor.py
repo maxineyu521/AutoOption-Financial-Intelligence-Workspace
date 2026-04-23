@@ -22,9 +22,12 @@ BASE_DIR = os.path.abspath(
 RAW_FOLDER = os.path.join(BASE_DIR, "Data", "1_Bronze_Raw", "SEC_Parsed_JSON", TARGET_DATE)
 QDRANT_INPUT_FOLDER = os.path.join(BASE_DIR, "Data", "3_Gold_Semantic",  "SEC_Insider_Trades", TARGET_DATE)
 LOG_DIR = os.path.join(BASE_DIR, "logs", TARGET_DATE, "SEC_Ingestion")
-GLOBAL_REGISTRY_PATH = os.path.join(BASE_DIR, "config", "SEC_Processing", "global_processed_registry.json")
+# Runtime state (accession de-duplication ledger). Canonical path migrated from
+# config/SEC_Processing/ -> config/runtime/ on 2026-04-22.
+RUNTIME_DIR = os.path.join(BASE_DIR, "config", "runtime")
+GLOBAL_REGISTRY_PATH = os.path.join(RUNTIME_DIR, "sec_processed_registry.json")
 
-for folder in [QDRANT_INPUT_FOLDER, LOG_DIR]:
+for folder in [QDRANT_INPUT_FOLDER, LOG_DIR, RUNTIME_DIR]:
     os.makedirs(folder, exist_ok=True)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
@@ -106,8 +109,22 @@ def process_form4_rules(ticker: str, parsed_data: dict) -> dict:
 # ==========================================
 # 3. LLM Setup for 8-K
 # ==========================================
+# Ingestion-time SEC form parser. Uses the vanilla Llama-3 tag
+# (`llama3:latest`) by default — see docs/LLM_Pool.md §1 for the two-tier
+# model contract. Respect env overrides so ops can swap the model
+# without code changes.
+_INGESTION_MODEL = os.getenv(
+    "OLLAMA_INGESTION_MODEL",
+    os.getenv("OLLAMA_ROUTER_MODEL", "llama3:latest"),
+)
 try:
-    llm = ChatOllama(model="llama3", temperature=0, base_url="http://localhost:11434", format="json")
+    llm = ChatOllama(
+        model=_INGESTION_MODEL,
+        temperature=0,
+        base_url=os.getenv("OLLAMA_HOST", "http://localhost:11434"),
+        keep_alive=os.getenv("OLLAMA_KEEP_ALIVE", "30m"),
+        format="json",
+    )
 except Exception:
     llm = None
 

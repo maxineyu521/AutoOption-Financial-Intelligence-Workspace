@@ -1,24 +1,33 @@
-import os
-import yfinance as yf
-import pandas as pd
-from fredapi import Fred
-from datetime import datetime
-from dotenv import load_dotenv
 import logging
+import os
+import sys
+from datetime import datetime
+
+import pandas as pd
+from dotenv import load_dotenv
+from fredapi import Fred
 
 load_dotenv()
 
 # ==========================================
 # 0. Dynamic Path & Logging Setup
 # ==========================================
-import os
-import logging
-from datetime import datetime
 
 # 1. Setup Base Directories
 BASE_DIR = os.path.abspath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
 )
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+# ------------------------------------------------------------------
+# yfinance tz-cache redirect — MUST run before `import yfinance` so
+# the SQLite lock file lands on a local filesystem (not NFS/GPFS).
+# ------------------------------------------------------------------
+from Scripts.core.yfinance_bootstrap import configure_yfinance_cache  # noqa: E402
+configure_yfinance_cache()
+
+import yfinance as yf  # noqa: E402  (intentional post-bootstrap import)
 today_str = datetime.now().strftime("%Y-%m-%d")
 
 # 2. Construct the Daily Log Folder: logs/YYYY-MM-DD/
