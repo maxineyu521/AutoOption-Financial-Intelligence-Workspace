@@ -1,8 +1,8 @@
 from .connection import get_qdrant_client, get_embedding_model
-from .ingestion import QdrantIngestor
+from .ingestion import QdrantHybridIngestor
 
 __all__ = [
     "get_qdrant_client",
     "get_embedding_model",
-    "QdrantIngestor"
+    "QdrantHybridIngestor"
 ]

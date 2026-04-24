@@ -16,11 +16,11 @@ from pathlib import Path
 from tqdm import tqdm
 from dotenv import load_dotenv
 
-# 引入 Qdrant 原生对象
+# import Qdrant native objects
 from qdrant_client.http import models
 from qdrant_client.models import PointStruct, VectorParams, SparseVectorParams, Distance
 
-# 引入 FastEmbed 用于生成稀疏向量
+# import FastEmbed for sparse vector generation
 from fastembed import SparseTextEmbedding
 
 import sys
@@ -74,7 +74,7 @@ class QdrantHybridIngestor:
         self.dense_model = get_embedding_model()
         self.sparse_model = SparseTextEmbedding(model_name="prithivida/Splade_PP_en_v1")
         
-        # 动态检测维度
+        # dynamically detect dimension
         dummy_vector = self.dense_model.embed_query("dummy_test")
         self.dense_dimension = len(dummy_vector)
         logger.info(f"Dense Vector Dimension detected as: {self.dense_dimension}")
@@ -212,30 +212,29 @@ class QdrantHybridIngestor:
                     point_id = data.get("id", str(uuid.uuid4()))
                     has_bronze_evidence = False
                     
-                # 2. 统一时间戳
-                raw_date = metadata.get("publish_timestamp") # News 优先拿这个
+                # 2. unified timestamp
+                raw_date = metadata.get("publish_timestamp") # News takes precedence over this
                 if not raw_date:
                     raw_date = metadata.get("publish_date") or metadata.get("filed_at") or metadata.get("transaction_date")
                 
-                # 如果已经是整数时间戳(News/GPR)，直接用；否则转为时间戳
+                # if the date is already an integer timestamp (News/GPR), use it; otherwise convert to timestamp
                 if isinstance(raw_date, int):
                     unified_ts = raw_date
                 else:
                     unified_ts = self._to_unix_timestamp(str(raw_date))
                 
-                # 3. 防御性 Metadata 构建 (防止漏斗丢失)
+                # 3. defensive metadata construction to prevent data loss
                 payload = {
                     "text": text,
                     "source_type": source_type,
                     "has_bronze_evidence": has_bronze_evidence,
                     "unified_timestamp": unified_ts,
                     
-                    # 提供默认值防止空值无法被过滤
+                    # provide default values to prevent empty values from being filtered out
                     "ticker": metadata.get("ticker", "NONE"),
                     "form_type": metadata.get("form_type", "NONE"),
                     "action_direction": metadata.get("action_direction", "NONE"),
-                    "topics": metadata.get("topics") or [metadata.get("topic", "NONE")], # 兼容 SEC 和 News 的字段名差异
-                    "impacted_assets": metadata.get("impacted_assets", []),
+                    "topics": metadata.get("topics") or [metadata.get("topic", "NONE")], 
                     "entities": metadata.get("entities", []),
                     
                     **metadata
@@ -279,13 +278,12 @@ class QdrantHybridIngestor:
 
     def _get_run_states(self) -> dict:
         """
-        读取上游调度器留下的状态快照 (Watermark Tracking)。
-        将调度器的 job keys 映射到我们的 source_types 上。
+        read the state file to get the last run keys
         """
         state_file = self.project_root / "config" / "runtime" / "collect_data_state.json"
         states = {}
         
-        # 默认回退机制：如果找不到 state 文件，默认跑当天的
+        # default fallback mechanism: if the state file is not found, default to the current date
         today = datetime.now().strftime("%Y-%m-%d")
         current_month = datetime.now().strftime("%Y-%m")
         
@@ -295,7 +293,7 @@ class QdrantHybridIngestor:
                     data = json.load(f)
                     last_run_keys = data.get("last_run_keys", {})
                     
-                    # 建立 Job Key 到 Ingestion Source Type 的映射
+                    # map the job key to the ingestion source type
                     states = {
                         "news": last_run_keys.get("news_daily", today),
                         "gpr": last_run_keys.get("gpr_monthly", current_month),
@@ -311,8 +309,7 @@ class QdrantHybridIngestor:
 
     def run_pipeline(self, full_refresh: bool = True):
         """
-        执行管线。
-        :param full_refresh: 如果为 True，则无视状态文件，强行全量重跑。
+        :param full_refresh: if True, full refresh the pipeline
         """
         logger.info("="*50)
         logger.info(f"🚀 Starting Hybrid Search Data Ingestion Pipeline (Full Refresh: {full_refresh})")
@@ -324,7 +321,7 @@ class QdrantHybridIngestor:
             
         self.init_collection_with_indexes()
         
-        # 获取上游抓取的日期水位线
+        # get the upstream watermark
         target_states = self._get_run_states()
         
         total_upserted = 0
@@ -341,16 +338,16 @@ class QdrantHybridIngestor:
         for source_type, filename in file_mappings:
             found_files = list(self.gold_layer_dir.rglob(filename))
             
-            # 获取这个数据源应该跑哪一天的日期标识
+            # get the date identifier for this data source
             target_date_str = target_states.get(source_type, "")
             
             for f_path in found_files:
-                # 核心逻辑：如果开启全量刷新，或者文件路径中包含了目标日期，则处理
+                # core logic: if full refresh is enabled, or the file path contains the target date, then process
                 if full_refresh or (target_date_str and target_date_str in str(f_path)):
                     count = self.process_and_upsert_file(f_path, source_type)
                     total_upserted += count
                 else:
-                    # 不是目标日期的历史文件，直接跳过 (静默，不污染日志)
+                    # not the target date history file, skip (silent, no logging)
                     pass
 
         logger.info("="*50)
