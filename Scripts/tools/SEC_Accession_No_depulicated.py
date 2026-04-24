@@ -8,8 +8,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BRONZE_SEC_JSONL_ROOT = (
     PROJECT_ROOT / "Data" / "1_Bronze_Raw" / "SEC_Parsed_JSON"
 )
-SEC_PROCESSING_CONFIG_DIR = PROJECT_ROOT / "config" / "SEC_Processing"
-GLOBAL_PROCESSED_REGISTRY = SEC_PROCESSING_CONFIG_DIR / "global_processed_registry.json"
+# Canonical location migrated 2026-04-22:
+#   config/SEC_Processing/global_processed_registry.json  (retired)
+#   -> config/runtime/sec_processed_registry.json         (current)
+GLOBAL_PROCESSED_REGISTRY = (
+    PROJECT_ROOT / "config" / "runtime" / "sec_processed_registry.json"
+)
 
 TARGET_DATE = "2026-04-08"
 
