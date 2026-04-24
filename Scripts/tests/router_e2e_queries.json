@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "description": "End-to-end router test catalogue. Each case is designed to exercise a distinct slice of the retrieval matrix (Silver options vs Silver macro vs Gold news vs Gold SEC) and a distinct time window. Consumed by Scripts/tests/test_router_e2e.py — do NOT rely on ordering, the harness keys on `name`.",
+  "last_reviewed": "2026-04-22",
+  "cases": [
+    {
+      "name": "SEC Gold - Insider Flow Driven",
+      "query": "Given the recent AAPL Form-4 executive selling activity over the past month, how should I position with options if I still expect short-term momentum?",
+      "expected_sources": ["sec", "options"],
+      "expected_time_window": "past_month",
+      "notes": "Targets SEC Form-4 Qdrant path (action_direction=SELL filter) combined with current options chain. Tests the Critic's insider-vs-IV contradiction backstop when IV happens to be elevated."
+    },
+    {
+      "name": "News Gold + Commodity ETF - Geopolitics",
+      "query": "How are escalating Middle East tensions and geopolitical-risk news from the past week moving gold, and what GLD options exposure would you consider?",
+      "expected_sources": ["news", "options", "macro_history"],
+      "expected_time_window": "past_week",
+      "notes": "Targets news topic `macro_geopolitics_risk` + `asset_precious_metals_spot`, plus GPR index from macro, plus GLD options chain. Should route through HyDE expansion and surface GLD via impacted_assets."
+    },
+    {
+      "name": "Macro Regime - FOMC & Yields",
+      "query": "How did the most recent FOMC decision and 10-year Treasury yields move over the past week, and what does that imply for SPY 30-DTE put protection?",
+      "expected_sources": ["news", "macro_history", "options"],
+      "expected_time_window": "past_week",
+      "notes": "Targets news topic `macro_central_banks` + macro parquet (^TNX, VIX) + SPY options chain. Tests that MasterRetriever widens news time window for weekly-cadence Gold sources while keeping options Silver on a daily anchor."
+    },
+    {
+      "name": "Cross-Asset Regime - IV vs VIX Divergence",
+      "query": "Compare QQQ's current ATM implied volatility against VIX over the past month. Is there a divergence, and if so what index-level hedge would you suggest?",
+      "expected_sources": ["options", "macro_history"],
+      "expected_time_window": "past_month",
+      "notes": "Exercises macro + options cross-join. QQQ has options Silver, VIX is macro Silver; no news/SEC expected. Tests IV-regime pinning in AnalystState across revisions."
+    },
+    {
+      "name": "Options Silver - Single Name Liquidity",
+      "query": "What is AAPL's today Put/Call Ratio, IV Skew, and which 30-DTE strikes are most liquid today? Based on this, would you recommend selling near-the-money strangles?",
+      "expected_sources": ["options"],
+      "expected_time_window": "today",
+      "notes": "Exercises Silver options dispatcher for PCR + IV Skew + liquidity scan on a fully-covered Nasdaq-100 single-name. Route should resolve to hybrid_both (PCR primary)."
+    }
+  ]
+}
