@@ -2,8 +2,7 @@
 
 _Scope: `Scripts/retrieval/qdrant_retriever.py`._
 
-This document specifies the Gold-layer retrieval engine that turns a
-`FullTransformationResult` into a ranked list of `RetrievedChunk`s.
+This document specifies the Gold-layer retrieval engine that turns a `FullTransformationResult` into a ranked list of `RetrievedChunk`s.
 
 ---
 
@@ -12,14 +11,9 @@ This document specifies the Gold-layer retrieval engine that turns a
 Bridge the LLM's transformation payload (HyDE + metadata) and Qdrant
 Cloud with three guarantees:
 
-- **Temporal alignment** — all filters are built from
-  `TimePredicate` objects produced upstream by `time_adapter`, not from
-  wall-clock time. One anchor, one window, all sources.
-- **Lexical precision** — SPLADE sparse retrieval against the raw
-  query (or `rerank_query`) preserves rare tickers and acronyms that
-  dense embeddings blur.
-- **Post-fusion sharpness** — a cross-encoder reranker rescues the
-  handful of true positives that RRF mixes with noise.
+- **Temporal alignment** — all filters are built from `TimePredicate` objects produced upstream by `time_adapter`, not from wall-clock time. One anchor, one window, all sources.
+- **Lexical precision** — SPLADE sparse retrieval against the raw query (or `rerank_query`) preserves rare tickers and acronyms that dense embeddings blur.
+- **Post-fusion sharpness** — a cross-encoder reranker rescues the handful of true positives that RRF mixes with noise.
 
 ---
 
@@ -87,27 +81,16 @@ Cloud with three guarantees:
 ## 4. Temporal Alignment Contract
 
 `retrieve_async` accepts an explicit
-`time_predicates: Dict[SourceTimeKey, TimePredicate]` argument. If
-present it is used directly; if absent the retriever falls back to the
-single `time_window` value inside `FullTransformationResult`.
+`time_predicates: Dict[SourceTimeKey, TimePredicate]` argument. If present it is used directly; if absent the retriever falls back to the single `time_window` value inside `FullTransformationResult`.
 
 Two non-negotiable rules:
 
-1. **OR over `unified_timestamp` and `publish_timestamp`.** Some
-   collections only populate one of the two keys; the retriever
-   must accept a hit on either. Without this, SEC/News filings
-   written by the legacy ingestor are invisible.
-2. **Business-day snapping.** Daily-grain predicates (for
-   `source_type=options`) are computed by `trading_calendar.py` so
-   that `"yesterday"` on a Monday resolves to the previous Friday —
-   not an empty Sunday.
+1. **OR over `unified_timestamp` and `publish_timestamp`.** Some collections only populate one of the two keys; the retriever must accept a hit on either. Without this, SEC/News filings written by the legacy ingestor are invisible.
+2. **Business-day snapping.** Daily-grain predicates (for `source_type=options`) are computed by `trading_calendar.py` so that `"yesterday"` on a Monday resolves to the previous Friday — not an empty Sunday.
 
-> **Ops note on Qdrant indexing.** `publish_timestamp` must be
-> indexed on the collection, otherwise Qdrant raises
-> `400 Index required but not found for "publish_timestamp"`. This
-> is a one-time schema fix on the Qdrant side; see
-> `Scripts/vector_store/ingestion.py` for the canonical index
-> payload.
+> **Ops note on Qdrant indexing.** `publish_timestamp` must be indexed on the collection, otherwise Qdrant raises
+> `400 Index required but not found for "publish_timestamp"`. This is a one-time schema fix on the Qdrant side; see
+> `Scripts/vector_store/ingestion.py` for the canonical index payload.
 
 ---
 
