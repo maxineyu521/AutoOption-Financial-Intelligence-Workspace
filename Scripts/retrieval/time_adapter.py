@@ -1,12 +1,4 @@
 """
-Scripts/retrieval/time_adapter.py
-
-Per-source Time Alignment Adapter — the single place where a semantic
-`TimeWindow` from the LLM (e.g. "yesterday" / "past_week" / "past_month")
-is compiled into physical time predicates that each data source can
-actually execute against.
-
-WHY THIS MODULE EXISTS (the Q1/Q2/Q3 fix landed 2026-04-22):
     Different data sources use different time types and granularities:
 
         Gold.News   : `unified_timestamp` / `publish_timestamp`  (Unix seconds, event-level)

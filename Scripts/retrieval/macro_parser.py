@@ -1,52 +1,39 @@
 """
-Macro-context parsing utilities.
+Macro-context utilities with Silver-first macro patch generation.
 
-Background
-----------
-The Analyst prompt mandates a "Macro Regime Snapshot" citing VIX / GSPC /
-DXY / rates, but the Checker only recognises Silver ``lineage_anchors``
-and Gold ``bronze_ref``. Every macro number the Analyst cites was
-therefore flagged *Fatal*, burning all three revisions and forcing
-every run into degraded mode with confidence 0.3.
+Design intent
+-------------
+The macro markdown is an LLM readability layer, not the deterministic source
+of truth. The authoritative numeric contract lives in
+`Data/2_Silver_Processed/Macro_History/.../macro_snapshot_*.parquet`.
 
-The fix is architectural: promote the macro snapshot to a first-class
-Silver citation source by parsing ``Data/Agent_Context/latest_macro_context.md``
-into ``(values, lineage_anchors)`` and merging them into
-``silver_context`` before the Analyst draws its draft.
+This module therefore serves two roles:
+1. Ticker extraction helpers used by the retrieval stack.
+2. A macro patch builder that promotes Silver macro values into
+   `silver_context` so Checker/Analyst can consume them directly.
 
-Anchor naming uses a stable ``MACRO_<CODE>_<anchor_date>`` convention
-that the Finalizer already routes to the "Macro Data" UI category
-(see ``finalizer.py:_collect_evidence_pool``).
+Primary path:
+    Silver Macro_History parquet -> values + anchors + schema/status snapshot
 
-Why this lives in its own module
---------------------------------
-* **Separation of concerns.** ``master_retriever.py`` is the *orchestrator*;
-  regex tables for a specific markdown format belong next to the data,
-  not next to the orchestration logic.
-* **Testability.** ``Scripts/tests`` can target this module directly
-  without spinning up the Qdrant / SQL / LLM stack that
-  ``master_retriever.py`` drags in.
-* **Schema evolution.** When the macro snapshot markdown changes shape,
-  the diff is localised to ~200 lines here — ``MasterRetriever`` is
-  untouched.
+Fallback path:
+    latest_macro_context.md regex parsing (only when parquet is unavailable)
 
-The ticker-extraction helpers (``TICKER_RE`` / ``TICKER_STOPWORDS``)
-share the same "markdown → retrieval metadata" concern and are
-colocated for symmetry; the HyDE novel-ticker extractor in
-``master_retriever.py`` imports them from here.
-
-Public surface
---------------
-* ``parse_macro_snapshot(markdown) -> (values, snapshot_date)``
-* ``build_macro_silver_patch(macro_md, anchor_date) -> {values, lineage_anchors}``
-* ``TICKER_RE``, ``TICKER_STOPWORDS`` (for HyDE novel-ticker detection)
-* ``MACRO_LINE_PATTERNS``, ``MACRO_GENERATED_RE`` (for downstream tests)
+The status snapshot is intentionally persisted into `silver_context` so the
+retriever/checker pipeline can retain a stable view of:
+    - which parquet schema was used,
+    - which symbols were materialized,
+    - which observation date anchored the patch.
 """
 from __future__ import annotations
 
+import hashlib
+import logging
 import re
 from datetime import date
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "TICKER_RE",
@@ -56,6 +43,37 @@ __all__ = [
     "parse_macro_snapshot",
     "build_macro_silver_patch",
 ]
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_MACRO_HISTORY_ROOT = _PROJECT_ROOT / "Data" / "2_Silver_Processed" / "Macro_History"
+_MACRO_HISTORY_GLOB = "macro_snapshot_*.parquet"
+_MACRO_NUMERIC_FIELDS: tuple[str, ...] = (
+    "value",
+    "daily_change_pct",
+    "mom_change_pct",
+    "yoy_change_pct",
+)
+_MACRO_REQUIRED_COLUMNS: tuple[str, ...] = (
+    "retrieval_date",
+    "observation_date",
+    "symbol",
+    "name",
+    "asset_class",
+    "value",
+    "unit",
+    "frequency",
+    "daily_change_pct",
+    "mom_change_pct",
+    "yoy_change_pct",
+)
+_SYMBOL_ALIAS_MAP: Dict[str, str] = {
+    "^GSPC": "GSPC",
+    "^IXIC": "IXIC",
+    "^VIX": "VIX",
+    "DX-Y.NYB": "DXY",
+    "GLD": "GLD_SPOT",
+    "SLV": "SLV_SPOT",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -141,24 +159,172 @@ MACRO_GENERATED_RE: re.Pattern = re.compile(
 )
 
 
+def _safe_symbol(symbol: str) -> str:
+    if not symbol:
+        return "UNKNOWN"
+    if symbol in _SYMBOL_ALIAS_MAP:
+        return _SYMBOL_ALIAS_MAP[symbol]
+    return symbol.lstrip("^").replace("-", "_").replace(".", "_").replace("/", "_")
+
+
+def _latest_macro_parquet() -> Optional[Path]:
+    if not _MACRO_HISTORY_ROOT.exists():
+        return None
+    files = sorted(_MACRO_HISTORY_ROOT.rglob(_MACRO_HISTORY_GLOB))
+    return files[-1] if files else None
+
+
+def _to_float(v: Any) -> Optional[float]:
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return round(float(v), 6)
+    if isinstance(v, str):
+        s = v.replace(",", "").rstrip("%").strip()
+        if not s:
+            return None
+        try:
+            return round(float(s), 6)
+        except ValueError:
+            return None
+    return None
+
+
+def _build_macro_patch_from_parquet(anchor_date: date) -> Dict[str, Any]:
+    """Build the authoritative macro patch from the latest Silver parquet."""
+    fp = _latest_macro_parquet()
+    if fp is None:
+        return {"values": {}, "lineage_anchors": [], "status": {}}
+
+    try:
+        import duckdb
+    except ImportError as exc:
+        logger.warning("Macro parquet patch unavailable — duckdb import failed: %s", exc)
+        return {"values": {}, "lineage_anchors": [], "status": {}}
+
+    sql_path = fp.as_posix()
+    con = duckdb.connect()
+    try:
+        schema_rows = con.execute(
+            f"DESCRIBE SELECT * FROM read_parquet('{sql_path}')"
+        ).fetchall()
+        schema_types = {str(col): str(dtype) for col, dtype, *_ in schema_rows}
+        present_columns = list(schema_types.keys())
+        missing_columns = [c for c in _MACRO_REQUIRED_COLUMNS if c not in schema_types]
+
+        latest_obs_row = con.execute(
+            f"SELECT MAX(observation_date) FROM read_parquet('{sql_path}')"
+        ).fetchone()
+        latest_obs = str(latest_obs_row[0]) if latest_obs_row and latest_obs_row[0] is not None else anchor_date.isoformat()
+
+        rows = con.execute(
+            f"""
+            SELECT retrieval_date, observation_date, symbol, name, asset_class,
+                   value, unit, frequency, daily_change_pct, mom_change_pct, yoy_change_pct
+            FROM read_parquet('{sql_path}')
+            WHERE observation_date = ?
+            ORDER BY symbol
+            """,
+            [latest_obs],
+        ).fetchall()
+    finally:
+        con.close()
+
+    values: Dict[str, float] = {}
+    lineage: List[str] = []
+    symbol_status: Dict[str, Dict[str, Any]] = {}
+
+    for (
+        retrieval_date,
+        observation_date,
+        symbol,
+        name,
+        asset_class,
+        value,
+        unit,
+        frequency,
+        daily_change_pct,
+        mom_change_pct,
+        yoy_change_pct,
+    ) in rows:
+        code = _safe_symbol(str(symbol))
+        row_map = {
+            "value": value,
+            "daily_change_pct": daily_change_pct,
+            "mom_change_pct": mom_change_pct,
+            "yoy_change_pct": yoy_change_pct,
+        }
+
+        numeric_written = False
+        for field_name, raw_val in row_map.items():
+            fv = _to_float(raw_val)
+            if fv is None:
+                continue
+            values[f"{code}_{field_name}"] = fv
+            numeric_written = True
+
+        # Backward-compatible alias used by existing prompts/checkers:
+        # prefer MoM for monthly macro rows, otherwise daily change, then YoY.
+        compat_change = (
+            _to_float(mom_change_pct)
+            if _to_float(mom_change_pct) is not None
+            else _to_float(daily_change_pct)
+            if _to_float(daily_change_pct) is not None
+            else _to_float(yoy_change_pct)
+        )
+        if compat_change is not None:
+            values[f"{code}_change_pct"] = compat_change
+            numeric_written = True
+
+        if numeric_written:
+            anchor_id = f"MACRO_{code}_{observation_date or latest_obs}"
+            lineage.append(anchor_id)
+
+        symbol_status[code] = {
+            "symbol": symbol,
+            "display_name": name,
+            "asset_class": asset_class,
+            "unit": unit,
+            "frequency": frequency,
+            "retrieval_date": retrieval_date,
+            "observation_date": observation_date,
+        }
+
+    schema_hash = hashlib.sha1(
+        "|".join(f"{k}:{v}" for k, v in sorted(schema_types.items())).encode("utf-8")
+    ).hexdigest()[:12]
+
+    status = {
+        "macro_source": "silver_macro_history",
+        "macro_schema": {
+            "source_file": str(fp),
+            "schema_columns": present_columns,
+            "schema_types": schema_types,
+            "missing_required_columns": missing_columns,
+            "required_columns": list(_MACRO_REQUIRED_COLUMNS),
+            "schema_hash": schema_hash,
+            "effective_observation_date": latest_obs,
+            "requested_anchor_date": anchor_date.isoformat(),
+            "row_count": len(rows),
+        },
+        "macro_symbols": symbol_status,
+    }
+    return {"values": values, "lineage_anchors": sorted(set(lineage)), "status": status}
+
+
 def parse_macro_snapshot(
     markdown: str,
 ) -> Tuple[Dict[str, float], Optional[str]]:
-    """Parse ``latest_macro_context.md`` into silver values.
+    """Parse ``latest_macro_context.md`` into silver-like values.
 
     Returns
     -------
     values
-        ``{metric_key: float}`` mapping. Keys follow the
-        ``{CODE}_value`` / ``{CODE}_change_pct`` convention so the
-        Analyst's numeric audit can match a draft that says "VIX at
-        18.25" against ``VIX_value=18.25``. Keys missing from the
-        markdown are omitted — this lets the Checker still reject
-        fabricated metrics.
+        Legacy markdown-derived values. This path exists as a fallback only.
+        The authoritative path is `_build_macro_patch_from_parquet()`.
     snapshot_date
         The ISO date from the "Generated on" header or ``None``.
-        Callers use it as the macro anchor when present (more precise
-        than the SQL-derived ``options_daily`` anchor).
+        Used only by the fallback path.
     """
     values: Dict[str, float] = {}
     if not markdown:
@@ -191,22 +357,30 @@ def build_macro_silver_patch(
     macro_md: Optional[str],
     anchor_date: date,
 ) -> Dict[str, Any]:
-    """Produce the Silver patch dict ``{values, lineage_anchors}`` for macro.
+    """Produce the Silver macro patch.
 
-    Anchors follow the ``MACRO_<CODE>_<date>`` convention — the
-    Finalizer already maps a ``MACRO_*`` prefix to the "Macro Data"
-    evidence category. Returns an empty dict when the markdown is
-    absent or unparseable so :meth:`MasterRetriever.retrieve` can merge
-    unconditionally.
+    Primary source:
+        latest Silver Macro_History parquet
+
+    Fallback source:
+        `latest_macro_context.md`
+
+    Returned shape:
+        {
+          "values": {...},
+          "lineage_anchors": [...],
+          "status": {...}
+        }
     """
+    parquet_patch = _build_macro_patch_from_parquet(anchor_date)
+    if parquet_patch.get("values"):
+        return parquet_patch
+
     values, snapshot_date = parse_macro_snapshot(macro_md or "")
     if not values:
-        return {"values": {}, "lineage_anchors": []}
+        return {"values": {}, "lineage_anchors": [], "status": {}}
 
     effective_date = snapshot_date or anchor_date.isoformat()
-    # Strip the metric-suffix so `VIX_value` / `VIX_change_pct` both map
-    # to a single `VIX` code. One anchor per code keeps the lineage list
-    # short and easy for the LLM to cite.
     distinct_codes: set = set()
     for k in values.keys():
         if k.endswith("_value"):
@@ -214,5 +388,22 @@ def build_macro_silver_patch(
         elif k.endswith("_change_pct"):
             distinct_codes.add(k[: -len("_change_pct")])
     lineage = [f"MACRO_{code}_{effective_date}" for code in sorted(distinct_codes)]
-
-    return {"values": values, "lineage_anchors": lineage}
+    return {
+        "values": values,
+        "lineage_anchors": lineage,
+        "status": {
+            "macro_source": "macro_markdown_fallback",
+            "macro_schema": {
+                "source_file": str(_PROJECT_ROOT / "Data" / "Agent_Context" / "latest_macro_context.md"),
+                "schema_columns": ["markdown_fallback"],
+                "schema_types": {"markdown_fallback": "regex_extracted"},
+                "missing_required_columns": list(_MACRO_REQUIRED_COLUMNS),
+                "required_columns": list(_MACRO_REQUIRED_COLUMNS),
+                "schema_hash": "fallback",
+                "effective_observation_date": effective_date,
+                "requested_anchor_date": anchor_date.isoformat(),
+                "row_count": len(distinct_codes),
+            },
+            "macro_symbols": {},
+        },
+    }

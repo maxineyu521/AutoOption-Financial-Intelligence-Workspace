@@ -129,8 +129,8 @@ class MasterRetriever:
         )
 
         # --- 3. Runtime knobs (env-tunable without code change) ---
-        self.gold_timeout = float(os.getenv("GOLD_TIMEOUT", 5.0))
-        self.silver_timeout = float(os.getenv("SILVER_TIMEOUT", 8.0))
+        self.gold_timeout = float(os.getenv("GOLD_TIMEOUT", 10.0))
+        self.silver_timeout = float(os.getenv("SILVER_TIMEOUT", 10.0))
 
         logger.info(
             f"🏛️ MasterRetriever ready | Gold_TO: {self.gold_timeout}s | "
@@ -606,12 +606,11 @@ class MasterRetriever:
         # ==================================================================
         # 7.5  Macro → Silver anchor injection (Root Cause A fix, 2026-04-22)
         # ==================================================================
-        # Parse the daily macro snapshot into silver values + MACRO_* anchors
-        # so the Analyst's "Macro Regime Snapshot" section has citable
-        # anchors. Without this, the Analyst cites VIX=18.25 from the prose
-        # macro block, the Checker has no matching anchor/value, and every
-        # revision fails — the 4/4 degraded-mode failure mode in
-        # docs/test/2026-04-22/router_e2e_deep_analysis.md (Root Cause A).
+        # Promote macro data into Silver context. The primary source is now
+        # Silver Macro_History parquet (authoritative numeric truth); markdown
+        # is only a fallback if parquet is unavailable. This gives the Analyst
+        # citable MACRO_* anchors while preserving schema/status metadata for
+        # downstream deterministic checking and drift audits.
         try:
             macro_md = self._read_macro_snapshot()
             anchor_for_macro = date.fromisoformat(time_range["anchor_date"]) \
@@ -620,7 +619,15 @@ class MasterRetriever:
             if macro_patch["values"]:
                 sv = final_context["silver_context"]
                 sv.setdefault("values", {}).update(macro_patch["values"])
-                existing_anchors = sv.setdefault("lineage_anchors", []) or []
+                existing_anchors = sv.setdefault("lineage_anchors", [])
+                patch_status = macro_patch.get("status") or {}
+                if patch_status:
+                    existing_status = sv.setdefault("status", {})
+                    for k, v in patch_status.items():
+                        if isinstance(v, dict) and isinstance(existing_status.get(k), dict):
+                            existing_status[k].update(v)
+                        else:
+                            existing_status[k] = v
                 # De-duplicate while preserving ordering of the existing anchors.
                 seen = set(existing_anchors)
                 for a in macro_patch["lineage_anchors"]:
@@ -635,6 +642,96 @@ class MasterRetriever:
             # Non-fatal: the pipeline still produces a full context without
             # macro anchors; the Analyst simply loses macro citability.
             logger.warning(f"MacroSilverPatch failed ({type(e).__name__}): {e}")
+
+        # ==================================================================
+        # 7.6  GPR always-on patch (Root Cause gap-2 fix, 2026-04-23)
+        # ==================================================================
+        # Inject the latest GPR row unconditionally — previously this only
+        # ran when the query routed to _handle_geopolitical_analysis (i.e.
+        # user explicitly asked about geopolitics).  The Analyst prompt's
+        # MACRO_CHAIN_DIRECTIVE mandates a "GPR index" mention in the Macro
+        # Regime Snapshot section regardless of query type, so the anchor
+        # must always be available for citation.
+        try:
+            import copy as _copy
+            gpr_result = self.sql_tool._handle_geopolitical_analysis(
+                ticker="GPR", meta=metadata
+            )
+            if gpr_result and gpr_result.get("values"):
+                sv = final_context["silver_context"]
+                sv.setdefault("values", {}).update(gpr_result["values"])
+                existing = set(sv.setdefault("lineage_anchors", []))
+                for a in gpr_result.get("lineage_anchors", []):
+                    if a not in existing:
+                        sv["lineage_anchors"].append(a)
+                        existing.add(a)
+                logger.info(
+                    f"🌍 [GPRPatch] injected {len(gpr_result['values'])} values "
+                    f"+ {len(gpr_result.get('lineage_anchors', []))} GPR anchors."
+                )
+        except Exception as e:
+            logger.warning(f"GPRPatch failed ({type(e).__name__}): {e}")
+
+        # ==================================================================
+        # 7.7  Macro Parquet full-scan patch (Root Cause gap-1 fix, 2026-04-23)
+        # ==================================================================
+        # Read ALL symbols from Macro_History for the latest observation date
+        # and inject them into silver_context.  This supersedes the markdown
+        # regex parser for any symbol that parquet already covers (parquet wins
+        # on precision) and adds long-tail symbols the regex never handled.
+        try:
+            macro_glob = self.sql_tool.macro_glob
+            macro_query = f"""
+                SELECT symbol, value, daily_change_pct, mom_change_pct, observation_date
+                FROM read_parquet('{macro_glob}')
+                WHERE observation_date = (
+                    SELECT MAX(observation_date) FROM read_parquet('{macro_glob}')
+                )
+            """
+            rows = self.sql_tool.conn.execute(macro_query).fetchall()
+            if rows:
+                sv = final_context["silver_context"]
+                pq_values: dict = {}
+                pq_anchors: list = []
+                existing_anchors = set(sv.setdefault("lineage_anchors", []))
+                for sym, val, daily_chg, mom_chg, obs_date in rows:
+                    # Sanitise symbol for use as a dict key / anchor name.
+                    safe = sym.lstrip("^").replace("-", "_").replace(".", "_")
+                    if val is not None:
+                        pq_values[f"{safe}_value"] = round(float(val), 4)
+                    chg = mom_chg if mom_chg is not None else daily_chg
+                    if chg is not None:
+                        pq_values[f"{safe}_change_pct"] = round(float(chg), 4)
+                    anchor_id = f"MACRO_{safe}_{obs_date}"
+                    if anchor_id not in existing_anchors:
+                        pq_anchors.append(anchor_id)
+                        existing_anchors.add(anchor_id)
+                sv["values"].update(pq_values)
+                sv["lineage_anchors"].extend(pq_anchors)
+                logger.info(
+                    f"📊 [MacroParquetPatch] injected {len(pq_values)} values "
+                    f"+ {len(pq_anchors)} anchors from {len(rows)} Macro symbols."
+                )
+        except Exception as e:
+            logger.warning(f"MacroParquetPatch failed ({type(e).__name__}): {e}")
+
+        # ==================================================================
+        # 7.8  Write immutable silver_context_frozen (P1 fix, 2026-04-23)
+        # ==================================================================
+        # After ALL patch steps are complete, snapshot the Silver context so
+        # CheckerAgent always has a stable, rescue-independent ground truth.
+        # Rescue passes may still update `silver_context` (used by the NEXT
+        # analyst revision for additive data), but the Checker's deterministic
+        # numeric audit uses `silver_context_frozen` exclusively — preventing
+        # atm_iv oscillation and cross-revision anchor drift.
+        try:
+            import copy as _copy
+            final_context["silver_context_frozen"] = _copy.deepcopy(
+                final_context["silver_context"]
+            )
+        except Exception as e:
+            logger.warning(f"silver_context_frozen deepcopy failed ({type(e).__name__}): {e}")
+            final_context["silver_context_frozen"] = None
 
         final_context["latency_stats"]["total_e2e"] = f"{time.time() - overall_start:.3f}s"
         logger.info(
