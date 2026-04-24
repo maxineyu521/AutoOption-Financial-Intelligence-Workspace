@@ -54,7 +54,10 @@ _INSIDER_SIGNAL_MIN_COUNT = int(os.getenv("INSIDER_SIGNAL_MIN_COUNT", "3"))
 
 class LogicIssue(BaseModel):
     severity: Literal["Fatal", "Minor"] = Field(
-        description="Fatal = strategy contradicts regime/macro; Minor = could be tighter"
+        description=(
+            "Fatal: strategy MUST be rewritten (direction contradicts regime/macro/insider signal). "
+            "Minor: strategy is acceptable but could be polished — do NOT set is_passed=False for Minor only."
+        )
     )
     category: Literal[
         "iv_regime_fit",
@@ -63,12 +66,32 @@ class LogicIssue(BaseModel):
         "risk_reward_imbalance",
         "other",
     ] = Field(description="Which logic axis fails")
-    comment: str = Field(description="Concrete pushback with a suggested correction")
+    comment: str = Field(description="Concrete pushback with a suggested correction (≤ 40 words)")
 
 
 class CriticResult(BaseModel):
-    is_passed: bool = Field(description="True iff every logic axis is acceptable")
-    issues: List[LogicIssue] = Field(default_factory=list)
+    is_passed: bool = Field(
+        description=(
+            "True iff there are NO Fatal issues. "
+            "Minor-only findings MUST still set is_passed=True — they go to minor_suggestions. "
+            "Only set is_passed=False when at least one Fatal issue exists."
+        )
+    )
+    issues: List[LogicIssue] = Field(
+        default_factory=list,
+        description=(
+            "Fatal-severity issues only. "
+            "If is_passed=True this list MUST be empty. "
+            "Minor-severity findings go into minor_suggestions instead."
+        )
+    )
+    minor_suggestions: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Polish notes for the Finalizer — improvements that do NOT block approval. "
+            "Each entry ≤ 30 words. Examples: tighten spread width, add hedge note, adjust DTE."
+        )
+    )
 
 
 # ==========================================
@@ -223,6 +246,11 @@ class CriticAgent:
             ))
 
         # -------- LLM logic critique (best-effort) --------
+        # Minor suggestions are collected separately and forwarded to the Finalizer
+        # as polish notes — they do NOT block the draft or trigger a revision.
+        # Only Fatal issues set is_passed=False and go into critic_feedback.
+        minor_suggestions: List[str] = []
+
         try:
             chain = self.prompt | self.logic_llm
             logger.info(
@@ -238,14 +266,33 @@ class CriticAgent:
                 "gold_block": _format_gold(gold_ctx),
                 "draft": draft,
             })
+
+            # Minor suggestions: forward to Finalizer, do NOT block.
+            if result.minor_suggestions:
+                minor_suggestions.extend(result.minor_suggestions)
+                logger.info(
+                    f"CriticAgent: {len(result.minor_suggestions)} minor suggestions "
+                    "forwarded to Finalizer (non-blocking)."
+                )
+
+            # Fatal issues only: add to critic_feedback → may trigger revision.
             if not result.is_passed:
                 for issue in result.issues:
-                    feedbacks.append(AgentFeedback(
-                        sender="Critic",
-                        error_type=issue.severity,
-                        comment=f"[{issue.category}] {issue.comment}",
-                        revision_index=revision_n,
-                    ))
+                    if issue.severity == "Fatal":
+                        feedbacks.append(AgentFeedback(
+                            sender="Critic",
+                            error_type="Fatal",
+                            comment=f"[{issue.category}] {issue.comment}",
+                            revision_index=revision_n,
+                        ))
+                    else:
+                        # LLM incorrectly placed a Minor in issues — demote to suggestion.
+                        minor_suggestions.append(f"[{issue.category}] {issue.comment}")
+                        logger.debug(
+                            f"CriticAgent: Minor issue demoted from issues→suggestions: "
+                            f"{issue.comment[:60]}"
+                        )
+
         except Exception as e:
             logger.warning(
                 f"CriticAgent: logic LLM failed ({type(e).__name__}); "
@@ -253,11 +300,16 @@ class CriticAgent:
             )
 
         verdict = self._compute_verdict(feedbacks)
-        logger.info(f"CriticAgent: verdict={verdict} | total_findings={len(feedbacks)}")
+        logger.info(
+            f"CriticAgent: verdict={verdict} | fatal={len(feedbacks)} | "
+            f"minor_suggestions={len(minor_suggestions)}"
+        )
 
         return {
             "critic_feedback": feedbacks,
             "critic_verdict": verdict,
+            # Non-blocking polish notes forwarded to Finalizer via state.
+            "critic_minor_suggestions": minor_suggestions,
         }
 
     @staticmethod

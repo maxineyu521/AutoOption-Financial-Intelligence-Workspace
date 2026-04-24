@@ -132,11 +132,40 @@ def _format_silver(silver_context: Dict[str, Any]) -> str:
     lines = ["| metric | value |", "|---|---|"]
     for k, v in values.items():
         lines.append(f"| {k} | {v} |")
+
     if lineage:
         lines.append("")
-        lines.append("LINEAGE ANCHORS (use these as [Silver: <id>] citations):")
+        lines.append(
+            "LINEAGE ANCHORS — copy the EXACT anchor string into [Silver: <anchor>] "
+            "after every numeric claim that uses the corresponding metric value:"
+        )
+        # Build a value→anchor hint so the LLM doesn't have to guess which
+        # anchor covers which number.  We group by anchor prefix so related
+        # metrics (MACRO_VIX_* covers both VIX_value and VIX_change_pct) are
+        # shown together rather than as a flat list.
+        anchor_covered: Dict[str, List[str]] = {}
         for lid in lineage:
-            lines.append(f"  - {lid}")
+            # Derive the metric-key prefix: MACRO_VIX_2026-04-23 → VIX
+            parts = lid.split("_")
+            if lid.startswith("MACRO_") and len(parts) >= 3:
+                code = parts[1]
+                prefix_keys = [k2 for k2 in values if k2.startswith(code)]
+            elif lid.startswith("GPR_"):
+                prefix_keys = [k2 for k2 in values if k2.startswith("gpr")]
+            else:
+                # For options / px / iv anchors, show all keys whose prefix
+                # appears in the anchor name (best-effort heuristic).
+                anchor_stem = lid.split("_")[0] if "_" in lid else lid
+                prefix_keys = [k2 for k2 in values if anchor_stem.lower() in k2.lower()]
+            anchor_covered[lid] = prefix_keys or ["(see table above)"]
+
+        for lid, covered_keys in anchor_covered.items():
+            val_hints = ", ".join(
+                f"{k2}={values[k2]}" for k2 in covered_keys[:3] if k2 in values
+            )
+            if len(covered_keys) > 3:
+                val_hints += f", +{len(covered_keys) - 3} more"
+            lines.append(f"  [Silver: {lid}]  covers → {val_hints}")
     return "\n".join(lines)
 
 

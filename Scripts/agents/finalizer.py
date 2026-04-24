@@ -124,12 +124,34 @@ class FinalReport(BaseModel):
         description="Overall confidence in the report's conclusions based on data alignment."
     )
 
+    conversation_reply: str = Field(
+        default="",
+        description=(
+            "A 50-100 word plain-English trading recommendation in direct dialogue style. "
+            "No markdown, no section headers, no bullet points. "
+            "Write as if speaking to the trader: start with the key macro/news context in "
+            "one sentence, state the recommended structure and ticker in one sentence, "
+            "then add the main risk or caveat in one sentence. "
+            "Example tone: 'Given elevated geopolitical risk and NORMAL IV on NVDA, "
+            "a call spread with 30-45 DTE captures momentum while limiting premium outlay. "
+            "Watch the insider selling overhang — size conservatively.' "
+            "Incorporate any polish notes from the Critic if provided."
+        )
+    )
+
     def to_markdown(self) -> str:
         """Converts the structured Pydantic object into a clean, readable Markdown report for UI display."""
         md_lines = [
             f"# 📊 Institutional Options Strategy Report",
             f"**Generated on:** {self.report_date}",
             f"**Overall Confidence Score:** {self.confidence_score * 100:.1f}%",
+        ]
+        # Quick Take — the 50-100 word conversation reply shown first for chat interfaces.
+        if self.conversation_reply and self.conversation_reply.strip():
+            md_lines += [
+                f"\n> **💬 Quick Take:** {self.conversation_reply.strip()}",
+            ]
+        md_lines += [
             f"\n## 🌍 Macro Context Summary",
             f"{self.macro_summary}",
             f"\n## 💡 Top Trade Ideas"
@@ -306,7 +328,18 @@ def _degraded_report(
 # ==========================================
 
 class FinalizerAgent:
-    """LangGraph-compatible finalizer. Produces the terminal `final_strategy` dict."""
+    """LangGraph-compatible finalizer. Produces the terminal `final_strategy` dict.
+
+    Optional llama3:latest enrichment pass (FINALIZER_LLAMA3_ENRICHMENT=1):
+        After the structured FinalReport is produced, a second lightweight LLM
+        call uses llama3:latest to generate an enriched_macro_narrative — a
+        plain-English synthesis of macro_context for the executive summary
+        section. This pass is best-effort and never blocks the primary output.
+        Enabled via env var to avoid extra GPU load in CI / cold-start scenarios.
+    """
+
+    _LLAMA3_ENRICHMENT_ENABLED = os.getenv("FINALIZER_LLAMA3_ENRICHMENT", "0") == "1"
+    _LLAMA3_MODEL = os.getenv("OLLAMA_FINALIZER_ENRICHMENT_MODEL", "llama3:latest")
 
     def __init__(self):
         self.model_name = os.getenv("OLLAMA_FINALIZER_MODEL", "options-expert-v1:latest")
@@ -318,8 +351,21 @@ class FinalizerAgent:
         ).with_structured_output(FinalReport)
 
         # Prompt comes from the single source of truth; variables expected by the
-        # template are: original_query, draft, evidence_block.
+        # template are: original_query, draft, evidence_block, macro_context.
         self.prompt = get_finalizer_prompt()
+
+        # Optional llama3 enrichment LLM (lazy init — only loaded when enabled).
+        self._llama3_llm: Optional[Any] = None
+        if self._LLAMA3_ENRICHMENT_ENABLED:
+            try:
+                from langchain_ollama import ChatOllama as _OllamaChat
+                self._llama3_llm = _OllamaChat(
+                    model=self._LLAMA3_MODEL,
+                    temperature=0.3,
+                )
+                logger.info(f"FinalizerAgent: llama3 enrichment enabled (model={self._LLAMA3_MODEL})")
+            except Exception as e:
+                logger.warning(f"FinalizerAgent: llama3 enrichment init failed ({e}) — enrichment disabled.")
 
     async def format_and_clean(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Convert the Analyst draft into a FinalReport dict.
@@ -341,10 +387,22 @@ class FinalizerAgent:
         is_fallback = bool(state.get("is_fallback", False))
         evidence_pool = _collect_evidence_pool(state)
 
+        # Critic Minor Suggestions — non-blocking polish notes forwarded from CriticAgent.
+        # Rendered as a concise block so the Finalizer can incorporate them into
+        # conversation_reply and rationale without triggering a rewrite.
+        minor_suggestions: List[str] = state.get("critic_minor_suggestions") or []
+        minor_block = (
+            "\n".join(f"- {s}" for s in minor_suggestions)
+            if minor_suggestions
+            else "(none)"
+        )
+
         # Render evidence pool as a readable, LLM-consumable block.
         evidence_block = "\n".join(
             f"- [{e.source_type}] {e.detail}" for e in evidence_pool
         ) or "(no evidence available — INSUFFICIENT DATA)"
+
+        macro_ctx = state.get("macro_context") or ""
 
         degraded = False
         degraded_reason: Optional[str] = None
@@ -369,6 +427,12 @@ class FinalizerAgent:
                 "original_query": user_query,
                 "draft": draft,
                 "evidence_block": evidence_block,
+                # Macro context is passed as trusted background — it was
+                # pre-validated by the data pipeline and is exempt from
+                # Checker re-verification (see checker_strictness_v2_architecture.md §2.1).
+                "macro_context": macro_ctx[:3000] if macro_ctx else "(not available)",
+                # Critic Minor Suggestions — polish notes to incorporate (non-blocking).
+                "minor_suggestions_block": minor_block,
             })
 
             # Post-hoc traceability guarantee: if the LLM produced trade ideas
@@ -403,7 +467,31 @@ class FinalizerAgent:
             # Keep the report_date deterministic even on the degraded path.
             _enforce_deterministic_report_date(report, state)
 
-        return {
+        # Optional llama3:latest enrichment pass — macro narrative synthesis.
+        # Produces a plain-English executive background narrative that sits
+        # alongside the structured FinalReport without modifying its schema.
+        enriched_macro_narrative: Optional[str] = None
+        if self._llama3_llm is not None and macro_ctx:
+            try:
+                enrichment_prompt = (
+                    "You are a concise financial analyst. "
+                    "Write a 2-3 sentence plain English executive summary of the current "
+                    "macro environment based ONLY on the provided Macro Context. "
+                    "Do not add new information or hedging language beyond what is in the context.\n\n"
+                    f"[MACRO CONTEXT]\n{macro_ctx[:2000]}\n\n"
+                    f"[ANALYST MACRO SUMMARY FOR REFERENCE]\n{report.macro_summary}\n\n"
+                    "Executive Macro Narrative:"
+                )
+                enrichment_response = await self._llama3_llm.ainvoke(enrichment_prompt)
+                enriched_macro_narrative = getattr(enrichment_response, "content", str(enrichment_response)).strip()
+                logger.info(
+                    f"FinalizerAgent: llama3 enrichment completed "
+                    f"(len={len(enriched_macro_narrative)})"
+                )
+            except Exception as e:
+                logger.warning(f"FinalizerAgent: llama3 enrichment failed ({type(e).__name__}: {e}) — skipped.")
+
+        output: Dict[str, Any] = {
             "status": "degraded" if degraded else "complete",
             "degraded_reason": degraded_reason,
             "final_report": report.model_dump(),
@@ -411,6 +499,9 @@ class FinalizerAgent:
             "evidence_links": [e.model_dump() for e in evidence_pool],
             "confidence_score": report.confidence_score,
         }
+        if enriched_macro_narrative:
+            output["enriched_macro_narrative"] = enriched_macro_narrative
+        return output
 
 
 # ==========================================
