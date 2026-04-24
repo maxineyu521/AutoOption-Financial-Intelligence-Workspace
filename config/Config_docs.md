@@ -1,10 +1,6 @@
 # `config/` — Configuration single source of truth
 
-This tree is intentionally **semantic-layered**, not pipeline-layered: files
-live next to *what they describe* (the asset universe, reference maps,
-per-pipeline parameters), not next to the script that happens to consume them.
-All access goes through **`Scripts/core/universe.py`** — callers should never
-`open()` files in this tree directly.
+This tree is intentionally **semantic-layered**, not pipeline-layered: files live next to *what they describe* (the asset universe, reference maps, per-pipeline parameters), not next to the script that happens to consume them. All access goes through **`Scripts/core/universe.py`** — callers should never `open()` files in this tree directly.
 
 ## Layout
 
@@ -28,9 +24,7 @@ config/
 ```
 
 > Retired on **2026-04-22**: ``config/SEC_Ingestion/`` and ``config/SEC_Processing/``.
-> All of their content now lives under ``universe/``, ``reference/``, or ``runtime/``
-> and is reached through ``Scripts.core.universe`` — **never** by opening a hard-coded
-> path.
+> All of their content now lives under ``universe/``, ``reference/``, or ``runtime/`` and is reached through ``Scripts.core.universe`` — **never** by opening a hard-coded path.
 
 ## Why semantic layering
 
@@ -40,10 +34,7 @@ config/
 | `config/Option_chain/target_symbols.json` (proposed) | `config/universe/etf_broad_market.json`     |
 | Duplicated ticker lists across pipelines             | **One list per role**, unioned via manifest |
 
-The universe knows nothing about SEC or yfinance; it just declares *which
-tickers are equities, which are broad-market ETFs, which are commodity ETFs*.
-Pipelines then **ask for a role** (`sec.filers`, `options.scrape`) and the
-manifest resolves the union.
+The universe knows nothing about SEC or yfinance; it just declares *which tickers are equities, which are broad-market ETFs, which are commodity ETFs*. Pipelines then **ask for a role** (`sec.filers`, `options.scrape`) and the manifest resolves the union.
 
 ## Access pattern
 
@@ -65,18 +56,13 @@ paths.options_parquet_path("SPY", "2026-04-22")
 ```
 
 The active strategy is `storage.strategy` in `pipeline/options_history.json`.
-**Default is `legacy`**, which produces paths byte-identical to the
-pre-migration code so `Scripts/retrieval/sql_tools.py` read-side globs keep
-working unchanged.
+**Default is `legacy`**, which produces paths byte-identical to the pre-migration code so `Scripts/retrieval/sql_tools.py` read-side globs keep working unchanged.
 
 ---
 
 ## Storage scaling — the 13K-files-per-year problem
 
-With the universe now at **53 tickers** (`options.scrape` role), the scraper
-writes **53 parquet / day → ~13,356 parquet / year**. The tree below is the
-recommended migration path. None of it requires touching the scraper's
-business logic.
+With the universe now at **53 tickers** (`options.scrape` role), the scraper writes **53 parquet / day → ~13,356 parquet / year**. The tree below is the recommended migration path. None of it requires touching the scraper's business logic.
 
 ### Phase 0 — today (`storage.strategy = legacy`) ✅ default
 
@@ -88,12 +74,9 @@ Data/2_Silver_Processed/Options_Market_Data/
     └── …
 ```
 
-* Pros: zero-risk drop-in for the existing `*/*.parquet` glob in
-  `sql_tools.py:183`.
+* Pros: zero-risk drop-in for the existing `*/*.parquet` glob in `sql_tools.py:183`.
 * Cons: No partition pruning metadata on disk; just a flat date folder.
-* Verdict: **fine up to ~5K–10K files**. DuckDB will still happily glob that
-  many parquets; the real cost is only in S3-backed setups with per-object
-  latency.
+* Verdict: **fine up to ~5K–10K files**. DuckDB will still happily glob that many parquets; the real cost is only in S3-backed setups with per-object latency.
 
 ### Phase 1 — Hive partitioning (`storage.strategy = hive_v1`)
 
@@ -119,9 +102,7 @@ Data/2_Silver_Processed/Options_Market_Data/
   ```
   → only touches the 5 ETF files, not all 53.
 * **Still ~13K files/year** — but with cheap column-free filtering.
-* Migration cost: (a) update `options_glob` to `**/*.parquet` and add
-  `hive_partitioning=1`; (b) optional one-off backfill script to copy legacy
-  files into the new tree; (c) flip `storage.strategy` to `hive_v1`.
+* Migration cost: (a) update `options_glob` to `**/*.parquet` and add `hive_partitioning=1`; (b) optional one-off backfill script to copy legacy files into the new tree; (c) flip `storage.strategy` to `hive_v1`.
 
 ### Phase 2 — Monthly roll-up compaction (`storage.strategy = monthly_rollup`)
 
@@ -138,9 +119,7 @@ Data/2_Silver_Processed/Options_Market_Data/
         └── options_chain.parquet
 ```
 
-* Writer side is unchanged — it keeps dropping per-ticker-per-day files into
-  `raw/`. A **separate compaction job** (e.g. monthly cron, not included in
-  this PR) runs:
+* Writer side is unchanged — it keeps dropping per-ticker-per-day files into `raw/`. A **separate compaction job** (e.g. monthly cron, not included in this PR) runs:
   ```python
   df = duckdb.sql(f"""
       SELECT *, snapshot_date
@@ -151,10 +130,8 @@ Data/2_Silver_Processed/Options_Market_Data/
                 partition_cols=None, compression='zstd', row_group_size=100_000)
   # After rollup is verified, the raw/ tier is pruned for that month.
   ```
-* **File count collapses from ~1100/month to 1/month** → 12 rollup files +
-  ~30–60 days of raw hot files = well under 100 files/year on disk.
-* Silver SQL then reads: `rollup/**/*.parquet UNION ALL raw/**/*.parquet`
-  with a date-range filter — DuckDB merges the views.
+* **File count collapses from ~1100/month to 1/month** → 12 rollup files + ~30–60 days of raw hot files = well under 100 files/year on disk.
+* Silver SQL then reads: `rollup/**/*.parquet UNION ALL raw/**/*.parquet` with a date-range filter — DuckDB merges the views.
 
 ### When to escalate
 
