@@ -283,7 +283,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--roles",
         nargs="+",
         metavar="ROLE",
-        help="Specific roles to warm up (default: query_extract + analyst).",
+        help="Specific roles to warm up (default: router + checker).",
     )
     p_w.set_defaults(handler=_cmd_warmup)
 
