@@ -42,6 +42,7 @@ try:
         TimePredicate,
         union_epoch_range,
     )
+    from ..observability.audit import record_retrieval_fallback_kpi
 except ImportError as e:
     try:
         # Fallback to absolute imports when this file is executed directly.
@@ -58,7 +59,9 @@ except ImportError as e:
             TimePredicate,
             union_epoch_range,
         )
+        from Scripts.observability.audit import record_retrieval_fallback_kpi
     except ImportError:
+        record_retrieval_fallback_kpi = None
         print(f"❌ Initialization Error: {e}")
         sys.exit(1)
 
@@ -216,8 +219,23 @@ class FinancialHybridRetriever:
                 f"Gold kept={source_vals or 'ALL (no filter)'}"
             )
 
-        # --- Ticker placement (hard / soft / drop) -----------------------
+        # SEC-overconstraint guard:
+        # Macro/options queries on broad ETFs (SPY/QQQ/IWM/GLD/SLV) can be
+        # mislabelled as SEC by the extractor, which then forces strict
+        # action/form filters and collapses Tier1 recall to zero. For ETF/index
+        # tickers, SEC is not a meaningful source channel; drop it early.
         ticker_list = list(metadata.tickers) if metadata.tickers else []
+        _ETF_INDEX_TICKERS = {"SPY", "QQQ", "IWM", "GLD", "SLV"}
+        if source_vals and "sec" in source_vals:
+            upper_tickers = [str(t).upper() for t in ticker_list]
+            if upper_tickers and all(t in _ETF_INDEX_TICKERS or t.startswith("^") for t in upper_tickers):
+                source_vals = [s for s in source_vals if s != "sec"]
+                logger.info(
+                    "🧹 [GoldFilter] Dropped SEC source_type for ETF/index macro query; "
+                    f"tickers={upper_tickers} | gold kept={source_vals or 'ALL'}"
+                )
+
+        # --- Ticker placement (hard / soft / drop) -----------------------
         if ticker_list and ticker_mode == "hard":
             must_conditions.append(
                 models.FieldCondition(key="ticker", match=models.MatchAny(any=ticker_list))
@@ -409,10 +427,10 @@ class FinancialHybridRetriever:
 
             async def _execute_search(q_filter):
                 prefetch = [
-                    models.Prefetch(query=dense_vec, using="dense", limit=top_k * 3, filter=q_filter),
+                    models.Prefetch(query=dense_vec, using="dense", limit=top_k * 2, filter=q_filter),
                     models.Prefetch(
                         query=models.SparseVector(indices=sparse_vec.indices.tolist(), values=sparse_vec.values.tolist()),
-                        using="sparse", limit=top_k * 3, filter=q_filter
+                        using="sparse", limit=top_k * 2, filter=q_filter
                     )
                 ]
                 return await asyncio.to_thread(
@@ -420,7 +438,7 @@ class FinancialHybridRetriever:
                     collection_name=self.collection_name,
                     prefetch=prefetch,
                     query=models.FusionQuery(fusion=models.Fusion.RRF),
-                    limit=top_k * 2
+                    limit=top_k
                 )
 
             # ---------------------------------------------------------------
@@ -497,7 +515,7 @@ class FinancialHybridRetriever:
 
             points.sort(key=lambda x: x.score, reverse=True)
 
-            valid_points = [p for p in points if p.score > 0.00001]
+            valid_points = [p for p in points if p.score > 0.01]
             top_k_results = valid_points[:top_k]
 
             formatted_results = self._format_results(top_k_results, fallback_used)
@@ -576,6 +594,16 @@ class FinancialHybridRetriever:
         }
         
         logger.info(f"[AUDIT_RAG_RETRIEVAL] {json.dumps(audit_payload)}")
+        if callable(record_retrieval_fallback_kpi):
+            try:
+                record_retrieval_fallback_kpi(
+                    fallback_tier=fallback_tier,
+                    status=audit_payload["status"],
+                    results_count=audit_payload["results_count"],
+                    latency_sec=audit_payload["latency_sec"],
+                )
+            except Exception as kpi_e:
+                logger.warning(f"Failed to write retrieval KPI summary: {kpi_e}")
         
         try:
             date_str = datetime.now().strftime("%Y-%m-%d")
