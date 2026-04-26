@@ -1,152 +1,105 @@
-# Qdrant Connection & Embedding Model Factory — `connection.py`
+# Qdrant Connection and Embedding Factory - Institutional Runtime Spec
 
-## 1. Goal
+## 1. Goal and Runtime Reliability Objective
 
-`Scripts/vector_store/connection.py` is the foundational infrastructure layer for all vector database operations. It provides a fault-tolerant, firewall-resilient connection gateway to Qdrant Cloud and a provider-agnostic factory for text embedding models. Downstream consumers (ingestion pipelines, `QdrantRetriever`) obtain verified client objects and embedding models without concerning themselves with retry logic, hardware placement, or credential management.
+`Scripts/vector_store/connection.py` is the shared runtime bootstrap layer for:
 
----
+- Qdrant client connectivity,
+- embedding model provisioning,
+- process-level singleton caching.
 
-## 2. Architecture
+It ensures ingestion and retrieval components use one consistent, resilient infrastructure entrypoint.
 
-```
-Environment (.env)
-       │
-       ├─► get_qdrant_client()                  get_embedding_model()
-       │         │                                      │
-       │    Read QDRANT_HOST                    Read EMBEDDING_PROVIDER
-       │    Read QDRANT_API_KEY                 Read EMBEDDING_MODEL_NAME
-       │         │                              Read EMBEDDING_DEVICE
-       │    QdrantClient(                               │
-       │      url=QDRANT_HOST,                 ┌────────▼────────────┐
-       │      api_key=QDRANT_API_KEY,          │ Provider dispatch   │
-       │      prefer_grpc=False,               ├────────────────────┤
-       │      timeout=15                       │ huggingface (def.)  │
-       │    )                                  │ HuggingFaceEmbed.   │
-       │         │                             │ + normalize=True    │
-       │    Retry loop (max 3, 2 s gap)        ├────────────────────┤
-       │         │                             │ ollama              │
-       │    ✅ Return client                   │ OllamaEmbeddings    │
-       │                                       └────────▼────────────┘
-       └───────────────────────────────────── @lru_cache → Return model
+## 2. Architecture (Markdown Block)
+
+```text
+[Environment Variables]
+   -> get_qdrant_client()
+      -> validated credentials
+      -> retryable cloud connection
+      -> cached QdrantClient singleton
+
+[Environment Variables]
+   -> get_embedding_model()
+      -> provider selection (huggingface or ollama)
+      -> device-aware model bootstrap
+      -> cached Embeddings singleton
 ```
 
-**Design patterns in use:**
-- **Singleton / `@lru_cache`** — models and clients are loaded exactly once per process; prevents memory leaks and redundant network calls.
-- **Provider Factory** — `EMBEDDING_PROVIDER` env variable routes between HuggingFace and Ollama without changing downstream code.
-- **gRPC disabled** — `prefer_grpc=False` forces HTTPS REST, bypassing strict institutional or cluster firewalls.
+## 3. Code Strategy and Workflow
 
----
+```mermaid
+flowchart TD
+    A["Load .env"] --> B["get_qdrant_client"]
+    A --> C["get_embedding_model"]
+    B --> D["Credential Validation"]
+    D --> E["Retry Loop Connection Attempt"]
+    E --> F["Cached Qdrant Client"]
+    C --> G["Provider Branch"]
+    G --> H["HuggingFace Embeddings"]
+    G --> I["Ollama Embeddings"]
+    H --> J["Cached Embedding Model"]
+    I --> J
+```
 
-## 3. Code Strategy & Workflow
+Core strategy details:
 
-### 3.1 `get_qdrant_client()`
+- Both factories use `@lru_cache(maxsize=1)` to avoid repeated heavyweight initialization.
+- Qdrant connection uses bounded retries (`max_retries=3`, `delay=2s`) and validates connectivity via `get_collections()`.
+- Embedding factory supports provider routing via `EMBEDDING_PROVIDER` with device controls (`EMBEDDING_DEVICE`).
+- Logging is day-partitioned (`logs/<YYYY-MM-DD>/connection.log`) for ops traceability.
 
-| Step | Detail |
-|:---|:---|
-| 1 | Read `QDRANT_HOST` and `QDRANT_API_KEY` from `.env` |
-| 2 | Instantiate `QdrantClient(prefer_grpc=False, timeout=15)` — REST-only |
-| 3 | On `ConnectionError` / network failure: retry up to **3 attempts** with **2-second backoff** |
-| 4 | Return verified client on success; raise on final failure |
+## 4. Output Data Schema and Paths
 
-### 3.2 `get_embedding_model()`
+| Output | Type | Description | Producer | Path |
+|---|---|---|---|---|
+| Qdrant client object | `QdrantClient` | Cached vector DB client used by ingestion/retrieval | `get_qdrant_client()` | `Scripts/vector_store/connection.py` |
+| Embedding model object | `Embeddings` | Cached embedding engine for dense vectors | `get_embedding_model()` | `Scripts/vector_store/connection.py` |
+| Connection telemetry log | log lines | Connect attempts, errors, and health checks | `setup_logger()` | `logs/<YYYY-MM-DD>/connection.log` |
 
-| Branch | Env trigger | Model |
-|:---|:---|:---|
-| **HuggingFace** (default) | `EMBEDDING_PROVIDER=huggingface` | `HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME, device=EMBEDDING_DEVICE, encode_kwargs={"normalize_embeddings": True})` |
-| **Ollama** | `EMBEDDING_PROVIDER=ollama` | `OllamaEmbeddings(base_url=OLLAMA_HOST, model=EMBEDDING_MODEL_NAME)` |
+Configuration keys:
 
-`encode_kwargs={"normalize_embeddings": True}` ensures cosine-distance compatibility with Qdrant's collection configuration.
-
-### 3.3 `VectorStoreConnection` (used by `QdrantRetriever`)
-
-The `QdrantRetriever` instantiates `VectorStoreConnection` which wraps `get_qdrant_client()` with additional logging and initialises both embedding models required for hybrid search:
-- **Dense model:** `BAAI/bge-base-en-v1.5` (768-dim) via HuggingFace
-- **Sparse model:** `Qdrant/Splade_PP_en_v1` via `fastembed`
-- **Reranker:** `BAAI/bge-reranker-v2-m3` (CrossEncoder) via `sentence-transformers`
-
----
-
-## 4. Output Data Schema & Configuration
-
-### Environment Variables
-
-| Variable | Default | Required | Purpose |
-|:---|:---|:---|:---|
-| `QDRANT_HOST` | — | ✅ | Full REST URL of Qdrant Cloud cluster (e.g. `https://xxx.us-east-2-0.aws.cloud.qdrant.io:6333`) |
-| `QDRANT_API_KEY` | — | ✅ | Authentication token |
-| `EMBEDDING_PROVIDER` | `huggingface` | | `"huggingface"` or `"ollama"` |
-| `EMBEDDING_MODEL_NAME` | `BAAI/bge-base-en-v1.5` | | Dense embedding model ID |
-| `EMBEDDING_DEVICE` | `cpu` | | `"cpu"`, `"cuda"`, or `"mps"` |
-| `OLLAMA_HOST` | `http://localhost:11434` | | Ollama base URL (only when `EMBEDDING_PROVIDER=ollama`) |
-
-### Return Objects
-
-| Function | Returns |
-|:---|:---|
-| `get_qdrant_client()` | `qdrant_client.QdrantClient` — verified, cached |
-| `get_embedding_model()` | `langchain_core.embeddings.Embeddings` — `.embed_query()` / `.embed_documents()` compatible |
-
-### Qdrant Collection
-
-| Property | Value |
-|:---|:---|
-| Collection name | `financial_rag_gold` |
-| Distance metric | Cosine (dense), dot product (sparse) |
-| Dense vector size | 768 (BAAI/bge-base-en-v1.5) |
-| Sparse model | Qdrant/Splade_PP_en_v1 (ONNX, via fastembed) |
-
----
+| Key | Purpose | Used In |
+|---|---|---|
+| `QDRANT_HOST` | Qdrant cloud endpoint | `get_qdrant_client()` |
+| `QDRANT_API_KEY` | Qdrant authentication key | `get_qdrant_client()` |
+| `EMBEDDING_PROVIDER` | Provider selection (`huggingface`/`ollama`) | `get_embedding_model()` |
+| `EMBEDDING_MODEL_NAME` | Dense embedding model ID | `get_embedding_model()` |
+| `EMBEDDING_DEVICE` | Device placement (`cpu`/`cuda`) | `get_embedding_model()` |
+| `OLLAMA_HOST` | Ollama base URL (embedding provider path) | `get_embedding_model()` |
 
 ## 5. How to Test
 
-### Connection health check
-
 ```bash
+python -c "from Scripts.vector_store.connection import get_qdrant_client; print(get_qdrant_client().get_collections())"
+python -c "from Scripts.vector_store.connection import get_embedding_model; print(len(get_embedding_model().embed_query('health check'))) "
 python Scripts/vector_store/connection.py
 ```
 
-Expected output:
-1. `✅ Connected to Qdrant Cloud successfully.`
-2. List of active collections including `financial_rag_gold`
-3. Embedding model initialisation log (provider, model, device)
-4. Test vector dimension (768 for `BAAI/bge-base-en-v1.5`)
+Validation focus:
 
-### Programmatic connectivity check
+- cloud connection succeeds with current credentials,
+- embedding model loads and returns vector output,
+- cached calls reuse initialized instances without repeated cold starts.
 
-```python
-from Scripts.vector_store.connection import get_qdrant_client, get_embedding_model
+## 6. Dependency Files, Linked Docs, and One-Line Commands
 
-client = get_qdrant_client()
-collections = [c.name for c in client.get_collections().collections]
-print("Collections:", collections)
+### 6.1 Core dependency files
 
-model = get_embedding_model()
-vec = model.embed_query("AAPL IV skew")
-print("Vector dim:", len(vec))
-```
+- `Scripts/vector_store/connection.py`
+- `Scripts/vector_store/ingestion.py`
+- `Scripts/retrieval/qdrant_retriever.py`
 
-### Retry simulation
+### 6.2 Linked documentation
 
-```bash
-# Temporarily set wrong API key, confirm retry + failure message
-QDRANT_API_KEY=invalid python -c "from Scripts.vector_store.connection import get_qdrant_client; get_qdrant_client()"
-```
+- [Vector Ingestion](./Vector_Ingestion.md)
+- [Qdrant Retriever Docs](../Query_retrieval_docs/Qdrant_retriever_docs.md)
+- [Retrieval Architecture and Strategy](../Query_retrieval_docs/Retrieval_Architecture_and_Strategy.md)
+- [LLM Pool](../LLM_Pool.md)
 
----
-
-## 6. Dependencies
-
-| Library | Purpose |
-|:---|:---|
-| `qdrant-client` | Qdrant Cloud REST client |
-| `langchain-huggingface` | HuggingFace embedding wrapper |
-| `langchain-ollama` | Ollama embedding wrapper |
-| `langchain-core` | `Embeddings` base class |
-| `sentence-transformers` | CrossEncoder reranker |
-| `fastembed` | SPLADE sparse model (ONNX runtime) |
-| `python-dotenv` | `.env` loading |
+### 6.3 One-line setup command
 
 ```bash
-pip install qdrant-client langchain-core langchain-huggingface langchain-ollama \
-    python-dotenv sentence-transformers fastembed
+pip install -r requirements.txt
 ```
+
