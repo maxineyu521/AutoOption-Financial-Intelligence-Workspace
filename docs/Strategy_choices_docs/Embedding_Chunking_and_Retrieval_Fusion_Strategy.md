@@ -1,8 +1,6 @@
 # Embedding, Chunking, and Retrieval Fusion Strategy
 
-_Scope: `Scripts/vector_store/`, `Scripts/retrieval/qdrant_retriever.py`, `Scripts/vector_store/ingestion.py`_
-
-_This document is the authoritative rationale for every model, chunking decision, and fusion parameter in the retrieval pipeline. For the operational model registry (WHAT is deployed WHERE), see `docs/ARCHITECTURE.md §5`. For GPU warmup and Ollama keep-alive, see `docs/LLM_Pool.md`._
+_This document is the authoritative rationale for every model, chunking decision, and fusion parameter in the retrieval pipeline. For the operational model registry (WHAT is deployed WHERE), see `docs/modular_guide/ARCHITECTURE.md §5`. For GPU warmup and Ollama keep-alive, see `docs/modular_guide/LLM Pool Operations Guide.md`._
 
 ---
 
@@ -273,20 +271,20 @@ This asymmetry is deliberate. Feeding the HyDE paragraph to the sparse channel w
 
 ```mermaid
 flowchart TD
-    Q["User Query"] --> QT["QueryTransformer\n(options-expert-v1:latest, 70B)"]
-    QT --> |HyDE paragraph| DE["Dense Prefetch\nbge-base-en-v1.5\nTop-50 candidates"]
-    QT --> |rerank_query| SP["Sparse Prefetch\nSPLADE PP en v1\nTop-50 candidates"]
+    Q["User Query"] --> QT["QueryTransformer\n(gpt-4o-mini extractor + gpt-4o-mini HyDE)"]
+    QT --> DQ["Dense input: hyde_paragraph"]
+    QT --> SQ["Sparse input: rerank_query"]
 
-    DE --> |100 candidates| MF["Metadata Pre-filter\nticker / source_type / time window\nPayload filter before vector math"]
-    SP --> MF
+    DQ --> DP["Dense prefetch: bge-base-en-v1.5(limit = top_k * 2)"]
+    SQ --> SP["Sparse prefetch: SPLADE PP en v1(limit = top_k * 2)"]
 
-    MF --> RRF["Qdrant Server-side RRF\nFusion.RRF  k=60\nMerge dense + sparse rank lists"]
+    DP --> PF["Shared metadata pre-filter:source_type, ticker/topic policy,SEC/news refinements, time barrier"]
+    SP --> PF
 
-    RRF --> |Top-20 fused| CE["CrossEncoder Rerank\nbge-reranker-v2-m3\nFull query⊕doc attention"]
-
-    CE --> SG["Score Gate\nDrop score ≤ 1e-5\nNoise floor cutoff"]
-
-    SG --> OUT["Gold Context Chunks\nList[RetrievedChunk]\n→ AgentState.gold_context"]
+    PF --> RRF["Qdrant server-side fusion(Fusion.RRF (k=60))"]
+    RRF --> RR["Cross-encoder rerank\nbge-reranker-v2-m3"]
+    RR --> SG["Score gate(keep score > 0.01)"]
+    SG --> OUT["Gold context chunks List[RetrievedChunk]-> AgentState.gold_context"]
 ```
 
 ### D. Deterministic Pre-Filtering
@@ -316,14 +314,15 @@ The system is designed with a **strict hardware tier separation**: GPU is reserv
 │                                                                │
 │  options-expert-v1:latest   (Llama-3.3-70B Q4_K_M)           │
 │    ├─ Analyst / Checker / Critic / Finalizer                   │
-│    └─ QueryTransformer (Extractor + HyDE)                      │
+│    └─ Heavy expert generation tier                              │
 │                                                                │
 │  llama3:latest              (Llama-3 8B vanilla)              │
 │    ├─ MasterRetriever.router_llm                               │
 │    └─ news_scraper sentiment / sec_processor form parser       │
 │                                                                │
-│  Note: 70B + 8B cannot coexist in one GPU slot →              │
-│  llm_pool pins 70B at KEEP_ALIVE=30m; 8B uses idle slots.    │
+│  Note: 70B + 8B coexistence still needs VRAM discipline.       │
+│  llm_pool pins expert tier with KEEP_ALIVE; router remains     │
+│  lightweight and fallback-capable.                             │
 └────────────────────────────────────────────────────────────────┘
 
 ┌────────────────────────────────────────────────────────────────┐
@@ -345,6 +344,11 @@ The system is designed with a **strict hardware tier separation**: GPU is reserv
 │  DuckDB in-process   (Silver Parquet queries)                  │
 │    • Embedded, zero-latency startup                            │
 │    • ~50–100ms per Parquet scan                                │
+│                                                                │
+│  QueryTransformer (OpenAI-compatible)                          │
+│    • `TRANSFORM_EXTRACTOR_MODEL` default `gpt-4o-mini`         │
+│    • `TRANSFORM_HYDE_MODEL` default `gpt-4o-mini`              │
+│    • Invoked via `langchain_openai.ChatOpenAI`                 │
 └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -373,11 +377,12 @@ This is a common documentation friction point. The answer is a three-document tr
 │         SEC_ingestion_retrived_strategy.md                        │
 │                                                                   │
 │  Q: "WHAT model is deployed WHERE? What are the env vars?"       │
-│  A: docs/ARCHITECTURE.md §5 (Model Registry — single source of   │
+│  A: docs/modular_guide/ARCHITECTURE.md §5 (Model Registry —      │
 │     truth for tag names, env vars, and consumers)                 │
 │                                                                   │
 │  Q: "HOW do I keep the 70B LLM warm? How do I manage GPU?"      │
-│  A: docs/LLM_Pool.md (warmup runbook, VRAM tiering, keep-alive)  │
+│  A: docs/modular_guide/LLM Pool Operations Guide.md (warmup       │
+│     runbook, VRAM tiering, keep-alive)                            │
 │                                                                   │
 │  Q: "HOW does the retrieval pipeline call these models?"         │
 │  A: docs/Query_retrieval_docs/                                    │
@@ -392,8 +397,8 @@ This is a common documentation friction point. The answer is a three-document tr
 
 **Decision rule:** New model-related information should land in:
 - `Strategy_choices_docs/` if it answers "why was this design chosen?"
-- `ARCHITECTURE.md §5` if it is a new entry in the canonical model registry
-- `LLM_Pool.md` if it affects Ollama GPU memory management
+- `modular_guide/ARCHITECTURE.md §5` if it is a new entry in the canonical model registry
+- `modular_guide/LLM Pool Operations Guide.md` if it affects Ollama GPU memory management
 - `Query_retrieval_docs/` if it changes the runtime retrieval execution path
 
 ---
@@ -410,8 +415,10 @@ This is a common documentation friction point. The answer is a three-document tr
 | `RETRIEVER_DEVICE` | `cpu` | CrossEncoder device | Retrieval (CPU) |
 | `QDRANT_HOST` | required | Qdrant Cloud REST endpoint | Infrastructure |
 | `QDRANT_API_KEY` | required | Qdrant authentication | Infrastructure |
-| `OLLAMA_CUSTOM_MODEL_NAME` | `options-expert-v1:latest` | 70B fine-tuned (agents + QueryTransformer) | LLM (GPU) |
+| `OLLAMA_CUSTOM_MODEL_NAME` | `options-expert-v1:latest` | 70B fine-tuned expert tier (analyst/checker/critic/finalizer) | LLM (GPU) |
 | `OLLAMA_ROUTER_MODEL` | `llama3:latest` | 8B router + ingestion helpers | LLM (GPU) |
+| `TRANSFORM_EXTRACTOR_MODEL` | `gpt-4o-mini` | Stage-1 metadata extraction model | Transform (OpenAI-compatible) |
+| `TRANSFORM_HYDE_MODEL` | `gpt-4o-mini` | Stage-2 HyDE generation model | Transform (OpenAI-compatible) |
 | `OLLAMA_KEEP_ALIVE` | `30m` | VRAM pin duration for 70B | LLM (GPU) |
 
 ---
@@ -484,7 +491,8 @@ python -m Scripts query --warmup "Given recent NVDA Form-4 executive selling, ho
 | `sentence-transformers` | CrossEncoder reranker | Retrieval |
 | `fastembed` | SPLADE ONNX sparse encoder | Retrieval |
 | `qdrant-client` | Qdrant Cloud REST client + RRF fusion | Retrieval |
-| `langchain-ollama` | Ollama LLM client (agents + QueryTransformer) | LLM |
+| `langchain-ollama` | Ollama LLM client (router + expert agent tiers) | LLM |
+| `langchain-openai` | OpenAI-compatible transform client (`gpt-4o-mini`) | Transform |
 | `langchain-core` | `Embeddings` base class | Retrieval |
 | `python-dotenv` | `.env` variable loading | Config |
 | `duckdb` | In-process Parquet SQL for Silver layer | Silver SQL |
@@ -492,13 +500,25 @@ python -m Scripts query --warmup "Given recent NVDA Form-4 executive selling, ho
 
 ```bash
 pip install langchain-huggingface sentence-transformers fastembed qdrant-client \
-    langchain-ollama langchain-core python-dotenv duckdb pyarrow
+    langchain-ollama langchain-openai langchain-core python-dotenv duckdb pyarrow
 ```
 
----
+### Linked documentation
+- [Backend System Reference](./Backend_README.md)
+- [User Query Guide](./docs/User_Query_Guide.md)
+- [Observability](./docs/Observability.md)
+- [LLM Pool](./docs/LLM_Pool.md)
+- [Frontend Runtime Guide](./docs/frontend_readme.md)
+- [Orchestration Runtime Guide](./docs/Orchestration.md)
+- [Agent Architecture](./docs/agent/Agent_Architecture.md)
+- [Retrieval Architecture and Strategy](./docs/Query_retrieval_docs/Retrieval_Architecture_and_Strategy.md)
+- [Modular Guide](./docs/modular_guide/README.md)
 
-## XI. Change Log
+### Critical code directories
+- `Scripts/agents/`
+- `Scripts/orchestration/`
+- `Scripts/retrieval/`
+- `Scripts/observability/`
+- `Frontend/`
+- `Data/`
 
-| Date | Change | Rationale |
-|---|---|---|
-| 2026-04-23 | Document created | Consolidates all model-selection rationale, chunking strategy, and hardware placement into a single Strategy reference. Prior knowledge was implicit in code and scattered across Retrieval_Architecture_and_Strategy.md. |
