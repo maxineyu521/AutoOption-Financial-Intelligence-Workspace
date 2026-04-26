@@ -1,185 +1,149 @@
-# Gold-Layer Asymmetric Hybrid Retriever
+# Qdrant Retriever (Gold Layer) - Institutional Retrieval Spec
 
-_Scope: `Scripts/retrieval/qdrant_retriever.py`._
+## 1. Goal and Retrieval Mandate
 
-This document specifies the Gold-layer retrieval engine that turns a `FullTransformationResult` into a ranked list of `RetrievedChunk`s.
+`Scripts/retrieval/qdrant_retriever.py` is the Gold-layer semantic retrieval engine.  
+Its mandate is to maximize evidence recall while enforcing metadata discipline, per-source time barriers, and explicit fallback telemetry.
 
----
+Operational objective:
+- retain semantic coverage through asymmetric hybrid retrieval (dense + sparse),
+- prevent noisy over-recall through smart metadata filtering,
+- keep every relaxation step auditable (`strict -> soft_ticker_180d -> drop_ticker_180d`).
 
-## 1. Strategic Objective
-
-Bridge the LLM's transformation payload (HyDE + metadata) and Qdrant
-Cloud with three guarantees:
-
-- **Temporal alignment** — all filters are built from `TimePredicate` objects produced upstream by `time_adapter`, not from wall-clock time. One anchor, one window, all sources.
-- **Lexical precision** — SPLADE sparse retrieval against the raw query (or `rerank_query`) preserves rare tickers and acronyms that dense embeddings blur.
-- **Post-fusion sharpness** — a cross-encoder reranker rescues the handful of true positives that RRF mixes with noise.
-
----
-
-## 2. System Architecture
-
-| Layer | Implementation |
-| --- | --- |
-| **Singleton resources** | `_instance` pattern caches Qdrant client + embedding models per process. |
-| **Asymmetric vectorisation** | Dense ← `hyde_paragraph`, Sparse ← `rerank_query` (or raw query). |
-| **Source-aware time filter** | Per-source `TimePredicate` → OR-joined `unified_timestamp` / `publish_timestamp` range conditions. |
-| **Defensive filtering** | `models.Filter` pre-filter (ticker, source_type, action, form, sentiment). |
-| **RRF fusion** | `Fusion.RRF` combines dense + sparse prefetch channels. |
-| **Cross-encoder rerank** | `CrossEncoder(BAAI/bge-reranker-v2-m3)` rescores top-K. |
-
----
-
-## 3. Execution Workflow
+## 2. Architecture (Execution Contract)
 
 ```text
-[ FullTransformationResult + raw query + time_predicates ]
-        │
-        ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Step 1 — Deterministic Filter Construction                  │
-│  ├─► ticker match         (models.FieldCondition)           │
-│  ├─► source_type match    (drops Silver-only source_types)  │
-│  ├─► action_direction     (SEC)                             │
-│  ├─► form_type            (SEC)                             │
-│  ├─► sentiment range      (news)                            │
-│  └─► per-source time OR   (unified_timestamp OR publish_ts) │
-└─────────────────────────────────────────────────────────────┘
-        │
-        ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Step 2 — Asymmetric Vectorisation                           │
-│  ├─► Dense : HuggingFace `BAAI/bge-base-en-v1.5`            │
-│  │           (hyde_paragraph → dense vector)                │
-│  └─► Sparse: fastembed `Splade_PP_en_v1`                    │
-│              (rerank_query  → sparse vector)                │
-└─────────────────────────────────────────────────────────────┘
-        │
-        ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Step 3 — Qdrant Prefetch + Fusion.RRF                       │
-│  using="dense"  prefetch  + filter                          │
-│  using="sparse" prefetch  + filter                          │
-│  → RRF(fusion=RRF) top_k_pool candidates                    │
-└─────────────────────────────────────────────────────────────┘
-        │
-        ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Step 4 — Cross-Encoder Rerank                               │
-│  CrossEncoder(BAAI/bge-reranker-v2-m3)                      │
-│  pairwise score([rerank_query, candidate_text]) → top_k     │
-│  drop score ≤ 1e-5                                          │
-└─────────────────────────────────────────────────────────────┘
-        │
-        ▼
-[ List[RetrievedChunk] ]
-  └─► audit → logs/retrieval/<date>/retriever_audit_trail.jsonl
+[FullTransformationResult]
+   -> parse metadata + hyde payload
+   -> build smart filter (ticker/source/topic/sec/sentiment/time)
+   -> dense query vector from hyde_paragraph
+   -> sparse query vector from rerank_query
+   -> dual prefetch (dense + sparse, each limit=top_k*2)
+   -> server-side RRF fusion
+   -> cross-encoder rerank
+   -> score gate + normalize RetrievedChunk + audit log
 ```
 
----
+## 3. Workflow and Retrieval Strategy
 
-## 4. Temporal Alignment Contract
+### 3.1 End-to-End RRF Workflow
 
-`retrieve_async` accepts an explicit
-`time_predicates: Dict[SourceTimeKey, TimePredicate]` argument. If present it is used directly; if absent the retriever falls back to the single `time_window` value inside `FullTransformationResult`.
+```mermaid
+flowchart TD
+    A[FullTransformationResult] --> B[Build Smart Filter]
+    A --> C[Dense query text: hyde_paragraph]
+    A --> D[Sparse query text: rerank_query]
 
-Two non-negotiable rules:
+    C --> E[Dense prefetch using named vector dense]
+    D --> F[Sparse prefetch using named vector sparse]
 
-1. **OR over `unified_timestamp` and `publish_timestamp`.** Some collections only populate one of the two keys; the retriever must accept a hit on either. Without this, SEC/News filings written by the legacy ingestor are invisible.
-2. **Business-day snapping.** Daily-grain predicates (for `source_type=options`) are computed by `trading_calendar.py` so that `"yesterday"` on a Monday resolves to the previous Friday — not an empty Sunday.
+    B --> E
+    B --> F
 
-> **Ops note on Qdrant indexing.** `publish_timestamp` must be indexed on the collection, otherwise Qdrant raises
-> `400 Index required but not found for "publish_timestamp"`. This is a one-time schema fix on the Qdrant side; see
-> `Scripts/vector_store/ingestion.py` for the canonical index payload.
+    E --> G[Qdrant FusionQuery RRF]
+    F --> G
 
----
-
-## 5. Output Schema — `RetrievedChunk`
-
-| Field | Type | Source | Purpose |
-| :--- | :--- | :--- | :--- |
-| `chunk_id` | String | Qdrant `id` | Unique UUID — traceability. |
-| `text` | String | Qdrant payload | Actual news / SEC / macro text. |
-| `score` | Float | RRF + rerank | Post-rerank relevance. |
-| `source_type` | String | Qdrant payload | `sec` / `news` / `macro` / `gpr`. |
-| `timestamp` | Integer | `unified_timestamp` or `publish_timestamp` | Unix epoch. |
-| `bronze_ref` | String | payload | Accession / URL / UUID fallback. |
-| `metadata` | Dict | payload | Tickers, impacted_assets, form_type, tone_score, … |
-
----
-
-## 6. Example Audit Entry
-
-```json
-{
-  "timestamp": "2026-04-19T21:16:01.849708",
-  "original_query": "What recent insider buying activity has there been for TSLA and how did the market react?",
-  "rerank_query_used": "TSLA Form 4 insider buying executives past month",
-  "filter_applied": {
-    "must": [
-      {"key": "ticker", "match": {"any": ["TSLA"]}},
-      {"key": "source_type", "match": {"any": ["sec", "news"]}},
-      {"key": "action_direction", "match": {"any": ["BUY", "ACQUIRE/VEST"]}},
-      {"key": "form_type", "match": {"value": "4"}},
-      {
-        "should": [
-          {"key": "unified_timestamp", "range": {"gte": 1774055761.0, "lte": 1776647761.0}},
-          {"key": "publish_timestamp", "range": {"gte": 1774055761.0, "lte": 1776647761.0}}
-        ]
-      }
-    ]
-  },
-  "fallback_triggered": false,
-  "results_count": 1,
-  "top_k_scores": [0.0145],
-  "latency_sec": 0.857,
-  "status": "SUCCESS"
-}
+    G --> H[CrossEncoder rerank]
+    H --> I[Score gate keep score > 0.01]
+    I --> J[Normalize RetrievedChunk]
+    J --> K[Write retrieval audit payload]
 ```
 
----
+### 3.2 Dense vs Sparse Strategy (Asymmetric Querying)
 
-## 7. Reliability Controls
+| Channel | Query Input | Model Path | Why this channel exists |
+|---|---|---|---|
+| Dense | `hyde.hyde_paragraph` | `get_embedding_model()` -> named vector `dense` | captures abstract semantic intent and causal framing |
+| Sparse | `hyde.rerank_query` | `SparseTextEmbedding` (`SPLADE`) -> named vector `sparse` | preserves lexical-exact signals (tickers, forms, event phrases) |
+| Fusion | prefetch outputs | `FusionQuery(fusion=RRF)` | rank-based fusion avoids scale mismatch between dense/sparse scores |
+| Precision stage | fused candidates | `CrossEncoder` rerank | refines relevance before final output |
 
-| Control | Mechanism |
-| --- | --- |
-| Singleton resources | `__new__` + `@lru_cache` keeps heavy models loaded once per process. |
-| Connection resilience | Qdrant client opens with `prefer_grpc=False`, `timeout=15s`, `retries=3 × 2s`. |
-| Graceful failure | Any exception in `retrieve_async` logs a `FAILED` audit row and returns `[]` — agents never observe a crash. |
-| Fallback tiers | `drop_ticker_180d` widens the window and drops the ticker filter when the first pass returns 0 chunks. |
+Implementation-aligned details:
+- both dense and sparse prefetches run with `limit = top_k * 2`,
+- shared metadata filter is applied to both channels,
+- rerank scores overwrite initial point scores,
+- final keep-threshold is `score > 0.01`.
 
----
+### 3.3 Metadata Strategy for Sparse/Hybrid Retrieval
 
-## 8. Verification
+The sparse channel is not standalone lexical search; it is constrained by the same smart filter as dense.
+
+| Metadata Dimension | Filter Key(s) | Behavior |
+|---|---|---|
+| Source selection | `source_type` | keeps only Gold-physical sources (`news`, `sec`, `gpr`) |
+| Ticker strategy | `ticker` | mode-aware: `hard` in Tier1, `should` in Tier2 (`soft`), omitted in Tier3 |
+| Topic broadening (news) | `topic` | injected into `should` when event/category maps to canonical news topics |
+| SEC action control | `action_direction` | SELL/BUY logic allows `ACQUIRE/VEST` bridge in SEC mode |
+| SEC form control | `form_type` | applies specific form filter unless `ALL` |
+| Sentiment gate (news) | `tone_score` | `<0` for negative, `>0` for positive when requested |
+| Time barrier | `unified_timestamp` OR `publish_timestamp` | OR-based compatibility layer; union range from per-source predicates |
+
+Fallback cascade:
+1. `strict` (`ticker_mode=hard`, user time window),
+2. `soft_ticker_180d` (`ticker OR topic`, widened window),
+3. `drop_ticker_180d` (drop ticker, keep source/time semantics).
+
+## 4. Output Data Schema and Paths
+
+### 4.1 `RetrievedChunk` contract
+
+| Field | Type | Description | Path |
+|---|---|---|---|
+| `content` | `str` | Gold text payload (`payload["text"]`) | `Scripts/retrieval/schema.py` |
+| `source_type` | `SourceType` | Gold source channel (`news`, `sec`, `gpr`) | `Scripts/retrieval/schema.py` |
+| `score` | `float` | post-rerank score after gating | `Scripts/retrieval/qdrant_retriever.py` |
+| `metadata` | `Dict[str, Any]` | payload minus excluded fields + runtime tags (`record_date`, `is_fallback_180_days`) | `Scripts/retrieval/qdrant_retriever.py` |
+| `bronze_ref` | `str` | lineage pointer: `accession_no` or `url` or `point_id` | `Scripts/retrieval/qdrant_retriever.py` |
+
+### 4.2 Retrieval audit payload
+
+| Field | Description | Path |
+|---|---|---|
+| `original_query` / `rerank_query_used` | query observability | `logs/retrieval/<YYYY-MM-DD>/retriever_audit_trail.jsonl` |
+| `filter_applied` | serialized Qdrant filter | same |
+| `fallback_triggered` / `fallback_tier` | cascade visibility | same |
+| `results_count` / `top_k_scores` | retrieval quality snapshot | same |
+| `latency_sec` / `status` / `error_msg` | runtime health | same |
+
+## 5. How to Test
 
 ```bash
+python Scripts/tests/test_router_e2e.py
+python -m Scripts query "Past week macro geopolitics impact on GLD?"
 python Scripts/retrieval/qdrant_retriever.py
-pytest -xvs Scripts/tests/test_master_retriever.py
-pytest -xvs Scripts/tests/test_router_e2e.py
 ```
 
-Expected console shape:
+Validation checklist:
+- tier transitions are visible in audit logs when strict retrieval is empty,
+- `filter_applied` contains expected source/ticker/topic/time logic,
+- final chunks include `bronze_ref`, `record_date`, and valid post-rerank scores.
 
-1. `🔍 Stage 2: Qdrant Hybrid Retrieving...`
-2. `✅ Final Retrieved: N chunks` followed by enumerated scores.
+## 6. Dependency Files, Linked Docs, and One-Line Commands
 
----
+### 6.1 Core dependency files
 
-## 9. Environment Dependencies
+- `Scripts/retrieval/qdrant_retriever.py`
+- `Scripts/retrieval/master_retriever.py`
+- `Scripts/retrieval/query_transform.py`
+- `Scripts/retrieval/time_adapter.py`
+- `Scripts/vector_store/connection.py`
+- `Scripts/retrieval/schema.py`
+
+### 6.2 Linked documentation
+
+- [Retrieval Architecture and Strategy](./Retrieval_Architecture_and_Strategy.md)
+- [Query Intent and Transformation](./Query_intent_docs.md)
+- [Silver SQL Tools](./Silver_SQL_Tools.md)
+- [Time Adapter](./Time_Adapter.md)
+- [Qdrant Connection](../Vector_store_docs/Qdrant_connection.md)
+- [Data Source Summary](../Data_source_docs/Data_source_summary.md)
+- [News Data Profile](../Data_source_docs/market_news_data.md)
+- [SEC Data Profile](../Data_source_docs/SEC_data.md)
+- [GPR Data Profile](../Data_source_docs/GPR_Index.md)
+
+### 6.3 One-line setup command
 
 ```bash
-pip install qdrant-client fastembed sentence-transformers python-dotenv asyncio
+pip install -r requirements.txt
 ```
 
-| Variable | Default | Effect |
-| --- | --- | --- |
-| `EMBEDDING_MODEL_NAME` | `BAAI/bge-base-en-v1.5` | Dense encoder |
-| `EMBEDDING_DEVICE` | `cpu` | Dense encoder placement |
-| `SPARSE_MODEL_NAME` | `prithivida/Splade_PP_en_v1` | Sparse encoder |
-| `FASTEMBED_THREADS` | `6` | Sparse encoder threads |
-| `RERANKER_MODEL_NAME` | `BAAI/bge-reranker-v2-m3` | Cross-encoder |
-| `RETRIEVER_DEVICE` | `cpu` | Cross-encoder placement |
-| `QDRANT_HOST` / `QDRANT_API_KEY` | required | Qdrant Cloud credentials |
-
-_Depends on `Scripts.vector_store.connection` (clients) and
-`Scripts.retrieval.schema` (Pydantic contracts)._
