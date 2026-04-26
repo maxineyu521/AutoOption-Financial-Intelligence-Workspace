@@ -56,6 +56,7 @@ Design constraints
 from __future__ import annotations
 
 import contextvars
+import json
 import logging
 import os
 import sys
@@ -260,5 +261,71 @@ __all__ = [
     "configure_root_logger",
     "current_run_id",
     "get_audit_logger",
+    "record_retrieval_fallback_kpi",
     "start_run",
 ]
+
+
+def record_retrieval_fallback_kpi(
+    *,
+    fallback_tier: str,
+    status: str,
+    results_count: int,
+    latency_sec: float,
+    anchor: Optional[date] = None,
+) -> None:
+    """Persist retrieval fallback KPI and rolling daily rates.
+
+    Emits:
+      1) append-only JSONL event stream
+      2) rolling daily summary with tier rates
+    """
+    anchor = anchor or date.today()
+    date_str = anchor.isoformat()
+    kpi_dir = _logs_root() / "observability" / "retrieval_kpi" / date_str
+    kpi_dir.mkdir(parents=True, exist_ok=True)
+
+    event = {
+        "timestamp": datetime.now().isoformat(),
+        "fallback_tier": fallback_tier,
+        "status": status,
+        "results_count": int(results_count),
+        "latency_sec": float(latency_sec),
+    }
+
+    events_file = kpi_dir / "fallback_events.jsonl"
+    with open(events_file, "a", encoding="utf-8") as fp:
+        fp.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+    summary_file = kpi_dir / "fallback_summary.json"
+    if summary_file.exists():
+        try:
+            with open(summary_file, "r", encoding="utf-8") as fp:
+                summary = json.load(fp)
+        except Exception:
+            summary = {}
+    else:
+        summary = {}
+
+    counts = summary.get("counts") or {
+        "strict": 0,
+        "soft_ticker_180d": 0,
+        "drop_ticker_180d": 0,
+        "error": 0,
+    }
+    if fallback_tier not in counts:
+        counts[fallback_tier] = 0
+    counts[fallback_tier] += 1
+
+    total = sum(counts.values()) or 1
+    rates = {k: round(v / total, 4) for k, v in counts.items()}
+
+    summary = {
+        "date": date_str,
+        "updated_at": datetime.now().isoformat(),
+        "total_events": total,
+        "counts": counts,
+        "rates": rates,
+    }
+    with open(summary_file, "w", encoding="utf-8") as fp:
+        json.dump(summary, fp, ensure_ascii=False, indent=2)

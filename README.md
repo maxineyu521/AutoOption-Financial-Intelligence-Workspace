@@ -1,190 +1,151 @@
-# Multi-Modal Multi-Agent Financial RAG System
+# Institutional Execution Lifecycle Reference (Frontend + Backend)
 
-## 1. Strategic Objectives (Goal)
-The primary objective of this project is to democratize institutional-grade options trading by bridging the gap between quantitative market data and qualitative semantic insights. By leveraging a **Medallion Architecture**, the system automates the identification of cross-asset volatility arbitrage opportunities (e.g., GLD/SLV vs. correlated equities). 
+## 1. Strategic Goal and Mission Baseline
+
+### Program Objective
+The primary objective of this project is to democratize institutional-grade options trading by bridging the gap between quantitative market data and qualitative semantic insights. By leveraging a **Medallion Architecture**, the system automates the identification of cross-asset volatility arbitrage opportunities (e.g., GLD/SLV vs. correlated equities).
 
 **Core outcomes:**
 - Reduce trading hallucinations via multi-agent cross-examination (Analyst -> Checker -> Critic -> Finalizer).
 - Fuse fragmented data domains (FRED / GPR / SEC / News / options chains) into a single query surface.
 - Produce auditable, reproducible recommendation artifacts for paper-trading workflows.
 
+### Execution Intent
+This repository delivers a full lifecycle architecture where data ingestion, vector retrieval, structured analytics, multi-agent reasoning, and frontend rendering are linked under a single observability contract.
+
 ---
 
-## 2. High-Level System Architecture
-The system operates on a **Dual-Track Data Engine** designed to handle the heterogeneity of financial markets:
-* **Quantitative Track (Structured):** Processes high-frequency numeric data 
-(Parquet) via SQL-like tools or Pandas Agents to ensure 100% accuracy in 
-pricing and Greeks.
-* **Qualitative Track (Unstructured):** Processes news and SEC filings 
-through a Hybrid RAG pipeline (Dense + Sparse + Metadata filtering) in Qdrant.
-* **State Machine Orchestration:** Uses **LangGraph** to govern the 
-transition between data retrieval, analysis, and risk auditing.
+## 2. Institutional Architecture Blueprint
 
 ```mermaid
 flowchart TD
     A[Data Ingestion: FRED / SEC / News / yfinance] --> B[Medallion Processing: Bronze -> Silver -> Gold]
-    B --> C{Query Router}
-    C -->|Qualitative path| D[Qdrant Hybrid Search: Dense + Sparse + Metadata]
-    C -->|Quantitative path| E[Parquet Analytics: SQL + Pandas]
-    D --> F[Analyst Agent: Thesis and Trade Construction]
-    E --> F
-    F --> G[Checker Agent: Contract and Liquidity Validation]
-    G --> H[Critic Agent: Risk and Counter-Argument Review]
-    H --> I[Finalizer Agent: Structured Strategy Report]
+    B --> C[Backend Orchestration CLI: ingest warmup query daemon]
+    C --> D[MasterRetriever]
+    D --> D0[Intent classification: sql_only / vector_only / hybrid_both]
+    D0 --> Dm[Two-stage query transform: metadata + HyDE]
+    Dm --> Dt[Compile per-source time predicates]
+    Dt --> Dr{Route-specific retrieval plan}
+    Dr -->|hybrid_both| D1[Gold top_k=5 + Silver primary + optional compensation]
+    Dr -->|vector_only| D2[Gold top_k=5 + compensation-first Silver policy]
+    Dr -->|sql_only| D3[Silver primary + Gold probe top_k=2]
+    D1 --> E[Agent Graph]
+    D2 --> E
+    D3 --> E
+    E --> E1[Analyst]
+    E1 --> E2[Checker]
+    E2 --> E3[Critic]
+    E3 --> E4[Finalizer]
+    E4 --> F[Structured Recommendation Payload]
+    F --> G[Frontend Streamlit Runtime]
+    G --> H[Progressive Render and Operator Dashboard]
+    E --> I[Backend Audit Artifacts]
+    G --> J[Frontend Query Bundles]
 ```
 
 ---
-## 3. Operational Workflow & Multi-Agent Logic
-### Workflow Orchestration (Execution Lifecycle)
 
+## 3. Code Strategy and Workflow Governance
+
+### Runtime Workflow
 ```mermaid
 flowchart TD
-    A[Source ingestion jobs] --> B[Medallion processing<br/>Bronze -> Silver -> Gold]
-    B --> C[CLI Orchestration Layer]
-    C --> D{User command}
+    A[Operator starts session] --> B{Execution command}
+    B -->|ingest| C[Run ingestion stages with idempotent state tracking]
+    B -->|warmup| D[Warm role-specific LLM clients]
+    B -->|query| E[Build and execute LangGraph router workflow]
 
-    D -->|ingest| E[Run due stages with run-state idempotency]
-    D -->|warmup| F[Warm LLM pool models in Ollama]
-    D -->|query| G[LangGraph query execution]
+    C --> F[Refresh Silver and Gold artifacts]
+    F --> G[Optional vector ingestion and index reconciliation]
 
-    E --> H[Gold artifacts ready]
-    H --> I[Qdrant ingestion pipeline]
-    I --> J[Hybrid index and payload schema reconciliation]
+    E --> H[Route retrieval across SQL and Qdrant]
+    H --> I[Analyst draft strategy]
+    I --> J[Checker factual and contract validation]
+    J --> K[Critic risk challenge and revision]
+    K --> L[Finalizer emits schema-constrained report]
 
-    G --> K{Retriever router}
-    K -->|quant path| L[Silver SQL/Pandas retrieval]
-    K -->|semantic path| M[Qdrant dense+sparse retrieval]
-    L --> N[Analyst synthesis]
-    M --> N
-    N --> O[Checker factual validation]
-    O --> P[Critic risk challenge]
-    P --> Q[Finalizer report compiler]
-    Q --> R[Structured recommendation output]
+    L --> M[Write backend run-scoped logs]
+    L --> N[Return response stream to frontend]
+    N --> O[Frontend progressive rendering]
+    O --> P[Write frontend trace/final_state/summary bundle]
 ```
 
----
-## 4. Medallion Data Governance & Schema
-Data is partitioned into three logical layers to ensure lineage and high 
-information density:
-| Layer | Data Profile | Storage | Governance Objective |
-| :--- | :--- | :--- | :--- |
-| `1_Bronze_Raw` | Raw, minimally transformed captures | HTML / XML / JSONL | Traceability, replay, and source-level audits |
-| `2_Silver_Processed` | Deterministic structured tables | Parquet | Accurate numeric analytics (prices, IV, macro) |
-| `3_Gold_Semantic` | Retrieval-ready semantic records | JSONL / Markdown | Hybrid search relevance and citation grounding |
-| `Agent_Context` | Session-level macro memory | Markdown snapshots | Shared context injection across all agent roles |
+### Engineering Strategy
+- **Deterministic state flow:** time anchors and run identifiers enforce replayability.
+- **Hybrid evidence model:** structured numerical facts and semantic narrative context are merged before final recommendation.
+- **Role-gated quality controls:** Checker and Critic enforce factual and risk guardrails before final output.
+- **Dual-surface observability:** backend run logs and frontend query bundles share compatible audit semantics.
 
 ---
 
-## 5. Quality Assurance & Evaluation Framework (Evaluation)
-The evaluation standard is designed to mirror production controls used in institutional research tooling.
+## 4. Output Data Schema and Storage Contracts
 
-### 1) Retrieval and grounding quality
-- **Faithfulness (RAGAS):** verifies the report is supported by retrieved evidence.
-- **Context Precision (RAGAS):** checks whether retrieved chunks are topically and temporally relevant.
-- **Time-barrier compliance:** validates retrieval respects `unified_timestamp/publish_timestamp` filters.
-
-### 2) Deterministic market validation
-- **Contract existence checks:** Checker validates recommended option contracts against live `yfinance` chain data.
-- **Liquidity guardrails:** enforce minimum open interest / quote sanity checks before contract inclusion.
-- **Numeric drift controls:** configurable tolerances (for example, `CHECKER_NUMERIC_TOLERANCE`) to detect unstable conclusions.
-
-### 3) Regression and model governance
-- **Golden dataset replay:** historical complex QA set for non-regression across prompt/model updates.
-- **Role-level warmup validation:** ensure both expert and router model tiers are online before live querying.
-- **Auditability:** centralized logs and runtime state snapshots support post-mortem investigations.
+| Domain | Schema / Artifact | Core Fields | Path Pattern | Producer |
+| --- | --- | --- | --- | --- |
+| Agent runtime state | `AgentState` (`TypedDict`) | route, retrieval payloads, revisions, final report fields, node audit trail | `Scripts/agents/state.py` (runtime memory contract) | Agent graph nodes |
+| Agent feedback | `AgentFeedback` (`BaseModel`) | node, verdict, severity, rationale, suggested revisions | `Scripts/agents/state.py` | Checker and Critic |
+| Final recommendation | `final_strategy` (`FinalReport.model_dump()`) | thesis, contracts, risk controls, confidence, evidence links | response payload + audit snapshots | Finalizer |
+| Retrieval trail | `retriever_audit_trail.jsonl` | query, filters, source route, hit counts, timing | `logs/runs/<YYYY-MM-DD>/<run_id>/retrieval/retriever_audit_trail.jsonl` | Retriever layer |
+| Query transform trail | `query_audit_trail.jsonl` | extracted intents, metadata filters, HyDE output, model info | `logs/runs/<YYYY-MM-DD>/<run_id>/query_transform/query_audit_trail.jsonl` | Query transform |
+| Router e2e trace | `*_trace.jsonl` | node event timeline, route changes, delta keys, elapsed seconds | `logs/runs/<YYYY-MM-DD>/<run_id>/router_e2e/` | Router executor |
+| Router e2e summary | `*_summary.json` | outcome, confidence, nodes executed, failures, evidence count | `logs/runs/<YYYY-MM-DD>/<run_id>/router_e2e/` | Router executor |
+| Router e2e final state | `*_final_state.json` | final merged graph state snapshot | `logs/runs/<YYYY-MM-DD>/<run_id>/router_e2e/` | Router executor |
+| Frontend trace bundle | `*_trace.jsonl` | frontend-streamed node events and timings | `logs/frontend_query/<YYYY-MM-DD>/` | `Frontend/audit.py` |
+| Frontend summary bundle | `*_summary.json` | outcome, confidence, node count, artifact references | `logs/frontend_query/<YYYY-MM-DD>/` | `Frontend/audit.py` |
+| Frontend final state bundle | `*_final_state.json` | json-safe final graph snapshot for replay | `logs/frontend_query/<YYYY-MM-DD>/` | `Frontend/audit.py` |
+| Frontend index trail | `query_audit_trail.jsonl` | query metadata + links to bundle artifacts | `logs/frontend_query/<YYYY-MM-DD>/query_audit_trail.jsonl` | `Frontend/audit.py` |
+| Bronze raw data | Source-native JSONL/HTML/XML | minimally transformed source records | `Data/1_Bronze_Raw/...` | Ingestion jobs |
+| Silver processed data | Parquet tables | normalized options/macro/market columns | `Data/2_Silver_Processed/...` | Processing layer |
+| Gold semantic data | retrieval-ready JSONL/Markdown | chunk text + metadata for vector retrieval | `Data/3_Gold_Semantic/...` | Semantic layer |
 
 ---
 
-## 6. Operational CLI Playbook
-All examples below are production-safe with the current CLI entrypoint (`python -m Scripts`).
+## 5. Validation and Test Protocol
 
-### A. Warmup command
+### Core backend checks
 ```bash
-python -m Scripts warmup
-python -m Scripts warmup --roles analyst router
-```
-
-### B. Data collection (orchestration pipeline)
-```bash
+python -m Scripts warmup --roles analyst router checker
 python -m Scripts ingest
-python -m Scripts ingest --only news_daily options_daily
-python -m Scripts ingest --force
-python -m Scripts status --json
-```
-
-### C. Qdrant ingestion
-```bash
-python Scripts/vector_store/ingestion.py
 python Scripts/vector_store/ingestion.py --no-full-refresh
-python Scripts/vector_store/ingestion.py --indexes-only
+python -m Scripts query "Past week FOMC and 10Y yields impact on SPY puts?"
+python Scripts/tests/test_router_e2e.py
 ```
 
-### D. Query command
+### Frontend checks
 ```bash
-python -m Scripts query "Generate a hedged options idea for AAPL this week."
-python -m Scripts query --warmup "Compare GLD and SLV options risk-reward under current macro regime."
+streamlit run Frontend/app.py
 ```
 
-### E. GPU node with single-terminal constraint (no extra terminal allowed)
-Use a **single sequential runbook** in one shell session:
+Validation checklist:
+- Query renders progressive sections before final report completion.
+- Backend run-scoped logs appear under `logs/runs/<today>/<run_id>/`.
+- Frontend bundle files appear under `logs/frontend_query/<today>/`.
+- `query_audit_trail.jsonl` includes resolvable paths to trace/final_state/summary artifacts.
 
+---
+
+## 6. Dependency Surface and Linked Specifications
+
+### Linked documentation
+- [Backend System Reference](./Backend_README.md)
+- [User Query Guide](./docs/User_Query_Guide.md)
+- [Observability](./docs/Observability.md)
+- [LLM Pool](./docs/LLM_Pool.md)
+- [Frontend Runtime Guide](./docs/frontend_readme.md)
+- [Orchestration Runtime Guide](./docs/Orchestration.md)
+- [Agent Architecture](./docs/agent/Agent_Architecture.md)
+- [Retrieval Architecture and Strategy](./docs/Query_retrieval_docs/Retrieval_Architecture_and_Strategy.md)
+- [Modular Guide](./docs/modular_guide/README.md)
+
+### Critical code directories
+- `Scripts/agents/`
+- `Scripts/orchestration/`
+- `Scripts/retrieval/`
+- `Scripts/observability/`
+- `Frontend/`
+- `Data/`
+
+### One-line library installation
 ```bash
-python -m Scripts warmup --roles analyst router && python -m Scripts ingest && python Scripts/vector_store/ingestion.py --no-full-refresh && python -m Scripts query "What is the best risk-defined setup for QQQ this week?"
+pip install -r requirements.txt
 ```
-
-If you need a background scheduler without opening another terminal (PowerShell):
-```powershell
-$daemon = Start-Job -ScriptBlock { python -m Scripts daemon --poll-seconds 30 --warmup }
-Receive-Job -Id $daemon.Id -Keep
-```
-
----
-
-## 7. Compute Topology: CPU vs GPU Model Utilization
-### CPU-heavy components
-- Data ingestion scripts (FRED/SEC/News/yfinance ETL).
-- Parquet processing and SQL/Pandas numeric analysis.
-- Most filesystem, scheduling, and orchestration logic.
-
-### GPU-preferred components
-- Ollama expert model (`options-expert-v1:latest`) for analyst/checker/critic/finalizer and query transform.
-- Router model (`llama3:latest`) can run on CPU, but lower-latency routing benefits from GPU if available.
-
-### Configuration controls
-- `RETRIEVER_DEVICE=cpu|cuda` controls retriever-side model device preference.
-- `EMBEDDING_DEVICE=cpu|cuda` controls embedding model placement.
-- `OLLAMA_KEEP_ALIVE=30m` avoids repeated model eviction/cold-start.
-
----
-
-## 8. Environment Blueprint
-Use the sample at `/.env.sample` as the canonical template. Copy it to `.env` and fill secrets before running the pipeline.
-
----
-
-### 9. Implementation Prerequisites
-All dependencies are consolidated into a single deployment command. The 
-infrastructure is fully containerized for portability.
-```bash
-pip install requests pandas numpy pyarrow yfinance fredapi python-dotenv beautifulsoup4 markdownify langchain-ollama langchain-huggingface langgraph qdrant-client pydantic rich fastembed newspaper3k duckduckgo-search
-```
-**Environment Requirements:**
-* **Local Inference:** Ollama (running `llama3` or `mistral`).
-* **Vector Store:** Qdrant Cloud or Dockerized Qdrant.
-* **Credentials:** `.env` file containing `FRED_API_KEY` and `SEC_USER_AGENT`.
----
-
-## 10. Supporting Technical Documentation
-- Architecture deep dive: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-- Orchestration details: [`docs/Orchestration.md`](docs/Orchestration.md)
-- Agent architecture: [`docs/agent/Agent_Architecture.md`](docs/agent/Agent_Architecture.md)
-- Observability model: [`docs/Observability.md`](docs/Observability.md)
-- Retrieval strategy: [`docs/Query_retrieval_docs/Retrieval_Architecture_and_Strategy.md`](docs/Query_retrieval_docs/Retrieval_Architecture_and_Strategy.md)
-- Qdrant ingestion design: [`docs/Vector_store_docs/Vector_Ingestion.md`](docs/Vector_store_docs/Vector_Ingestion.md)
-- Qdrant connection setup: [`docs/Vector_store_docs/Qdrant_connection.md`](docs/Vector_store_docs/Qdrant_connection.md)
-- Data platform master reference: [`docs/Data_source_docs/Data_source_summary.md`](docs/Data_source_docs/Data_source_summary.md)
-- Macro and market data dossier: [`docs/Data_source_docs/macro_market_data.md`](docs/Data_source_docs/macro_market_data.md)
-- News ingestion dossier: [`docs/Data_source_docs/market_news_data.md`](docs/Data_source_docs/market_news_data.md)
-- SEC filing dossier: [`docs/Data_source_docs/SEC_data.md`](docs/Data_source_docs/SEC_data.md)
-- GPR dossier: [`docs/Data_source_docs/GPR_Index.md`](docs/Data_source_docs/GPR_Index.md)
-- Time schema and cadence contract: [`docs/Data_source_docs/Time_Schema_Audit.md`](docs/Data_source_docs/Time_Schema_Audit.md)

@@ -418,6 +418,40 @@ class SilverSQLTool:
             return canonical if canonical in self.metric_dispatcher else None
         return None
 
+    def _partition_requested_metrics(
+        self, metrics: List[str]
+    ) -> tuple[List[tuple[str, str]], List[str]]:
+        """Split user-requested metrics into supported and unsupported buckets.
+
+        Returns
+        -------
+        supported
+            List of `(raw_metric, canonical_metric_key)` pairs that can be
+            dispatched to a SQL handler.
+        unsupported
+            Raw metric labels that cannot be mapped to a whitelisted handler.
+        """
+        supported: List[tuple[str, str]] = []
+        unsupported: List[str] = []
+        for raw_metric in metrics or []:
+            canonical = self._fuzzy_match_metric(raw_metric)
+            if canonical is None:
+                unsupported.append(raw_metric)
+            else:
+                supported.append((raw_metric, canonical))
+        return supported, unsupported
+
+    @staticmethod
+    def _build_unsupported_metric_message(unsupported: List[str]) -> str:
+        if not unsupported:
+            return ""
+        listed = ", ".join(sorted({str(m) for m in unsupported}))
+        return (
+            "Unsupported metric(s) requested: "
+            f"{listed}. Supported examples: Put/Call Ratio, Implied Volatility (IV), "
+            "IV Skew, Options Liquidity, Macro Trend, Daily/Monthly/Yearly Change (%), GPR Index."
+        )
+
     # Cap on tickers actually dispatched. Even if the Transformer produces
     # N tickers, we execute at most this many SQL round-trips per request
     # to keep Silver latency bounded (each ticker = 1 DuckDB read per
@@ -461,13 +495,41 @@ class SilverSQLTool:
              it are a no-op.
         """
         start_ts = datetime.now()
-        results: Dict[str, Any] = {"values": {}, "lineage_anchors": []}
+        results: Dict[str, Any] = {
+            "values": {},
+            "lineage_anchors": [],
+            "status": {
+                "unsupported_metrics": [],
+                "unsupported_metrics_message": "",
+                "error": None,
+            },
+        }
         # Publish predicates on the instance so handlers can pull them
         # without changing every handler signature. Cleared in the finally.
         self._current_predicates = time_predicates
 
+        supported_metrics, unsupported_metrics = self._partition_requested_metrics(metadata.metrics or [])
+        if unsupported_metrics:
+            msg = self._build_unsupported_metric_message(unsupported_metrics)
+            results["status"]["unsupported_metrics"] = unsupported_metrics
+            results["status"]["unsupported_metrics_message"] = msg
+            self.audit_logger.warning(f"UNSUPPORTED_METRICS | metrics={unsupported_metrics}")
+
+        if not supported_metrics:
+            # Fast-fail: no SQL should run when every metric is outside the
+            # Silver whitelist. Return an explicit user-facing message so the
+            # caller can surface a deterministic explanation.
+            results["status"]["error"] = "NO_SUPPORTED_METRICS"
+            if not results["status"]["unsupported_metrics_message"]:
+                results["status"]["unsupported_metrics_message"] = (
+                    "No supported metric found in the request."
+                )
+            self._current_predicates = None
+            return results
+
         if not metadata.tickers:
             self.audit_logger.warning("EMPTY_TICKERS | Skipping SQL execution.")
+            self._current_predicates = None
             return results
 
         # Ticker MUST stay exact — we only ever .upper() + .strip() it, no fuzzy match.
@@ -479,19 +541,12 @@ class SilverSQLTool:
                 f"dropped={tickers_all[len(tickers):]}"
             )
         self.audit_logger.info(
-            f"START_QUERY | Tickers: {tickers} | Requested: {metadata.metrics}"
+            f"START_QUERY | Tickers: {tickers} | Requested: {metadata.metrics} | "
+            f"Supported: {[cm for _, cm in supported_metrics]}"
         )
 
         for ticker in tickers:
-            for metric in metadata.metrics:
-                # Metric strings come from an LLM and may drift from dispatcher
-                # keys. Canonicalise via ontology-backed fuzzy match. Ticker is
-                # NOT fuzzy — see above.
-                canonical_key = self._fuzzy_match_metric(metric)
-                if canonical_key is None:
-                    self.audit_logger.warning(f"UNAUTHORIZED_METRIC: {metric}")
-                    continue
-
+            for metric, canonical_key in supported_metrics:
                 if canonical_key != metric:
                     self.audit_logger.info(f"FUZZY_MATCH | '{metric}' -> '{canonical_key}'")
 
@@ -599,40 +654,101 @@ class SilverSQLTool:
         }
 
     def _handle_options_analysis(self, ticker: str, meta: MetadataExtraction) -> Dict[str, Any]:
-        """Surface latest ATM IV + freshness using schema fields: implied_volatility, moneyness_pct, spread_pct."""
+        """Surface latest ATM IV + IV rank percentile + freshness.
+
+        IV rank is computed as a rolling historical percentile over daily ATM IV
+        observations for the same ticker. This makes regime classification
+        stable across assets (percentile space) instead of using hard IV levels.
+        """
         # This handler applies no WHERE filter on snapshot_date; it picks the
         # latest available row. Log the anchor + requested window so the audit
         # trail still captures intended temporal context (useful when debugging
         # "why did the model see data older than expected").
         anchor = self._get_anchor_date("options")
         window_days = self._time_window_to_days(meta.time_window, default=180)
+        iv_rank_lookback_days = int(os.getenv("IV_RANK_LOOKBACK_DAYS", "180"))
+        rank_start = anchor - timedelta(days=iv_rank_lookback_days)
         self._audit_sql_range(
             handler="options_analysis", ticker=ticker, meta=meta,
             mode="latest_only", end=anchor, window_days=window_days,
-            extra="filter=is_liquid=true;dte_in_[7,45]",
+            extra=f"filter=is_liquid=true;dte_in_[7,45];iv_rank_lookback={iv_rank_lookback_days}d",
         )
 
         query = f"""
-            SELECT 
-                snapshot_date, contract_symbol, implied_volatility, 
-                moneyness_pct, spread_pct, dte
-            FROM read_parquet('{self.options_glob}')
-            WHERE symbol = ? AND is_liquid = true AND dte BETWEEN 7 AND 45
-            ORDER BY snapshot_date DESC, moneyness_pct ASC
+            WITH raw AS (
+                SELECT
+                    CAST(snapshot_date AS DATE) AS snapshot_date,
+                    contract_symbol,
+                    implied_volatility,
+                    ABS(moneyness_pct) AS abs_moneyness,
+                    spread_pct
+                FROM read_parquet('{self.options_glob}')
+                WHERE symbol = ?
+                  AND is_liquid = true
+                  AND dte BETWEEN 7 AND 45
+                  AND CAST(snapshot_date AS DATE) BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)
+            ),
+            atm_daily AS (
+                SELECT
+                    snapshot_date,
+                    contract_symbol,
+                    implied_volatility AS atm_iv,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY snapshot_date
+                        ORDER BY abs_moneyness ASC, spread_pct ASC NULLS LAST
+                    ) AS rn
+                FROM raw
+            ),
+            series AS (
+                SELECT snapshot_date, contract_symbol, atm_iv
+                FROM atm_daily
+                WHERE rn = 1
+            ),
+            ranked AS (
+                SELECT
+                    snapshot_date,
+                    contract_symbol,
+                    atm_iv,
+                    CASE
+                        WHEN COUNT(*) OVER () >= 2
+                        THEN ROUND(100.0 * PERCENT_RANK() OVER (ORDER BY atm_iv), 2)
+                        ELSE NULL
+                    END AS iv_rank_pct
+                FROM series
+            )
+            SELECT snapshot_date, contract_symbol, atm_iv, iv_rank_pct
+            FROM ranked
+            ORDER BY snapshot_date DESC
+            LIMIT 1
         """
-        df = self.conn.execute(query, [ticker]).df()
-        if df.empty: return None
+        df = self.conn.execute(query, [ticker, rank_start, anchor]).df()
+        if df.empty:
+            return None
 
-        latest_date = df['snapshot_date'].iloc[0]
-        # ATM definition: smallest |moneyness_pct| — already guaranteed by ORDER BY moneyness_pct ASC.
-        atm_iv = df[df['snapshot_date'] == latest_date]['implied_volatility'].iloc[0]
+        latest_date = df["snapshot_date"].iloc[0]
+        atm_iv = df["atm_iv"].iloc[0]
+        iv_rank_pct = df["iv_rank_pct"].iloc[0]
+        contract_symbol = df["contract_symbol"].iloc[0]
         
+        iv_rank_val = None
+        if iv_rank_pct is not None:
+            try:
+                iv_rank_f = float(iv_rank_pct)
+                iv_rank_val = round(iv_rank_f, 2) if iv_rank_f == iv_rank_f else None
+            except Exception:
+                iv_rank_val = None
+
         return {
             "values": {
                 "latest_atm_iv": round(atm_iv, 4),
-                "data_freshness": latest_date
+                "latest_atm_iv_rank_pct": iv_rank_val,
+                "iv_rank_lookback_days": iv_rank_lookback_days,
+                "data_freshness": str(latest_date),
             },
-            "lineage_anchors": df['contract_symbol'].head(2).tolist()
+            "lineage_anchors": [
+                str(contract_symbol),
+                f"IVRANK_{ticker}_{latest_date}",
+            ],
         }
 
     def _handle_liquidity_analysis(self, ticker: str, meta: MetadataExtraction) -> Dict[str, Any]:

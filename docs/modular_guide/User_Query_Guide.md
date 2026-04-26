@@ -1,5 +1,64 @@
 # User Query Guide
 
+## Architecture
+```mermaid
+flowchart TD
+    A[User Query] --> B[Metadata Extractor]
+    B --> C[Route Classifier]
+    C -->|sql_only| D[Silver SQL Retrieval]
+    C -->|vector_only| E[Gold Vector Retrieval]
+    C -->|hybrid_both| F[Silver + Gold Fusion]
+    D --> G[Agent Graph]
+    E --> G
+    F --> G
+    G --> H[Final Recommendation + Audit Trail]
+```
+
+## 1. High-Quality Query Template
+
+Use this structure:
+
+`[ticker or macro asset] + [metric] + [time window] + [intent]`
+
+Examples:
+- `Past month AAPL Form-4 selling signal and put positioning?`
+- `Today SPY put-call ratio and ATM IV for 30-DTE puts`
+- `Past week FOMC and 10Y yields impact on QQQ options`
+
+## 2. Router and Retrieval Behavior
+
+- Router chooses one route: `sql_only`, `vector_only`, `hybrid_both`.
+- Retrieval always includes structured time-range metadata.
+- HyDE can contribute novel ticker expansion when relevant.
+
+## 3. Supported Domains
+
+- Options microstructure (IV/skew/PCR/liquidity).
+- Macro regime context (VIX, yields, dollar, GPR).
+- SEC insider/event context for covered universe tickers.
+- News narrative evidence via Gold semantic retrieval.
+
+## 4. Common Failure Patterns
+
+- Missing ticker + missing macro anchor -> weak retrieval signal.
+- Ambiguous time phrase -> broad default window.
+- Out-of-universe symbol -> Silver evidence gap.
+
+## 5. Best Practices
+
+- Keep one primary intent per query.
+- Always include time phrase (`today`, `yesterday`, `past week`, `past month`).
+- Ask follow-up queries instead of stacking too many constraints in one sentence.
+
+## 6. Verification
+
+```bash
+python -m Scripts query "Past week GLD IV skew and geopolitical risk context?"
+python Scripts/tests/test_router_e2e.py
+```
+
+# User Query Guide
+
 > **Audience.** End-users and analysts who want to ask the
 > Options-Recommendation RAG meaningful questions.
 > **Goal.** Show what this system *can* answer, what data it has behind
@@ -31,6 +90,21 @@ It is **not** built for:
 - Fundamental valuation (DCF, multiples).
 - Crypto, FX majors, or single-name bonds.
 
+### 1.1 Operational limitations (critical)
+
+- Gold strict retrieval may return 0 even when data exists, then fall back to Tier2/Tier3.
+  This is expected when strict metadata filters are too narrow (for example ticker+topic+form constraints).
+- Unsupported metrics are ignored by Silver handlers (for example `Yield Spread` is currently unauthorized).
+- `iv_regime_block` is a deterministic runtime control block, not a parquet column; treat it as a synthetic anchor only.
+- Use `today` instead of `current` in all production queries and tests to reduce parser ambiguity.
+
+### 1.2 Query complexity budget (latency guardrail)
+
+- Prefer **one primary intent per query** (macro OR options OR SEC) for best latency.
+- Keep production prompts around **8-12 words**, with explicit ticker + time phrase + metric.
+- Avoid chaining more than two analytical demands in one sentence.
+- If you need multi-step reasoning, split into two sequential queries.
+
 ---
 
 ## 2. Tickers the system actually knows about
@@ -50,7 +124,6 @@ HON   CMCSA INTC  AMAT  IBM   BKNG  VRTX  SBUX  PANW  MDLZ
 GILD  REGN  LRCX  ADP   ADI   MU    SNPS  CDNS  MELI  CSX
 KLAC  PYPL  CRWD  MAR   ASML  CTAS  MNST  NXPI
 ```
-
 ### 2.2 ETFs (options only, no SEC)
 
 | Role             | Tickers        | Use for |
@@ -155,13 +228,11 @@ for specific signals. Give them those signals.
 ### 4.2 Good vs. weak queries
 
 ```text
-# ✅ GOOD — has ticker + metric + time + intent
-"What is AAPL's Put/Call Ratio and IV Skew today, and should I sell
- front-month strangles given current liquidity?"
+# ✅ GOOD — short, precise, low-latency
+"AAPL today put-call ratio and IV skew for 30-DTE puts?"
 
-# ✅ GOOD — macro-only, but explicit on topic + time
-"How did the latest FOMC decision move 10-year yields and DXY over the
- past week, and what does that imply for SPY 30-DTE puts?"
+# ✅ GOOD — macro + hedge intent, bounded scope
+"Past week FOMC and 10Y yields impact on SPY 30-DTE puts?"
 
 # ⚠️  WEAK — no ticker, no time, vague metric
 "Is the market bullish?"         # router will default to past_six_months,
@@ -176,7 +247,7 @@ for specific signals. Give them those signals.
 
 | You write...                     | Router picks            | Window on Silver |
 |----------------------------------|-------------------------|------------------|
-| "today", "right now", "current"  | `TimeWindow.TODAY`      | 1 business day   |
+| "today", "right now"             | `TimeWindow.TODAY`      | 1 business day   |
 | "yesterday", "last session"      | `TimeWindow.YESTERDAY`  | 2 business days (weekend-safe) |
 | "past week", "this week"         | `TimeWindow.PAST_WEEK`  | 7 days           |
 | "last month", "over the month"   | `TimeWindow.PAST_MONTH` | 30 days          |
@@ -216,16 +287,11 @@ for specific signals. Give them those signals.
 
 ## 6. Things that will make the system fall back or refuse
 
-1. **Ticker not in universe** → no Silver evidence → Analyst can only
-   reason off Macro/News.
-2. **No ticker + no event + no macro indicator** → router runs
-   `vector_only` and may return *"INSUFFICIENT DATA"* on purpose.
-3. **Asking for Greeks (Δ/Γ/Θ/ν)** → we list them in the ontology but
-   have not ingested them; you will get an honest "not available" note.
+1. **Ticker not in universe** → no Silver evidence → Analyst can only reason off Macro/News.
+2. **No ticker + no event + no macro indicator** → router runs `vector_only` and may return *"INSUFFICIENT DATA"* on purpose.
+3. **Asking for Greeks (Δ/Γ/Θ/ν)** → we list them in the ontology but have not ingested them; you will get an honest "not available" note.
 4. **Asking for real-time or intraday** → everything is end-of-day.
-5. **Time signal that contradicts the data you request** — e.g. asking
-   for *"yesterday's 10-K filing"*. 10-Ks are quarterly; the Checker
-   will flag time-mismatch in the audit trail.
+5. **Time signal that contradicts the data you request** — e.g. asking for *"yesterday's 10-K filing"*. 10-Ks are quarterly; the Checker will flag time-mismatch in the audit trail.
 
 ---
 
@@ -238,17 +304,25 @@ logs/router_e2e/<YYYY-MM-DD>/<run_ts>_<NN>_<test_name>_trace.jsonl
 logs/router_e2e/<YYYY-MM-DD>/<run_ts>_run_summary.json
 ```
 
-Use this when a report looks wrong: the JSONL captures router decisions,
-retrieval filters (including the exact `start_date`/`end_date` the Silver
-SQL used), Critic and Checker verdicts, and the final Finalizer output.
+Use this when a report looks wrong: the JSONL captures router decisions, retrieval filters (including the exact `start_date`/`end_date` the Silver SQL used), Critic and Checker verdicts, and the final Finalizer output.
 
 ---
 
 ## 8. TL;DR — the three rules
 
-1. **Put a ticker in.** If you can't, put a macro indicator or a named
-   event in.
-2. **Put a time phrase in.** Implicit defaults to 6 months, which is
-   almost never what you want for an options question.
-3. **State your trade intent.** The Analyst tunes its answer to what you
-   asked for (scan / score / position / hedge).
+1. **Put a ticker in.** If you can't, put a macro indicator or a named event in.
+2. **Put a time phrase in.** Implicit defaults to 6 months, which is almost never what you want for an options question.
+3. **State your trade intent.** The Analyst tunes its answer to what you asked for (scan / score / position / hedge).
+
+---
+
+## 9. Low-Latency Query Templates (10-word class)
+
+Use these templates for production throughput:
+
+- `Today SPY put-call ratio and ATM IV for 30-DTE puts`
+- `Past week FOMC and 10Y yields impact on SPY puts`
+- `Today GLD IV skew and liquid 30-DTE hedge strikes`
+- `Past month AAPL insider selling signal and put strategy`
+- `Today QQQ ATM IV versus VIX divergence hedge signal`
+

@@ -5,6 +5,9 @@ Description: This file serves as the Single Source of Truth (SSoT) for all AI ag
              It decouples professional terminology and expert personas from execution logic.
 """
 
+import re
+from functools import lru_cache
+from pathlib import Path
 from typing import Dict, List, Optional
 
 # ==========================================
@@ -127,3 +130,36 @@ def build_modelfile_system_prompt() -> str:
     [OUTPUT REQUIREMENTS]:
     {OUTPUT_CONSTRAINTS['markdown_report']}
     """.strip()
+
+
+@lru_cache(maxsize=1)
+def load_modelfile_system_prompt(modelfile_path: Optional[str] = None) -> str:
+    """
+    Load SYSTEM instruction block from repository `modelfile`.
+
+    Why this exists:
+    - Keeps analyst runtime prompt aligned with model training/runtime card.
+    - Provides one canonical source for professional system behavior.
+    """
+    root = Path(__file__).resolve().parents[2]
+    fp = Path(modelfile_path) if modelfile_path else (root / "modelfile")
+    if not fp.exists():
+        return build_modelfile_system_prompt()
+
+    raw = fp.read_text(encoding="utf-8")
+    match = re.search(r'SYSTEM\s+"""(.*?)"""', raw, flags=re.DOTALL)
+    if not match:
+        return build_modelfile_system_prompt()
+    system_prompt = match.group(1).strip()
+    return system_prompt if system_prompt else build_modelfile_system_prompt()
+
+
+def get_analyst_system_prompt() -> str:
+    """
+    Canonical analyst system prompt source.
+
+    Policy:
+    1) Prefer `modelfile` SYSTEM for strict runtime/training alignment.
+    2) Fall back to synthesized institutional prompt if missing.
+    """
+    return load_modelfile_system_prompt()

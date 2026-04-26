@@ -10,14 +10,16 @@ import sys
 import logging
 import asyncio
 import json
+import re
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List
 from dotenv import load_dotenv
 
-from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_openai import ChatOpenAI
+
 
 # --- 1. Path and environment bootstrap ---
 SCRIPT_PATH = Path(__file__).resolve()
@@ -66,23 +68,31 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("QueryTransformer")
 
 class QueryTransformer:
-    def __init__(self):
-        self.model_name = os.getenv("OLLAMA_CUSTOM_MODEL_NAME", "options-expert-v1:latest")
+    def __init__(self, extractor_model: str = None, hyde_model: str = None):
+        """
+        🌟 架构师优化版：双 API 引擎驱动
+        """
+        # 从环境变量读取配置，默认使用 gpt-4o-mini
+        self.extractor_model_name = extractor_model or os.getenv("TRANSFORM_EXTRACTOR_MODEL", "gpt-4o-mini")
+        self.hyde_model_name = hyde_model or os.getenv("TRANSFORM_HYDE_MODEL", "gpt-4o-mini")
         
-        # Load ticker allowlist for prompt injection and post-LLM guardrails.
-        self.allowed_tickers = self._load_allowed_tickers()
+        api_key = os.getenv("OPENAI_API_KEY")
         
-        # --- LLM initialization ---
-        # Stage 1: strict extractor model.
-        self.extractor_llm = ChatOllama(
-            model=self.model_name, temperature=0, format="json"
+        # 1. 结构化抽取引擎 (必须使用 .with_structured_output)
+        self.extractor_llm = ChatOpenAI(
+            model=self.extractor_model_name,
+            temperature=0,
+            api_key=api_key
         ).with_structured_output(MetadataExtraction)
-        
-        # Stage 2: semantic writer model.
-        self.hyde_llm = ChatOllama(
-            model=self.model_name, temperature=0.2, format="json"
+
+        # 2. HyDE 生成引擎（结构化输出，返回 hyde_paragraph + rerank_query）
+        self.hyde_llm = ChatOpenAI(
+            model=self.hyde_model_name,
+            temperature=0.1, 
+            api_key=api_key
         ).with_structured_output(HyDEGeneration)
 
+        self.allowed_tickers = self._load_allowed_tickers()
         self._build_prompts()
 
     def _load_allowed_tickers(self) -> List[str]:
@@ -162,6 +172,63 @@ class QueryTransformer:
             logger.info(f"💡 Audit Log saved to {log_file}")
         except Exception as e:
             logger.error(f"Failed to save audit log: {e}")
+    def _fallback_extraction(self, query: str) -> MetadataExtraction:
+        """Regex-based minimal fallback to keep the pipeline alive."""
+        upper_query = query.upper()
+        matched_tickers = sorted({
+            ticker for ticker in self.allowed_tickers
+            if re.search(rf"\b{re.escape(ticker)}\b", upper_query)
+        })
+
+        return MetadataExtraction(
+            logical_reasoning="Fallback extraction due to stage1 model failure.",
+            tickers=matched_tickers,
+            metrics=[],
+            source_types=["news"],
+            action_direction="NONE",
+            form_type="ALL",
+            sentiment_target="ANY",
+            event_keyword="",
+            time_window=TimeWindow.PAST_SIX_MONTHS,
+        )
+
+    async def _stage1_extract_metadata(self, query: str) -> MetadataExtraction:
+        """
+        使用 GPT-4o-mini 进行秒级结构化提取
+        """
+        try:
+            chain = self.extractor_prompt | self.extractor_llm
+            result = await chain.ainvoke({
+                "user_query": query,
+                "allowed_tickers_str": ", ".join(self.allowed_tickers),
+                "allowed_metrics": ", ".join(ALLOWED_METRICS),
+                "allowed_sources": ", ".join(ALLOWED_SOURCES),
+                "allowed_categories": ", ".join(ALLOWED_CATEGORIES),
+            })
+            return result
+        except Exception as e:
+            logger.error(f"Stage 1 API Extraction failed: {e}. Switching to Regex Fallback.")
+            return self._fallback_extraction(query)
+
+    async def _stage2_generate_hyde(self, query: str, meta: MetadataExtraction) -> HyDEGeneration:
+        """
+        使用 GPT-4o-mini 生成 HyDE 辅助文本
+        """
+        try:
+            chain = self.hyde_prompt | self.hyde_llm
+            result = await chain.ainvoke({
+                "user_query": query,
+                "macro_background": self._get_macro_context(),
+                "extracted_metadata": meta.model_dump_json(indent=2, exclude={'logical_reasoning'}),
+                "reasoning_chain": meta.logical_reasoning,
+            })
+            return result
+        except Exception as e:
+            logger.error(f"Stage 2 HyDE generation failed: {e}")
+            return HyDEGeneration(
+                hyde_paragraph=f"Direct retrieval search for: {query}",
+                rerank_query=query
+            )
 
     async def transform_for_dual_rag(self, query: str, intent: QueryIntent) -> FullTransformationResult:
         start_time = datetime.now()
@@ -171,15 +238,7 @@ class QueryTransformer:
             # ==========================================
             # STAGE 1: Extract Metadata 
             # ==========================================
-            metadata: MetadataExtraction = await self.extractor_llm.ainvoke(
-                self.extractor_prompt.format_prompt(
-                    user_query=query, 
-                    allowed_tickers_str=", ".join(self.allowed_tickers),
-                    allowed_metrics=", ".join(ALLOWED_METRICS),
-                    allowed_sources=", ".join(ALLOWED_SOURCES),
-                    allowed_categories=", ".join(ALLOWED_CATEGORIES)
-                )
-            )
+            metadata: MetadataExtraction = await self._stage1_extract_metadata(query)
             
             # [GUARDRAIL 1] Post-clean extracted tickers using allowlist.
             valid_tickers = [t for t in metadata.tickers if t in self.allowed_tickers]
@@ -223,14 +282,7 @@ class QueryTransformer:
             # ==========================================
             # STAGE 2: Generate HyDE
             # ==========================================
-            hyde_result: HyDEGeneration = await self.hyde_llm.ainvoke(
-                self.hyde_prompt.format_prompt(
-                    user_query=query,
-                    macro_background=self._get_macro_context(),
-                    extracted_metadata=metadata.model_dump_json(indent=2, exclude={'logical_reasoning'}),
-                    reasoning_chain=metadata.logical_reasoning
-                )
-            )
+            hyde_result: HyDEGeneration = await self._stage2_generate_hyde(query, metadata)
 
             # [GUARDRAIL 4] HyDE empty-paragraph fallback.
             # Production audit on 2026-04-22 caught a live case where the

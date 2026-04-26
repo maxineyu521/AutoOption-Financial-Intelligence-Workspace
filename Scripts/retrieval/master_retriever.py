@@ -41,6 +41,7 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 
 from Scripts.core.few_shot_intent import INTENT_FEW_SHOT_EXAMPLES
 from Scripts.core.intent_router_prompt_templates import ROUTER_SYSTEM_PROMPT
@@ -85,6 +86,12 @@ _SQL_ONLY_FALLBACK_TOPK = 2
 # three tickers × ~8s each is already on the order of one-third of a browser's
 # patience threshold.
 _HE_NOVEL_TICKERS_CAP = int(os.getenv("HE_NOVEL_TICKERS_CAP", "3"))
+_MACRO_ONLY_HINT_TERMS = (
+    "fomc", "federal reserve", "fed decision", "rate decision",
+    "10-year treasury", "10y treasury", "treasury yield", "yields",
+    "dot plot", "policy rate",
+)
+_MACRO_ONLY_SAFE_TICKERS = {"SPY", "QQQ", "IWM", "GLD", "SLV"}
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +134,20 @@ class MasterRetriever:
             temperature=float(os.getenv("ROUTER_TEMPERATURE", 0.0)),
             num_predict=20,
         )
+        self.router_fallback_enabled = os.getenv("ROUTER_OPENAI_FALLBACK_ENABLED", "1") == "1"
+        self.router_fallback_model = os.getenv("ROUTER_OPENAI_FALLBACK_MODEL", "gpt-4o-mini")
+        self.router_fallback_llm = None
+        if self.router_fallback_enabled:
+            openai_kwargs: Dict[str, Any] = {
+                "model": self.router_fallback_model,
+                "temperature": float(os.getenv("ROUTER_TEMPERATURE", 0.0)),
+                "api_key": os.getenv("OPENAI_API_KEY", ""),
+                "timeout": float(os.getenv("ROUTER_OPENAI_TIMEOUT_SECONDS", "40")),
+            }
+            openai_base_url = os.getenv("OPENAI_BASE_URL", "").strip()
+            if openai_base_url:
+                openai_kwargs["base_url"] = openai_base_url
+            self.router_fallback_llm = ChatOpenAI(**openai_kwargs)
 
         # --- 3. Runtime knobs (env-tunable without code change) ---
         self.gold_timeout = float(os.getenv("GOLD_TIMEOUT", 10.0))
@@ -163,8 +184,57 @@ class MasterRetriever:
             logger.info(f"⚡ [Telemetry] Router choice: {route} | Cost: {time.time() - start_t:.3f}s")
             return QueryIntent(primary_route=route)
         except Exception as e:
+            if self.router_fallback_enabled and self.router_fallback_llm is not None:
+                try:
+                    logger.warning(
+                        f"⚠️ [Router] Ollama failed ({type(e).__name__}); "
+                        f"retrying with OpenAI fallback model={self.router_fallback_model}"
+                    )
+                    fb_response = await (prompt | self.router_fallback_llm).ainvoke({
+                        "examples": INTENT_FEW_SHOT_EXAMPLES,
+                        "query": query,
+                    })
+                    intent_str = getattr(fb_response, "content", str(fb_response)).strip().lower()
+                    route = "hybrid_both"
+                    for p in ["sql_only", "vector_only", "hybrid_both"]:
+                        if p in intent_str:
+                            route = p
+                            break
+                    logger.info(
+                        f"⚡ [Telemetry] Router fallback choice: {route} | Cost: {time.time() - start_t:.3f}s"
+                    )
+                    return QueryIntent(primary_route=route)
+                except Exception as fallback_err:
+                    logger.error(
+                        f"❌ [Router Fallback Error] {fallback_err}. "
+                        "Falling back to hybrid."
+                    )
             logger.error(f"❌ [Router Error] {e}. Falling back to hybrid.")
             return QueryIntent(primary_route="hybrid_both")
+
+    def _apply_macro_only_source_hint(self, query: str, metadata) -> None:
+        """Drop SEC source hint for macro-rate queries on broad ETFs/indexes.
+
+        This prevents accidental SEC over-filtering in Gold retrieval for queries
+        like "FOMC + 10Y yields + SPY puts", where SEC is usually irrelevant.
+        """
+        if metadata is None:
+            return
+        q = (query or "").lower()
+        if not any(t in q for t in _MACRO_ONLY_HINT_TERMS):
+            return
+        tickers = [str(t).upper() for t in (getattr(metadata, "tickers", None) or [])]
+        if tickers and not all(t in _MACRO_ONLY_SAFE_TICKERS or t.startswith("^") for t in tickers):
+            return
+
+        raw_sources = list(getattr(metadata, "source_types", None) or [])
+        norm_sources = [getattr(s, "value", s) for s in raw_sources]
+        if "sec" in [str(s).lower() for s in norm_sources]:
+            metadata.source_types = [s for s in norm_sources if str(s).lower() != "sec"]
+            logger.info(
+                "🧭 [MacroOnlyHint] Dropped SEC source_type for macro-rate query | "
+                f"tickers={tickers or ['(none)']} | sources={metadata.source_types}"
+            )
 
     # ======================================================================
     # B. Engine wrappers (per-engine timeouts + exception isolation)
@@ -245,7 +315,7 @@ class MasterRetriever:
         backfills). Exposed on the return payload so the Analyst can emit a
         compliance footer verbatim, e.g.
 
-            "数据统计区间: 2025-10-20 ~ 2026-04-18 (window_days=180, default)"
+            "data range: 2025-10-20 ~ 2026-04-18 (window_days=180, default)"
 
         Also compiles a **per-source `TimePredicate` set** (news / SEC / GPR /
         options / macro / silver_gpr) via `time_adapter.compile_all`. These
@@ -452,6 +522,9 @@ class MasterRetriever:
                 reason="transform_failed",
                 start_ts=overall_start,
             )
+
+        # Router hint guardrail for macro-rate queries.
+        self._apply_macro_only_source_hint(user_query, metadata)
 
         # ==================================================================
         # 3. Time-window guardrail + canonical TimeRange
