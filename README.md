@@ -1,4 +1,4 @@
-# Institutional Execution Lifecycle Reference (Frontend + Backend)
+# Automated-Options-Recommendation-Bot
 
 ## 1. Strategic Goal and Mission Baseline
 
