@@ -1,5 +1,5 @@
 ﻿fastembed
-qdrant-client==1.9.0
+qdrant-client
 ollama
 python-dotenv
 pydantic  
@@ -20,9 +20,14 @@ fastparquet
 xlrd
 pyarrow
 tqdm
+et-xmlfile
+openpyxl
+lxml_html_clean
 
 # AI & LLM Integration
 langchain-ollama
+langchain-openai
+openai
 langchain-core
 langchain-community
 langchain-huggingface
@@ -34,6 +39,7 @@ beautifulsoup4
 markdownify
 rich
 nltk                   
-
-
+setuptools 
+wheel
+streamlit
 
