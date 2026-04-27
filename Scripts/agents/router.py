@@ -235,6 +235,7 @@ async def master_retrieval_node(state: AgentState) -> Dict[str, Any]:
         # Reset verdicts on every new graph entry (safe for re-runs via checkpointer).
         "checker_verdict": None,
         "critic_verdict": None,
+        "analyst_fallback_used": None,
         # Reset the pinned IV regime: the first Analyst pass of this new
         # graph entry must recompute from the freshly-retrieved Silver,
         # not inherit a regime from the previous run under a checkpointer.
@@ -279,6 +280,7 @@ async def analyst_node(state: AgentState) -> Dict[str, Any]:
     # unchanged across revisions — guaranteed strategy-direction stability.
     delta: Dict[str, Any] = {
         "draft_report": result.draft,
+        "analyst_fallback_used": bool(getattr(result, "used_fallback", False)),
         "revision_count": revision_n + 1,
         "checker_verdict": None,
         "critic_verdict": None,
@@ -295,6 +297,8 @@ async def analyst_node(state: AgentState) -> Dict[str, Any]:
             key_out={
                 "draft_len": len(result.draft),
                 "iv_regime": (result.iv_regime or {}).get("iv_regime"),
+                "fallback_used": bool(getattr(result, "used_fallback", False)),
+                "model_used": getattr(result, "model_used", ""),
             },
         ),
     }

@@ -25,18 +25,38 @@ from __future__ import annotations
 
 import os
 import logging
+import asyncio
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
+import requests
 from pydantic import BaseModel, Field
-from langchain_ollama import ChatOllama
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
 
-from Scripts.agents.prompts import get_finalizer_prompt
+from Scripts.core.financial_config import get_analyst_system_prompt
 
 logger = logging.getLogger(__name__)
 
 # Hard revision cap — must match checker.py / critic.py / router.py.
 _MAX_REVISIONS = int(os.getenv("AGENT_MAX_REVISIONS", "3"))
+
+
+def _normalize_openai_base_url(raw_base_url: Optional[str], ollama_host: Optional[str]) -> str:
+    candidate = (raw_base_url or "").strip()
+    if not candidate:
+        candidate = (ollama_host or "").strip()
+    if not candidate:
+        candidate = "http://localhost:11434"
+    base = candidate.rstrip("/")
+    if base.endswith("/v1"):
+        return base
+    return f"{base}/v1"
+
+
+def _is_ollama_runner_500(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return ("status code: 500" in msg) or ("runner process has terminated" in msg)
 
 
 # ==========================================
@@ -329,43 +349,129 @@ def _degraded_report(
 
 class FinalizerAgent:
     """LangGraph-compatible finalizer. Produces the terminal `final_strategy` dict.
-
-    Optional llama3:latest enrichment pass (FINALIZER_LLAMA3_ENRICHMENT=1):
-        After the structured FinalReport is produced, a second lightweight LLM
-        call uses llama3:latest to generate an enriched_macro_narrative — a
-        plain-English synthesis of macro_context for the executive summary
-        section. This pass is best-effort and never blocks the primary output.
-        Enabled via env var to avoid extra GPU load in CI / cold-start scenarios.
     """
-
-    _LLAMA3_ENRICHMENT_ENABLED = os.getenv("FINALIZER_LLAMA3_ENRICHMENT", "0") == "1"
-    _LLAMA3_MODEL = os.getenv("OLLAMA_FINALIZER_ENRICHMENT_MODEL", "llama3:latest")
 
     def __init__(self):
         self.model_name = os.getenv("OLLAMA_FINALIZER_MODEL", "options-expert-v1:latest")
-        temperature = float(os.getenv("FINALIZER_TEMPERATURE", "0.0"))
-        self.llm = ChatOllama(
-            model=self.model_name,
-            temperature=temperature,
-            format="json",
+        self.base_url = _normalize_openai_base_url(
+            os.getenv("OLLAMA_OPENAI_BASE_URL"),
+            os.getenv("OLLAMA_HOST"),
+        )
+        self.api_key = os.getenv("OLLAMA_OPENAI_API_KEY", "ollama")
+        self.temperature = float(os.getenv("FINALIZER_TEMPERATURE", "0.0"))
+        self.max_tokens = int(os.getenv("FINALIZER_MAX_TOKENS", "700"))
+        self.timeout_s = float(os.getenv("FINALIZER_TIMEOUT_SECONDS", "120"))
+        self.max_retries = int(os.getenv("FINALIZER_MAX_RETRIES", "1"))
+        self.retry_backoff_s = float(os.getenv("FINALIZER_RETRY_BACKOFF_SECONDS", "1.0"))
+        self.fast_fail_on_500 = os.getenv("FINALIZER_FAST_FAIL_ON_OLLAMA_500", "1") == "1"
+        self.fallback_switch_sla_s = float(os.getenv("FINALIZER_FALLBACK_SWITCH_SLA_SECONDS", "1.0"))
+
+        self.openai_fallback_enabled = os.getenv("FINALIZER_OPENAI_FALLBACK_ENABLED", "1") == "1"
+        self.openai_fallback_model = os.getenv("FINALIZER_OPENAI_FALLBACK_MODEL", "gpt-4o-mini")
+        self.openai_fallback_timeout_s = float(os.getenv("FINALIZER_OPENAI_FALLBACK_TIMEOUT_SECONDS", "45"))
+        self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+        self.openai_base_url = os.getenv("OPENAI_BASE_URL", "").strip()
+
+        self.max_macro_chars = int(os.getenv("FINALIZER_MAX_MACRO_CHARS", "2600"))
+        self.max_draft_chars = int(os.getenv("FINALIZER_MAX_DRAFT_CHARS", "7000"))
+        self.max_evidence_chars = int(os.getenv("FINALIZER_MAX_EVIDENCE_CHARS", "3000"))
+        self.max_payload_chars = int(os.getenv("FINALIZER_MAX_PAYLOAD_CHARS", "12000"))
+
+        self.llm = self._build_ollama_llm(self.model_name)
+        self.fallback_llm = (
+            self._build_openai_fallback_llm(self.openai_fallback_model)
+            if self.openai_fallback_enabled
+            else None
+        )
+
+        self.system_prompt = get_analyst_system_prompt()
+        self.prompt_chain = ChatPromptTemplate.from_messages([
+            ("system", self.system_prompt),
+            (
+                "human",
+                "You are the report finalizer. Convert the payload into the FinalReport schema "
+                "without inventing facts.\n\n{payload}",
+            ),
+        ])
+
+    def _build_ollama_llm(self, model_name: str):
+        return ChatOpenAI(
+            model=model_name,
+            api_key=self.api_key,
+            base_url=self.base_url,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            timeout=self.timeout_s,
         ).with_structured_output(FinalReport)
 
-        # Prompt comes from the single source of truth; variables expected by the
-        # template are: original_query, draft, evidence_block, macro_context.
-        self.prompt = get_finalizer_prompt()
+    def _build_openai_fallback_llm(self, model_name: str):
+        kwargs: Dict[str, Any] = {
+            "model": model_name,
+            "api_key": self.openai_api_key,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "timeout": self.openai_fallback_timeout_s,
+        }
+        if self.openai_base_url:
+            kwargs["base_url"] = self.openai_base_url
+        return ChatOpenAI(**kwargs).with_structured_output(FinalReport)
 
-        # Optional llama3 enrichment LLM (lazy init — only loaded when enabled).
-        self._llama3_llm: Optional[Any] = None
-        if self._LLAMA3_ENRICHMENT_ENABLED:
+    @staticmethod
+    def _clip_text(text: str, max_chars: int) -> str:
+        s = (text or "").strip()
+        if len(s) <= max_chars:
+            return s
+        return s[:max_chars] + "\n...(truncated)..."
+
+    def _build_payload_text(
+        self,
+        *,
+        user_query: str,
+        draft: str,
+        macro_context: str,
+        evidence_block: str,
+        minor_suggestions_block: str,
+        degraded: bool,
+        degraded_reason: Optional[str],
+    ) -> str:
+        payload = (
+            "=== USER QUERY ===\n"
+            f"{user_query}\n\n"
+            "=== ANALYST DRAFT (fact-checked upstream) ===\n"
+            f"{self._clip_text(draft, self.max_draft_chars)}\n\n"
+            "=== MACRO CONTEXT ===\n"
+            f"{self._clip_text(macro_context, self.max_macro_chars)}\n\n"
+            "=== EVIDENCE POOL ===\n"
+            f"{self._clip_text(evidence_block, self.max_evidence_chars)}\n\n"
+            "=== CRITIC MINOR SUGGESTIONS ===\n"
+            f"{minor_suggestions_block}\n\n"
+            "=== PIPELINE FLAGS ===\n"
+            f"degraded={degraded} | degraded_reason={degraded_reason or 'none'}\n\n"
+            "=== OUTPUT REQUIREMENTS ===\n"
+            "Return FinalReport only. Preserve numbers exactly. If insufficient data, keep low confidence."
+        )
+        return self._clip_text(payload, self.max_payload_chars)
+
+    async def _invoke_with_retry(self, llm, payload: Dict[str, Any], model_name: str):
+        attempts = self.max_retries + 1
+        last_err: Optional[Exception] = None
+        for attempt in range(1, attempts + 1):
             try:
-                from langchain_ollama import ChatOllama as _OllamaChat
-                self._llama3_llm = _OllamaChat(
-                    model=self._LLAMA3_MODEL,
-                    temperature=0.3,
-                )
-                logger.info(f"FinalizerAgent: llama3 enrichment enabled (model={self._LLAMA3_MODEL})")
-            except Exception as e:
-                logger.warning(f"FinalizerAgent: llama3 enrichment init failed ({e}) — enrichment disabled.")
+                return await (self.prompt_chain | llm).ainvoke(payload)
+            except Exception as exc:
+                last_err = exc
+                if self.fast_fail_on_500 and _is_ollama_runner_500(exc):
+                    logger.warning(
+                        "FinalizerAgent: detected Ollama 500 runner error; fail fast to fallback "
+                        "(target_switch_sla=%.2fs).",
+                        self.fallback_switch_sla_s,
+                    )
+                    raise exc
+                if attempt < attempts:
+                    await asyncio.sleep(self.retry_backoff_s * (2 ** (attempt - 1)))
+        if last_err is not None:
+            raise last_err
+        raise RuntimeError("FinalizerAgent retry loop failed without explicit exception.")
 
     async def format_and_clean(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Convert the Analyst draft into a FinalReport dict.
@@ -418,22 +524,32 @@ class FinalizerAgent:
 
         report: FinalReport
         try:
-            chain = self.prompt | self.llm
+            payload_text = self._build_payload_text(
+                user_query=user_query,
+                draft=draft,
+                macro_context=macro_ctx[:3000] if macro_ctx else "(not available)",
+                evidence_block=evidence_block,
+                minor_suggestions_block=minor_block,
+                degraded=degraded,
+                degraded_reason=degraded_reason,
+            )
+            prefer_fallback = bool(state.get("analyst_fallback_used", False))
+            active_llm = self.fallback_llm if (prefer_fallback and self.fallback_llm is not None) else self.llm
+            active_model_name = (
+                self.openai_fallback_model if (prefer_fallback and self.fallback_llm is not None)
+                else self.model_name
+            )
             logger.info(
                 f"FinalizerAgent: invoking LLM | revision={revision_n} | "
-                f"evidence_n={len(evidence_pool)} | degraded={degraded}"
+                f"evidence_n={len(evidence_pool)} | degraded={degraded} | model={active_model_name}"
             )
-            report = await chain.ainvoke({
-                "original_query": user_query,
-                "draft": draft,
-                "evidence_block": evidence_block,
-                # Macro context is passed as trusted background — it was
-                # pre-validated by the data pipeline and is exempt from
-                # Checker re-verification (see checker_strictness_v2_architecture.md §2.1).
-                "macro_context": macro_ctx[:3000] if macro_ctx else "(not available)",
-                # Critic Minor Suggestions — polish notes to incorporate (non-blocking).
-                "minor_suggestions_block": minor_block,
-            })
+            report = await self._invoke_with_retry(
+                active_llm,
+                {"payload": payload_text},
+                active_model_name,
+            )
+            if report is None:
+                raise RuntimeError("Finalizer LLM returned empty report")
 
             # Post-hoc traceability guarantee: if the LLM produced trade ideas
             # but attached zero citations, backfill from the evidence pool
@@ -456,40 +572,67 @@ class FinalizerAgent:
                 report.confidence_score = min(report.confidence_score, 0.60)
 
         except Exception as e:
-            logger.exception(f"FinalizerAgent: LLM call failed: {e}")
-            degraded = True
-            degraded_reason = f"finalizer_llm_failure:{type(e).__name__}"
-            report = _degraded_report(
-                reason=degraded_reason,
-                draft=draft,
-                evidence_pool=evidence_pool,
-            )
-            # Keep the report_date deterministic even on the degraded path.
-            _enforce_deterministic_report_date(report, state)
-
-        # Optional llama3:latest enrichment pass — macro narrative synthesis.
-        # Produces a plain-English executive background narrative that sits
-        # alongside the structured FinalReport without modifying its schema.
-        enriched_macro_narrative: Optional[str] = None
-        if self._llama3_llm is not None and macro_ctx:
-            try:
-                enrichment_prompt = (
-                    "You are a concise financial analyst. "
-                    "Write a 2-3 sentence plain English executive summary of the current "
-                    "macro environment based ONLY on the provided Macro Context. "
-                    "Do not add new information or hedging language beyond what is in the context.\n\n"
-                    f"[MACRO CONTEXT]\n{macro_ctx[:2000]}\n\n"
-                    f"[ANALYST MACRO SUMMARY FOR REFERENCE]\n{report.macro_summary}\n\n"
-                    "Executive Macro Narrative:"
+            logger.warning("FinalizerAgent: primary/favored path failed: %s", e)
+            # Secondary safety net: if current path fails and fallback exists, try fallback.
+            if self.fallback_llm is not None:
+                try:
+                    fallback_started = asyncio.get_running_loop().time()
+                    payload_text = self._build_payload_text(
+                        user_query=user_query,
+                        draft=draft,
+                        macro_context=macro_ctx[:3000] if macro_ctx else "(not available)",
+                        evidence_block=evidence_block,
+                        minor_suggestions_block=minor_block,
+                        degraded=degraded,
+                        degraded_reason=degraded_reason,
+                    )
+                    logger.warning(
+                        "FinalizerAgent: switching to fallback model=%s",
+                        self.openai_fallback_model,
+                    )
+                    report = await self._invoke_with_retry(
+                        self.fallback_llm,
+                        {"payload": payload_text},
+                        self.openai_fallback_model,
+                    )
+                    switch_elapsed = asyncio.get_running_loop().time() - fallback_started
+                    if switch_elapsed > self.fallback_switch_sla_s:
+                        logger.warning(
+                            "FinalizerAgent: fallback switch exceeded SLA %.2fs (actual=%.2fs)",
+                            self.fallback_switch_sla_s,
+                            switch_elapsed,
+                        )
+                    if report.trade_ideas and evidence_pool:
+                        for idea in report.trade_ideas:
+                            if not idea.supporting_evidence:
+                                idea.supporting_evidence = evidence_pool[:3]
+                    _enforce_deterministic_report_date(report, state)
+                    _reconcile_citation_source_types(report, evidence_pool)
+                    if degraded:
+                        report.confidence_score = min(report.confidence_score, 0.30)
+                    elif revision_n > 0:
+                        report.confidence_score = min(report.confidence_score, 0.60)
+                except Exception as fallback_err:
+                    logger.exception(f"FinalizerAgent: fallback LLM call failed: {fallback_err}")
+                    degraded = True
+                    degraded_reason = f"finalizer_llm_failure:{type(fallback_err).__name__}"
+                    report = _degraded_report(
+                        reason=degraded_reason,
+                        draft=draft,
+                        evidence_pool=evidence_pool,
+                    )
+                    _enforce_deterministic_report_date(report, state)
+            else:
+                logger.exception(f"FinalizerAgent: LLM call failed: {e}")
+                degraded = True
+                degraded_reason = f"finalizer_llm_failure:{type(e).__name__}"
+                report = _degraded_report(
+                    reason=degraded_reason,
+                    draft=draft,
+                    evidence_pool=evidence_pool,
                 )
-                enrichment_response = await self._llama3_llm.ainvoke(enrichment_prompt)
-                enriched_macro_narrative = getattr(enrichment_response, "content", str(enrichment_response)).strip()
-                logger.info(
-                    f"FinalizerAgent: llama3 enrichment completed "
-                    f"(len={len(enriched_macro_narrative)})"
-                )
-            except Exception as e:
-                logger.warning(f"FinalizerAgent: llama3 enrichment failed ({type(e).__name__}: {e}) — skipped.")
+                # Keep the report_date deterministic even on the degraded path.
+                _enforce_deterministic_report_date(report, state)
 
         output: Dict[str, Any] = {
             "status": "degraded" if degraded else "complete",
@@ -499,8 +642,6 @@ class FinalizerAgent:
             "evidence_links": [e.model_dump() for e in evidence_pool],
             "confidence_score": report.confidence_score,
         }
-        if enriched_macro_narrative:
-            output["enriched_macro_narrative"] = enriched_macro_narrative
         return output
 
 

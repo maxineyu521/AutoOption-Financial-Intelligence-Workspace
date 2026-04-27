@@ -46,6 +46,10 @@ logger = logging.getLogger(__name__)
 
 _MAX_REVISIONS = int(os.getenv("AGENT_MAX_REVISIONS", "3"))
 _INSIDER_SIGNAL_MIN_COUNT = int(os.getenv("INSIDER_SIGNAL_MIN_COUNT", "3"))
+_UNCERTAINTY_TOKENS = (
+    "might", "could", "may", "possible", "possibly", "assume", "assumes",
+    "without considering", "uncertain", "not clear",
+)
 
 
 # ==========================================
@@ -159,6 +163,46 @@ class CriticAgent:
         ).with_structured_output(CriticResult)
 
         self.prompt = get_critic_prompt()
+
+    @staticmethod
+    def _is_macro_fatal_evidence_strong(comment: str) -> bool:
+        """
+        Conservative macro-fatal gate:
+        - Reject speculative language as Fatal.
+        - Require explicit contradiction semantics to keep Fatal.
+        """
+        c = (comment or "").lower()
+        if any(tok in c for tok in _UNCERTAINTY_TOKENS):
+            return False
+        return any(
+            strong in c for strong in (
+                "direct contradiction",
+                "directly contradict",
+                "clearly contradict",
+                "inconsistent with",
+            )
+        )
+
+    @staticmethod
+    def _fatal_issue_is_actionable(
+        issue: LogicIssue,
+        iv_regime_info: Dict[str, Any],
+        insider_info: Dict[str, Any],
+    ) -> bool:
+        """
+        Guardrail against LLM over-triggered Fatal findings.
+        """
+        category = issue.category
+        if category == "iv_regime_fit":
+            # UNKNOWN regime cannot support a deterministic fatal block.
+            return iv_regime_info.get("iv_regime") in {"HIGH", "LOW", "NORMAL"}
+        if category == "insider_signal_weakness":
+            # NOISE is explicitly non-fatal per policy.
+            return insider_info.get("verdict") in {"BULLISH_SIGNAL", "BEARISH_SIGNAL"}
+        if category == "macro_contradiction":
+            # Fatal only when contradiction language is strong and non-speculative.
+            return CriticAgent._is_macro_fatal_evidence_strong(issue.comment)
+        return True
 
     async def audit(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Return the Critic node payload for LangGraph.
@@ -279,12 +323,21 @@ class CriticAgent:
             if not result.is_passed:
                 for issue in result.issues:
                     if issue.severity == "Fatal":
-                        feedbacks.append(AgentFeedback(
-                            sender="Critic",
-                            error_type="Fatal",
-                            comment=f"[{issue.category}] {issue.comment}",
-                            revision_index=revision_n,
-                        ))
+                        if self._fatal_issue_is_actionable(issue, iv_regime_info, insider_info):
+                            feedbacks.append(AgentFeedback(
+                                sender="Critic",
+                                error_type="Fatal",
+                                comment=f"[{issue.category}] {issue.comment}",
+                                revision_index=revision_n,
+                            ))
+                        else:
+                            # Demote unsupported Fatal to a non-blocking polish note.
+                            minor_suggestions.append(f"[{issue.category}] {issue.comment}")
+                            logger.info(
+                                "CriticAgent: demoted non-actionable Fatal -> minor "
+                                f"(category={issue.category}, iv_regime={iv_regime_info.get('iv_regime')}, "
+                                f"insider={insider_info.get('verdict')})"
+                            )
                     else:
                         # LLM incorrectly placed a Minor in issues — demote to suggestion.
                         minor_suggestions.append(f"[{issue.category}] {issue.comment}")

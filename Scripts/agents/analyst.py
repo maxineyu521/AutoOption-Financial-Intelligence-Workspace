@@ -27,16 +27,70 @@ Design pillars (aligned with the architect brief):
 
 from __future__ import annotations
 
+import asyncio
 import os
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
-from langchain_ollama import ChatOllama
+import requests
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
 
-from Scripts.agents.prompts import get_analyst_prompt, render_revision_block
+from Scripts.agents.prompts import render_revision_block
+from Scripts.core.financial_config import get_analyst_system_prompt
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_openai_base_url(raw_base_url: Optional[str], ollama_host: Optional[str]) -> str:
+    """
+    Normalize Ollama OpenAI-compatible base URL to end with `/v1`.
+
+    Accepts:
+      - http://localhost:11434
+      - http://localhost:11434/
+      - http://localhost:11434/v1
+      - http://localhost:11434/v1/
+    Returns:
+      - http://localhost:11434/v1
+    """
+    candidate = (raw_base_url or "").strip()
+    if not candidate:
+        candidate = (ollama_host or "").strip()
+    if not candidate:
+        candidate = "http://localhost:11434"
+
+    base = candidate.rstrip("/")
+    if base.endswith("/v1"):
+        return base
+    return f"{base}/v1"
+
+
+def _is_ollama_runner_500(exc: Exception) -> bool:
+    """Return True for known Ollama terminal runner failures."""
+    msg = str(exc).lower()
+    return ("status code: 500" in msg) or ("runner process has terminated" in msg)
+
+
+def _collect_valid_citation_ids(silver_ctx: Dict[str, Any], gold_ctx: List[Any]) -> Dict[str, List[str]]:
+    silver_ids: List[str] = []
+    gold_ids: List[str] = []
+
+    for a in (silver_ctx.get("lineage_anchors", []) if isinstance(silver_ctx, dict) else []) or []:
+        s = str(a).strip()
+        if s:
+            silver_ids.append(s)
+
+    for c in gold_ctx or []:
+        br = getattr(c, "bronze_ref", None) or (c.get("bronze_ref") if isinstance(c, dict) else None)
+        if br:
+            gold_ids.append(str(br).strip())
+
+    # Preserve order while deduping
+    silver_ids = list(dict.fromkeys(silver_ids))
+    gold_ids = list(dict.fromkeys(gold_ids))
+    return {"silver_ids": silver_ids, "gold_ids": gold_ids}
 
 
 class AnalystResult:
@@ -48,29 +102,37 @@ class AnalystResult:
     still accessible via `.draft`).
     """
 
-    __slots__ = ("draft", "iv_regime")
+    __slots__ = ("draft", "iv_regime", "used_fallback", "model_used")
 
-    def __init__(self, draft: str, iv_regime: Dict[str, Any]):
+    def __init__(
+        self,
+        draft: str,
+        iv_regime: Dict[str, Any],
+        used_fallback: bool = False,
+        model_used: str = "",
+    ):
         self.draft = draft
         self.iv_regime = iv_regime
+        self.used_fallback = used_fallback
+        self.model_used = model_used
 
 
 # ==========================================
 # IV Regime Classifier (deterministic, no LLM)
 # ==========================================
-# Threshold defaults are conservative; can be tuned via env overrides without touching code.
-_IV_HIGH_DEFAULT = float(os.getenv("IV_REGIME_HIGH_THRESHOLD", "0.35"))
-_IV_LOW_DEFAULT = float(os.getenv("IV_REGIME_LOW_THRESHOLD", "0.18"))
+# Percentile-based thresholds (cross-asset stable) from Silver iv-rank.
+_IV_RANK_HIGH_PCT_DEFAULT = float(os.getenv("IV_RANK_HIGH_PCT", "70"))
+_IV_RANK_LOW_PCT_DEFAULT = float(os.getenv("IV_RANK_LOW_PCT", "30"))
 
 
 def _infer_iv_regime(
     silver_context: Dict[str, Any],
-    high: float = _IV_HIGH_DEFAULT,
-    low: float = _IV_LOW_DEFAULT,
+    high_pct: float = _IV_RANK_HIGH_PCT_DEFAULT,
+    low_pct: float = _IV_RANK_LOW_PCT_DEFAULT,
 ) -> Dict[str, Any]:
     """Classify the current IV regime from silver_context.values.
 
-    Inspects the `latest_atm_iv` key written by
+    Inspects the `latest_atm_iv` + `latest_atm_iv_rank_pct` keys written by
     `Scripts/retrieval/sql_tools._handle_options_analysis`. Also surfaces
     Put/Call Ratio when present because PCR drives the regime narrative.
 
@@ -78,26 +140,29 @@ def _infer_iv_regime(
         {
           "iv_regime": "HIGH" | "LOW" | "NORMAL" | "UNKNOWN",
           "atm_iv": float | None,
+          "iv_rank_pct": float | None,
           "pcr_volume": float | None,
           "pcr_status": str | None,
-          "thresholds": {"high": ..., "low": ...}
+          "thresholds": {"high_pct": ..., "low_pct": ...}
         }
 
-    Note on "IV Rank": we use absolute IV thresholds here because the Silver
-    layer does not yet expose a historical IV distribution per symbol. The
-    TODO in `sql_tools.py` is to add an `iv_rank` column; once that exists
-    this function should switch to percentile-based ranking (see README).
+    Classification rule:
+      - HIGH   when iv_rank_pct >= high_pct
+      - LOW    when iv_rank_pct <= low_pct
+      - NORMAL otherwise
+      - UNKNOWN if iv_rank_pct is absent/non-numeric
     """
     values = (silver_context or {}).get("values", {}) if isinstance(silver_context, dict) else {}
     atm_iv = values.get("latest_atm_iv")
+    iv_rank_pct = values.get("latest_atm_iv_rank_pct")
     pcr_vol = values.get("pcr_volume")
     pcr_status = values.get("pcr_status")
 
-    if not isinstance(atm_iv, (int, float)):
+    if not isinstance(iv_rank_pct, (int, float)):
         regime: Literal["HIGH", "LOW", "NORMAL", "UNKNOWN"] = "UNKNOWN"
-    elif atm_iv >= high:
+    elif iv_rank_pct >= high_pct:
         regime = "HIGH"
-    elif atm_iv <= low:
+    elif iv_rank_pct <= low_pct:
         regime = "LOW"
     else:
         regime = "NORMAL"
@@ -105,9 +170,10 @@ def _infer_iv_regime(
     return {
         "iv_regime": regime,
         "atm_iv": atm_iv,
+        "iv_rank_pct": iv_rank_pct,
         "pcr_volume": pcr_vol,
         "pcr_status": pcr_status,
-        "thresholds": {"high": high, "low": low},
+        "thresholds": {"high_pct": high_pct, "low_pct": low_pct},
     }
 
 
@@ -240,11 +306,210 @@ class AnalystAgent:
     """
 
     def __init__(self):
+        # Primary engine: local Ollama 70B via OpenAI-compatible endpoint.
+        # Secondary engine: remote OpenAI-compatible fallback (gpt-4o-mini).
+        self.backend = os.getenv("ANALYST_LLM_BACKEND", "ollama").strip().lower()
+        if self.backend != "ollama":
+            logger.warning("AnalystAgent: forcing backend to 'ollama' (configured=%s).", self.backend)
+
         self.model_name = os.getenv("OLLAMA_ANALYST_MODEL", "options-expert-v1:latest")
-        temperature = float(os.getenv("ANALYST_TEMPERATURE", "0.1"))
-        self.llm = ChatOllama(model=self.model_name, temperature=temperature)
-        # Prompt is now sourced from the single-source-of-truth prompts module.
-        self.prompt = get_analyst_prompt()
+        self.base_url = _normalize_openai_base_url(
+            os.getenv("OLLAMA_OPENAI_BASE_URL"),
+            os.getenv("OLLAMA_HOST"),
+        )
+        self.api_key = os.getenv("OLLAMA_OPENAI_API_KEY", "ollama")
+        self.temperature = float(os.getenv("ANALYST_TEMPERATURE", "0.0"))
+        self.max_tokens = int(os.getenv("ANALYST_MAX_TOKENS", "180"))
+        self.timeout_s = float(os.getenv("ANALYST_TIMEOUT_SECONDS", "120"))
+        self.max_retries = int(os.getenv("ANALYST_MAX_RETRIES", "2"))
+        self.retry_backoff_s = float(os.getenv("ANALYST_RETRY_BACKOFF_SECONDS", "1.5"))
+        self.healthcheck_enabled = os.getenv("ANALYST_HEALTHCHECK_ENABLED", "1") == "1"
+        self.healthcheck_timeout_s = float(os.getenv("ANALYST_HEALTHCHECK_TIMEOUT_SECONDS", "4"))
+        self.enable_model_fallback = os.getenv("ANALYST_ENABLE_MODEL_FALLBACK", "1") == "1"
+        self.fast_fail_on_500 = os.getenv("ANALYST_FAST_FAIL_ON_OLLAMA_500", "1") == "1"
+        self.fallback_switch_sla_s = float(os.getenv("ANALYST_FALLBACK_SWITCH_SLA_SECONDS", "1.0"))
+
+        # RAG context window controls (prompt-size guardrails).
+        self.max_macro_chars = int(os.getenv("ANALYST_MAX_MACRO_CHARS", "1600"))
+        self.max_silver_lines = int(os.getenv("ANALYST_MAX_SILVER_LINES", "70"))
+        self.max_gold_chars = int(os.getenv("ANALYST_MAX_GOLD_CHARS", "3200"))
+        self.max_payload_chars = int(os.getenv("ANALYST_MAX_PAYLOAD_CHARS", "9000"))
+
+        self.llm = self._build_ollama_llm(self.model_name)
+        self.fallback_llm = None
+        self.primary_healthy = True
+        self.fallback_healthy = True
+
+        self.openai_fallback_model = os.getenv("ANALYST_OPENAI_FALLBACK_MODEL", "gpt-4o-mini")
+        self.openai_fallback_timeout_s = float(os.getenv("ANALYST_OPENAI_FALLBACK_TIMEOUT_SECONDS", "45"))
+        self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+        self.openai_base_url = os.getenv("OPENAI_BASE_URL", "").strip()
+        self.openai_fallback_enabled = (
+            self.enable_model_fallback
+            and os.getenv("ANALYST_OPENAI_FALLBACK_ENABLED", "1") == "1"
+        )
+        if self.openai_fallback_enabled:
+            self.fallback_llm = self._build_openai_fallback_llm(self.openai_fallback_model)
+            if not self.openai_api_key and not self.openai_base_url:
+                self.fallback_healthy = False
+                logger.warning(
+                    "AnalystAgent: OpenAI fallback enabled but OPENAI_API_KEY/OPENAI_BASE_URL missing."
+                )
+
+        if self.healthcheck_enabled:
+            self.primary_healthy = self._healthcheck_model(self.model_name)
+            if not self.primary_healthy and self.fallback_llm is not None and self.fallback_healthy:
+                logger.warning("AnalystAgent: primary unhealthy at startup; fallback path armed.")
+
+        self.system_prompt = get_analyst_system_prompt()
+        self.system_prompt = (
+            f"{self.system_prompt}\n\n"
+            "=== CITATION ENFORCEMENT (RUNTIME HARD RULE) ===\n"
+            "Use ONLY IDs explicitly listed in the payload under VALID_SILVER_IDS / VALID_GOLD_IDS.\n"
+            "Never invent, truncate, or normalize IDs. Never use placeholders like GOLD_CONTEXT,\n"
+            "SILVER_CONTEXT, MACRO_CONTEXT. If no valid ID exists, write INSUFFICIENT DATA."
+        )
+        self.prompt_chain = ChatPromptTemplate.from_messages([
+            ("system", self.system_prompt),
+            ("human", "Here is the context and query:\n\n{payload}"),
+        ])
+        logger.info(
+            "AnalystAgent: primary=%s (ollama) | fallback=%s (openai) | retries=%s | fast_fail_500=%s",
+            self.model_name,
+            self.openai_fallback_model if self.fallback_llm is not None else "disabled",
+            self.max_retries,
+            self.fast_fail_on_500,
+        )
+
+    def _build_ollama_llm(self, model_name: str) -> ChatOpenAI:
+        """Build a ChatOpenAI client pointed at Ollama's OpenAI-compatible API."""
+        return ChatOpenAI(
+            model=model_name,
+            api_key=self.api_key,
+            base_url=self.base_url,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            timeout=self.timeout_s,
+        )
+
+    def _build_openai_fallback_llm(self, model_name: str) -> ChatOpenAI:
+        kwargs: Dict[str, Any] = {
+            "model": model_name,
+            "api_key": self.openai_api_key,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "timeout": self.openai_fallback_timeout_s,
+        }
+        if self.openai_base_url:
+            kwargs["base_url"] = self.openai_base_url
+        return ChatOpenAI(**kwargs)
+
+    def _models_endpoint(self) -> str:
+        base = self.base_url.rstrip("/")
+        if base.endswith("/v1"):
+            return f"{base}/models"
+        return f"{base}/v1/models"
+
+    def _healthcheck_model(self, model_name: str) -> bool:
+        """Best-effort Ollama model healthcheck via OpenAI-compatible /models."""
+        try:
+            resp = requests.get(
+                self._models_endpoint(),
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=self.healthcheck_timeout_s,
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+            model_ids = {str(item.get("id", "")) for item in payload.get("data", []) if isinstance(item, dict)}
+            ready = model_name in model_ids
+            if not ready:
+                logger.warning(
+                    "AnalystAgent: healthcheck ok but model missing | model=%s | available=%s",
+                    model_name,
+                    sorted([m for m in model_ids if m])[:10],
+                )
+            return ready
+        except Exception as exc:
+            logger.warning("AnalystAgent: healthcheck failed for model=%s | err=%s", model_name, exc)
+            return False
+
+    @staticmethod
+    def _clip_text(text: str, max_chars: int) -> str:
+        s = (text or "").strip()
+        if len(s) <= max_chars:
+            return s
+        return s[:max_chars] + "\n...(truncated)..."
+
+    def _build_payload_text(
+        self,
+        user_query: str,
+        macro_ctx: str,
+        iv_regime_block: str,
+        silver_ctx: Dict[str, Any],
+        gold_ctx: List[Any],
+        revision_block: str,
+    ) -> str:
+        ids = _collect_valid_citation_ids(silver_ctx, gold_ctx)
+        valid_silver_ids = ", ".join(ids["silver_ids"][:80]) if ids["silver_ids"] else "(none)"
+        valid_gold_ids = ", ".join(ids["gold_ids"][:80]) if ids["gold_ids"] else "(none)"
+        macro = self._clip_text(macro_ctx, self.max_macro_chars)
+        silver_full = _format_silver(silver_ctx)
+        silver_lines = silver_full.splitlines()
+        if len(silver_lines) > self.max_silver_lines:
+            silver = "\n".join(silver_lines[: self.max_silver_lines]) + "\n...(silver truncated)..."
+        else:
+            silver = silver_full
+
+        gold = self._clip_text(_format_gold(gold_ctx), self.max_gold_chars)
+        payload = (
+            "=== USER QUERY ===\n"
+            f"{user_query}\n\n"
+            "=== MACRO ENVIRONMENT ===\n"
+            f"{macro}\n\n"
+            "=== IV REGIME (deterministic) ===\n"
+            f"{iv_regime_block}\n\n"
+            "=== SILVER CONTEXT ===\n"
+            f"{silver}\n\n"
+            "=== GOLD CONTEXT ===\n"
+            f"{gold}\n\n"
+            "=== REVISION FEEDBACK ===\n"
+            f"{revision_block or '(none)'}\n\n"
+            "=== VALID CITE IDS (STRICT) ===\n"
+            f"VALID_SILVER_IDS: {valid_silver_ids}\n"
+            f"VALID_GOLD_IDS: {valid_gold_ids}\n\n"
+            "=== OUTPUT POLICY ===\n"
+            "Use only provided evidence. If missing data, explicitly say INSUFFICIENT DATA. "
+            "Never output placeholder citation IDs."
+        )
+        return self._clip_text(payload, self.max_payload_chars)
+
+    async def _invoke_with_retry(self, llm: ChatOpenAI, payload: Dict[str, Any], model_name: str):
+        last_err: Optional[Exception] = None
+        attempts = self.max_retries + 1
+        for attempt in range(1, attempts + 1):
+            try:
+                return await (self.prompt_chain | llm).ainvoke(payload)
+            except Exception as exc:
+                last_err = exc
+                logger.warning(
+                    "AnalystAgent: invoke failed | model=%s | attempt=%s/%s | err=%s",
+                    model_name,
+                    attempt,
+                    attempts,
+                    type(exc).__name__,
+                )
+                if self.fast_fail_on_500 and _is_ollama_runner_500(exc):
+                    logger.warning(
+                        "AnalystAgent: detected Ollama 500 runner error; trigger fallback immediately "
+                        "(target_switch_sla=%.2fs).",
+                        self.fallback_switch_sla_s,
+                    )
+                    raise exc
+                if attempt < attempts:
+                    await asyncio.sleep(self.retry_backoff_s * (2 ** (attempt - 1)))
+        if last_err is not None:
+            raise last_err
+        raise RuntimeError("AnalystAgent retry loop failed without explicit exception.")
 
     async def generate_report(self, state: Dict[str, Any]) -> AnalystResult:
         """Run one analyst pass and return the draft Markdown + pinned IV regime.
@@ -294,6 +559,7 @@ class AnalystAgent:
 
         iv_regime_block = (
             f"iv_regime={iv_regime['iv_regime']} | atm_iv={iv_regime['atm_iv']} "
+            f"| iv_rank_pct={iv_regime.get('iv_rank_pct')} "
             f"| pcr_volume={iv_regime['pcr_volume']} | pcr_status={iv_regime['pcr_status']} "
             f"| thresholds={iv_regime['thresholds']}"
         )
@@ -302,26 +568,71 @@ class AnalystAgent:
         revision_block = render_revision_block(feedback_log)
 
         try:
-            chain = self.prompt | self.llm
             logger.info(
                 f"AnalystAgent: invoking LLM | revision={revision_n} | "
                 f"iv_regime={iv_regime['iv_regime']} | gold_n={len(gold_ctx)} | "
                 f"silver_values_n={len(silver_ctx.get('values', {}))}"
             )
-            response = await chain.ainvoke({
-                "original_query": user_query,
-                "macro_context": macro_ctx,
-                "iv_regime_block": iv_regime_block,
-                "silver_block": _format_silver(silver_ctx),
-                "gold_block": _format_gold(gold_ctx),
-                "revision_block": revision_block,
-            })
+            payload = {
+                "payload": self._build_payload_text(
+                    user_query=user_query,
+                    macro_ctx=macro_ctx,
+                    iv_regime_block=iv_regime_block,
+                    silver_ctx=silver_ctx,
+                    gold_ctx=gold_ctx,
+                    revision_block=revision_block,
+                )
+            }
+            response = await self._invoke_with_retry(self.llm, payload, self.model_name)
+
             draft = getattr(response, "content", str(response)).strip()
             if not draft:
                 raise RuntimeError("LLM returned empty draft")
-            return AnalystResult(draft=draft, iv_regime=iv_regime)
+            return AnalystResult(
+                draft=draft,
+                iv_regime=iv_regime,
+                used_fallback=False,
+                model_used=self.model_name,
+            )
 
         except Exception as e:
+            # Primary failed -> immediate OpenAI fallback path.
+            if self.enable_model_fallback and self.fallback_llm is not None and self.fallback_healthy:
+                try:
+                    fallback_started = asyncio.get_running_loop().time()
+                    logger.warning(
+                        "AnalystAgent: primary path failed; switching to fallback model=%s",
+                        self.openai_fallback_model,
+                    )
+                    payload = {
+                        "payload": self._build_payload_text(
+                            user_query=user_query,
+                            macro_ctx=macro_ctx,
+                            iv_regime_block=iv_regime_block,
+                            silver_ctx=silver_ctx,
+                            gold_ctx=gold_ctx,
+                            revision_block=revision_block,
+                        )
+                    }
+                    response = await self._invoke_with_retry(self.fallback_llm, payload, self.openai_fallback_model)
+                    draft = getattr(response, "content", str(response)).strip()
+                    if draft:
+                        switch_elapsed = asyncio.get_running_loop().time() - fallback_started
+                        if switch_elapsed > self.fallback_switch_sla_s:
+                            logger.warning(
+                                "AnalystAgent: fallback switch exceeded SLA %.2fs (actual=%.2fs)",
+                                self.fallback_switch_sla_s,
+                                switch_elapsed,
+                            )
+                        return AnalystResult(
+                            draft=draft,
+                            iv_regime=iv_regime,
+                            used_fallback=True,
+                            model_used=self.openai_fallback_model,
+                        )
+                except Exception as fallback_err:
+                    logger.exception("AnalystAgent: fallback model failed: %s", fallback_err)
+
             logger.exception(f"AnalystAgent: LLM call failed: {e}")
             fallback_draft = (
                 "## Analyst Draft — DEGRADED MODE\n"
@@ -329,4 +640,9 @@ class AnalystAgent:
                 "will be produced until the model is available again.\n\n"
                 f"Diagnostic: {type(e).__name__}"
             )
-            return AnalystResult(draft=fallback_draft, iv_regime=iv_regime)
+            return AnalystResult(
+                draft=fallback_draft,
+                iv_regime=iv_regime,
+                used_fallback=False,
+                model_used="degraded",
+            )
