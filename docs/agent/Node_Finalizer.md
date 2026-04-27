@@ -2,7 +2,13 @@
 
 ## 1. Goal
 
-Convert the latest markdown draft plus audited context into the canonical structured `FinalReport` payload for downstream consumers.
+Translate the validated draft strategy into the canonical structured delivery object for frontend rendering, downstream automation, and audit replay, while preserving deterministic confidence and evidence lineage semantics.
+
+Primary mission controls:
+- Enforce `FinalReport` schema output consistency.
+- Carry forward evidence traceability into `supporting_evidence` and `evidence_links`.
+- Reflect degraded runtime conditions in status and confidence ceilings.
+- Emit stable machine-consumable payload (`final_strategy`) for all clients.
 
 ---
 
@@ -16,53 +22,72 @@ flowchart LR
     C --> F[final_strategy]
 ```
 
-Node entrypoint:
-- `Scripts/agents/router.py` → `finalizer_node()`
-- formatter implementation: `Scripts/agents/finalizer.py` → `FinalizerAgent.format_and_clean()`
+Execution entrypoints:
+- Router wrapper: `Scripts/agents/router.py` -> `finalizer_node()`
+- Node engine: `Scripts/agents/finalizer.py` -> `FinalizerAgent.format_and_clean()`
 
 ---
 
 ## 3. Code Strategy and Workflow
 
-- **Single-pass finalization:** no extra enrichment model branch.
-- **Schema strictness:** output normalized into a deterministic dict from `FinalReport`.
-- **Confidence governance:** score bounded by evidence quality, fallback state, and revision depth.
-- **Delivery contract:** writes only `final_strategy` (+ node audit telemetry).
+- **Structured-output first:** Finalizer uses typed `FinalReport` output to avoid free-form markdown drift.
+- **Evidence pool determinism:** citations are assembled from Silver lineage anchors and Gold `bronze_ref` metadata before model invocation.
+- **Deterministic field overrides:** report date and citation source types are reconciled post-generation using pipeline-known truth.
+- **Confidence governance policy:** score is capped by degradation state and revision depth to prevent overconfident outputs.
+- **Fallback continuity:** failed primary model path can switch to fallback model; full failure yields safe degraded report skeleton.
+- **Polish-channel integration:** `critic_minor_suggestions` are integrated as non-blocking quality improvements without changing directional thesis.
+- **Delivery normalization:** output object is serialized as stable `final_strategy` dict for backend and frontend contract compatibility.
+
+Workflow sequence:
+1. Read draft + runtime flags + evidence context.
+2. Build deterministic evidence pool.
+3. Assemble finalizer payload (including minor suggestions).
+4. Invoke structured model path with retries/fallbacks.
+5. Reconcile deterministic fields and confidence bounds.
+6. Emit `final_strategy` with markdown, report dict, and evidence links.
 
 ---
 
 ## 4. Output Data Schema (and Path)
 
-| Output Key | Type | Notes | Path |
+| Output Key | Schema / Type | Core Fields | Path Ownership |
 |---|---|---|---|
-| `final_strategy.status` | `str` | `ok` / `degraded` / fallback variants | `Scripts/agents/finalizer.py` |
-| `final_strategy.conversation_reply` | `str` | end-user strategy narrative | `Scripts/agents/finalizer.py` |
-| `final_strategy.rationale` | `List[str]` | concise supporting logic points | `Scripts/agents/finalizer.py` |
-| `final_strategy.risk_flags` | `List[str]` | explicit risk controls and caveats | `Scripts/agents/finalizer.py` |
-| `final_strategy.evidence_links` | `List[Dict]` | data lineage anchors and source links | `Scripts/agents/finalizer.py` |
-| `final_strategy.confidence_score` | `float` | bounded confidence score | `Scripts/agents/finalizer.py` |
-| `node_audit_log` | `List[Dict[str, Any]]` | finalizer telemetry event | `Scripts/agents/router.py` |
+| `final_strategy.status` | `Literal["complete","degraded"]` | terminal status of finalization flow | `Scripts/agents/finalizer.py` |
+| `final_strategy.degraded_reason` | `Optional[str]` | reason code for degraded path | `Scripts/agents/finalizer.py` |
+| `final_strategy.final_report` | `FinalReport.model_dump()` | `report_date`, `macro_summary`, `trade_ideas`, `key_risks_and_hedges`, `confidence_score`, `conversation_reply` | `Scripts/agents/finalizer.py` |
+| `final_strategy.markdown` | `str` | markdown-rendered report for UI download/rendering | `Scripts/agents/finalizer.py` |
+| `final_strategy.evidence_links` | `List[SourceCitation.model_dump()]` | source_type + detail lineage links | `Scripts/agents/finalizer.py` |
+| `final_strategy.confidence_score` | `float` | post-governance bounded confidence | `Scripts/agents/finalizer.py` |
+| `node_audit_log` | `List[Dict[str, Any]]` (append-only) | node, revision, latency, status verdict | emitted in `Scripts/agents/router.py` |
 
 ---
 
 ## 5. How to Test
 
-- **End-to-end output check:** `python Scripts/tests/test_router_e2e.py`
-- **Single-run inspection:** `python -m Scripts query "Generate a risk-defined GLD options strategy."`
-- **Compile check:** `python -m py_compile Scripts/agents/finalizer.py`
+- **End-to-end final payload integrity:** `python Scripts/tests/test_router_e2e.py`
+- **Interactive finalization run:** `python -m Scripts query "Generate a risk-defined GLD options strategy."`
+- **Fallback/degradation sanity:** run query with unavailable primary model and inspect `final_strategy.status`
+- **Syntax integrity:** `python -m py_compile Scripts/agents/finalizer.py`
 
 ---
 
 ## 6. Dependency Files and One-Line Install
 
-Key files:
+Dependency files:
 - `Scripts/agents/finalizer.py`
 - `Scripts/agents/prompts.py`
 - `Scripts/agents/state.py`
 - `Scripts/agents/router.py`
+- `Frontend/contracts.py`
+- `Frontend/renderers.py`
 
-Install:
+Related docs:
+- [Node Critic](./Node_Critic.md)
+- [Frontend Runtime Guide](../modular_guide/Frontend%20Runtime%20Guide.md)
+- [Observability](../modular_guide/Observability.md)
+- [Agent Architecture](./Agent_Architecture.md)
 
+One-line install:
 ```bash
 pip install -r requirements.txt
 ```

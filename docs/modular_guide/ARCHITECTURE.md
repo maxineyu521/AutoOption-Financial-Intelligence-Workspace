@@ -1,4 +1,4 @@
-# Institutional System Topology Reference
+# System Topology Reference
 
 ## 1. Goal
 Provide the canonical cross-layer architecture for ingestion, retrieval, multi-agent reasoning, and frontend delivery in one institutional reference.

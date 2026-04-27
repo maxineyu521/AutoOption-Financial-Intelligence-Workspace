@@ -1,4 +1,4 @@
-# Data Source Architecture and Registry — Institutional Reference
+# Data Source Architecture and Registry
 
 This document is the unified source-of-truth for the project data platform. It consolidates the former storage-layout guide and the source registry into one operational reference covering source origin, cadence, medallion placement, storage contracts, downstream consumers, and retrieval implications.
 
@@ -123,17 +123,19 @@ Data/
 
 ## V. Pipeline Registry
 
-| Source | Ingestion Script | Provides | Cadence |
-|:---|:---|:---|:---|
-| **Options chains** | `scrapers/yfinance_options_history.py` | Per-contract IV, volume, OI, moneyness, spreads, liquidity flags for SPY / QQQ / IWM / GLD / SLV | Daily 07:20 |
-| **Macro & market** | `scrapers/macro_data_pipeline.py` | Same-day market levels, daily changes, FRED macro series, MoM / YoY macro deltas | Trading days 06:30 |
-| **GPR Index** | `scrapers/GPR_index.py` | Monthly geopolitical risk level, momentum, percentile, semantic narratives | Monthly 06:05 |
-| **News** | `scrapers/news_scraper.py` | Topic-partitioned article capture, full text, semantic enrichment, tone and volatility implication | Daily 07:00 |
-| **SEC ingestion** | `scrapers/sec_ingestion.py` | Bronze-layer Form 4 / 8-K parsed filings | Weekly Sunday 08:00 |
-| **SEC processing** | `processors/sec_processor.py` | Gold-layer enriched summaries, tone scores, Qdrant-ready SEC payloads | Weekly Sunday 09:00 |
+| Stage ID (`Pipeline`) | Source Family | Script Path | Provides | Cadence Contract |
+|:---|:---|:---|:---|:---|
+| `options_daily` | Options chains | `Scripts/data_collection/scrapers/yfinance_options_history.py` | Per-contract IV, volume, OI, moneyness, spread, liquidity flags for SPY / QQQ / IWM / GLD / SLV | `DAILY` |
+| `macro_trading_daily` | Macro and market | `Scripts/data_collection/scrapers/macro_data_pipeline.py` | Same-day market levels, daily changes, FRED macro series, MoM / YoY deltas | `TRADING_DAILY` |
+| `gpr_monthly` | GPR index | `Scripts/data_collection/scrapers/GPR_index.py` | Monthly geopolitical risk level, momentum, percentile, semantic narratives | `MONTHLY` |
+| `news_daily` | News and event flow | `Scripts/data_collection/scrapers/news_scraper.py` | Topic-partitioned article capture, full text, semantic enrichment, tone and volatility implication | `DAILY` |
+| `sec_ingestion_weekly` | SEC ingestion | `Scripts/data_collection/scrapers/sec_ingestion.py` | Bronze-layer Form 4 / 8-K parsed filings | `WEEKLY` |
+| `sec_processor_weekly` | SEC enrichment | `Scripts/data_collection/processors/sec_processor.py` | Gold-layer enriched summaries, tone scores, Qdrant-ready SEC payloads | `WEEKLY` |
 
-Primary scheduler entrypoint: `Scripts/data_collection/collect_data.py`  
-Current orchestration CLI: `python -m Scripts ingest`, `daemon`, `status`
+Runtime entrypoints:
+- Primary CLI control plane: `Scripts/orchestration/cli.py` via `python -m Scripts ingest|daemon|status|query|warmup`
+- Compatibility wrappers: `Scripts/main.py`, `Scripts/__main__.py`
+- Legacy scheduler surface retained: `Scripts/data_collection/collect_data.py`
 
 ---
 
@@ -259,3 +261,20 @@ pip install requests pandas numpy pyarrow yfinance fredapi python-dotenv \
 - **Qdrant** for Gold semantic retrieval.
 - **FRED API key** via `FRED_API_KEY`.
 - **SEC User-Agent** via `SEC_USER_AGENT`.
+
+---
+
+## XII. Script-to-Data Contract Alignment Snapshot
+
+This section reconciles document-level data contracts with the live `Scripts` module boundaries.
+
+| Script Module | Data-Layer Responsibility | Contracted Artifacts / State | Primary References |
+|:---|:---|:---|:---|
+| `Scripts/orchestration/pipeline.py` | Stage DAG, cadence enforcement, dependency ordering | stage run status, run-key progression | `Scripts/orchestration/stages.py`, `Scripts/orchestration/run_state.py` |
+| `Scripts/retrieval/master_retriever.py` | Gold/Silver retrieval orchestration + time predicate unification | `metadata`, `gold_context`, `silver_context`, `time_range`, `hyde_anticipation`, `silver_context_frozen` | `docs/Query_retrieval_docs/Retrieval_Architecture_and_Strategy.md` |
+| `Scripts/retrieval/sql_tools.py` | Deterministic Silver retrieval and lineage anchor generation | Silver numeric truth set + `lineage_anchors` | `docs/Query_retrieval_docs/Silver_SQL_Tools.md` |
+| `Scripts/vector_store/ingestion.py` | Gold semantic ingestion into vector database | Qdrant-ready collection updates | `docs/Vector_store_docs/Vector_Ingestion.md` |
+| `Frontend/audit.py` | Frontend-side observability bundle writer | `*_trace.jsonl`, `*_summary.json`, `*_final_state.json`, `query_audit_trail.jsonl` | `docs/modular_guide/Observability.md` |
+
+Control-note:
+- `Data/Agent_Context/latest_macro_context.md` remains a prompt-time convenience snapshot, while deterministic numeric truth is still anchored in Silver Parquet.
