@@ -3,13 +3,14 @@
 ## 1. Strategic Goal and Mission Baseline
 
 ### Program Objective
-The project democratizes institutional-quality options research by bridging:
-- **structured quantitative signals** (IV, OI, moneyness, macro series), and
-- **unstructured qualitative signals** (SEC filings, geopolitical risk, global news).
+This project builds a multimodal, multi-agent financial RAG platform on a Medallion architecture to make options research easier to understand and easier to act on.  
+At its core, it combines two complementary tracks: **structured numeric analysis** and **unstructured semantic retrieval**. Together, they ingest heterogeneous market data and turn it into cross-asset volatility-arbitrage ideas.
 
-Using a Medallion architecture and multi-agent validation, the system detects cross-asset volatility opportunities across:
-- commodity ETFs (for example `GLD`, `SLV`), and
-- related single-name equities and index-linked options.
+- **Business goal:** lower the barrier to options investing, especially for non-expert users, by translating complex market signals into clear strategy outputs.
+- **Investment coverage:** precious-metals ETFs (for example `GLD`, `SLV`) plus related single-name equities and their listed options.
+- **Decision logic:** convert macro and event signals (Fed rates, geopolitical risk, metals price dynamics) into options opportunities (`news and macro regime -> volatility view -> strategy structure`).
+- **Unstructured track:** GPR signals, macro/news narratives, and SEC filings.
+- **Structured track:** FRED rates, implied volatility, and positioning/liquidity metrics.
 
 ### Core Outcomes
 - **Part A - Multi-source auto-ingestion at quantified cadence:** integrates **5+ active source families** (FRED, options chains, SEC, GPR, news) across **4 time granularities** (`TRADING_DAILY`, `DAILY`, `WEEKLY`, `MONTHLY`), with comprehensive metadata (ticker, source_type, timestamps, lineage/accession IDs) and parsing across **API JSON + scraped HTML + Form 4 XML + Form 8-K HTML**; Bronze preserves original SEC EDGAR links for clickable trace-back.
