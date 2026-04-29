@@ -127,6 +127,7 @@ class AgentState(TypedDict):
     # --- Flow control (solve Risk 3) ---
     revision_count: int  # number of drafts produced by Analyst; only Analyst node is responsible for increment
     is_fallback: bool    # whether the fallback logic is triggered
+    analyst_fallback_used: Optional[bool]  # whether Analyst switched to OpenAI fallback in this run
     
     # --- Final product ---
     # force final_strategy to contain evidence_links to implement data lineage

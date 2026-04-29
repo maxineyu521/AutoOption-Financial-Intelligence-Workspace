@@ -59,10 +59,16 @@ DATA_LINEAGE_DIRECTIVE = """=== DATA LINEAGE & ANTI-HALLUCINATION (CRITICAL) ===
 2. Citation format after EVERY quantitative claim:
      - Silver numeric   → [Silver: <lineage_anchor>]
      - Gold qualitative → [Gold: <bronze_ref>]
-3. If a claim cannot be cited, write "INSUFFICIENT DATA" for that bullet — never
+3. `iv_regime_block` is INTERNAL CONTROL CONTEXT, not a Silver data anchor.
+   NEVER write [Silver: iv_regime_block].
+4. For IV-regime evidence, cite real Silver metrics only:
+     [Silver: latest_atm_iv], [Silver: latest_atm_iv_rank_pct], [Silver: pcr_volume]
+5. If a claim cannot be cited, write "INSUFFICIENT DATA" for that bullet — never
    fabricate.
-4. Numbers in your draft MUST match the Silver values exactly to the decimal
+6. Numbers in your draft MUST match the Silver values exactly to the decimal
    shown. The Checker Agent will reject drift beyond 2% relative tolerance.
+7. If a number is not present in SILVER CONTEXT, write "INSUFFICIENT DATA" for that bullet — never
+   fabricate.
 """
 
 MACRO_CHAIN_DIRECTIVE = """=== MACRO → MESO → MICRO FRAMEWORK (mandatory) ===
@@ -91,6 +97,9 @@ insider data as context, not signal.
 
 IV_REGIME_DIRECTIVE = """=== IV REGIME DISCIPLINE (non-negotiable) ===
 The current IV regime is computed deterministically and injected as `iv_regime_block`.
+Regime source priority:
+  - Primary: `latest_atm_iv_rank_pct` (rolling percentile from Silver history)
+  - Secondary context: `latest_atm_iv`, `pcr_volume`, `pcr_status`
 Your strategy MUST be regime-compatible:
   - HIGH IV  → harvest premium (credit spreads, iron condors, covered calls).
   - LOW  IV  → buy cheap optionality (long calls, protective puts, debit spreads).
@@ -125,12 +134,13 @@ def get_analyst_prompt() -> ChatPromptTemplate:
         f"{TEMPORAL_DECAY_DIRECTIVE}\n"
         f"{DATA_LINEAGE_DIRECTIVE}\n"
         "=== OUTPUT FORMAT ===\n"
-        "Produce a Markdown report with sections in this exact order:\n"
-        "  ## 1. Macro Regime Snapshot\n"
-        "  ## 2. Transmission Channel (Meso)\n"
-        "  ## 3. IV Regime & Structural Choice\n"
-        "  ## 4. Trade Idea(s)  (ticker, direction, structure, strike, DTE, rationale, risk)\n"
-        "  ## 5. Key Catalysts & Invalidation Levels\n"
+        "Produce a compact Markdown brief in EXACTLY 5 lines, one line per section:\n"
+        "  1) Macro Regime Snapshot\n"
+        "  2) Transmission Channel (Meso)\n"
+        "  3) IV Regime & Structural Choice\n"
+        "  4) Trade Idea\n"
+        "  5) Key Catalysts & Invalidation\n"
+        "Keep each line terse but factual. Always include lineage citations where needed.\n"
     )
 
     human_template = (
@@ -140,8 +150,8 @@ def get_analyst_prompt() -> ChatPromptTemplate:
         "=== SILVER CONTEXT (quantitative, source of truth for numbers) ===\n{silver_block}\n\n"
         "=== GOLD CONTEXT (qualitative — SEC / news / GPR) ===\n{gold_block}\n\n"
         "{revision_block}\n"
-        "Produce the Markdown strategy report now, obeying Macro → Meso → Micro "
-        "and the lineage citation rules."
+        "Word budget is strict: 50-80 words total (inclusive). "
+        "Do NOT exceed 80 words. Use concise financial notation and keep all key facts."
     )
 
     return ChatPromptTemplate.from_messages([
@@ -209,6 +219,11 @@ def get_checker_prompt() -> ChatPromptTemplate:
         "   Prefix violation with [rule:GOLD_CONTRADICTION].\n"
         "8. KEY METRIC OMISSION: If Silver has atm_iv, pcr_volume, or gpr_index_level\n"
         "   but the draft omits both the value and any INSUFFICIENT DATA note, Minor.\n"
+        "9. SUMMARIZATION IS ALLOWED: The draft may paraphrase/summarize Gold text.\n"
+        "   Do NOT require verbatim wording. Only validate (a) citation ID exists,\n"
+        "   and (b) the summarized claim is not contradicted by provided Gold snippets.\n"
+        "10. Placeholder labels like GOLD_CONTEXT / SILVER_CONTEXT are never valid IDs;\n"
+        "    valid IDs must come from the provided citation pool only.\n"
         "\n"
         "Return a CheckerResult. If is_passed=True, violations MUST be empty."
     )
@@ -266,6 +281,7 @@ def get_critic_prompt() -> ChatPromptTemplate:
         "     - HIGH IV  → long premium is penalised; prefer credit spreads / condors.\n"
         "     - LOW  IV  → short premium is penalised; prefer long optionality.\n"
         "     - NORMAL   → direction-first; structure must be justified.\n"
+        "     - UNKNOWN  → insufficient regime signal; this can be Minor at most, NEVER Fatal.\n"
         "   Direct contradiction → Fatal. Suboptimal but not contradictory → Minor.\n"
         "2. Macro Contradiction — compare directional bias to [MACRO ENVIRONMENT].\n"
         "   Direct contradiction → Fatal. Macro headwind acknowledged → Minor note.\n"
@@ -276,6 +292,9 @@ def get_critic_prompt() -> ChatPromptTemplate:
         "=== HARD CONSTRAINTS ===\n"
         "- Never challenge a numeric value — that is the Checker's job.\n"
         "- Never request more data — work only with what is provided.\n"
+        "- If iv_regime is UNKNOWN, you MUST NOT return a Fatal `iv_regime_fit` issue.\n"
+        "- If insider_confidence.verdict is NOISE, you MUST NOT return a Fatal `insider_signal_weakness` issue.\n"
+        "- For macro_contradiction, uncertain phrasing (might/could/may/possible) is Minor, not Fatal.\n"
         "- Return a CriticResult with is_passed, issues (Fatal only), minor_suggestions."
     )
 
