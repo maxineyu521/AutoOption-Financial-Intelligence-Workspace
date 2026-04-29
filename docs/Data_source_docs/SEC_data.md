@@ -15,7 +15,7 @@ SEC EDGAR REST API
         │
         ▼
 [Phase A] sec_ingestion.py
-        │  • CIK resolution from config/SEC_Ingestion/ticker_to_cik.json
+        │  • CIK resolution via Scripts.core.universe (reference mapping)
         │  • Form 4 (XML) → structured transaction rows
         │  • Form 8-K (HTML) → markdownified, optionally item-chunked
         │  • 7-day rolling window; exponential-backoff on HTTP 429
@@ -25,13 +25,13 @@ SEC EDGAR REST API
         │
         ▼
 [Phase B] sec_processor.py
-        │  • Dedup via global_processed_registry.json
+        │  • Dedup via config/runtime/sec_processed_registry.json
         │  • Form 4  → rule-based tone score + C-suite / 10b5-1 adjustments
-        │  • Form 8-K → options-expert-v1 / llama3 LLM (JSON mode) summary
+        │  • Form 8-K → ingestion-role Ollama model (JSON mode) summary
         │  • ThreadPoolExecutor (max_workers=4) for LLM-bound concurrency
         │
         ▼  Data/3_Gold_Semantic/SEC_Insider_Trades/{YYYY-MM-DD}/qdrant_ready.jsonl
-           config/SEC_Processing/global_processed_registry.json  (updated)
+           config/runtime/sec_processed_registry.json  (updated)
 ```
 
 ---
@@ -42,7 +42,7 @@ SEC EDGAR REST API
 
 | Step | Strategy |
 |:---|:---|
-| **Ticker universe** | Loaded from `config/SEC_Ingestion/SEC_tickers.json`; mapped to CIK via `config/SEC_Ingestion/ticker_to_cik.json` |
+| **Ticker universe** | Loaded from `Scripts.core.universe` role `sec.filers`; CIK mapping resolved from reference map via UniverseLoader |
 | **EDGAR query** | `GET data.sec.gov/submissions/CIK{cik}.json` → filter `filingDate` within last 7 days for Form 4 and 8-K |
 | **Form 4 parse** | Fetch document XML, extract `reportingOwner`, `role`, `nonDerivativeTransaction[]` (shares, prices, codes, 10b5-1 flags) |
 | **8-K parse** | Fetch HTML, `BeautifulSoup` strip → `markdownify` → optional split by `Item X.XX` headers into chunks |
@@ -53,9 +53,9 @@ SEC EDGAR REST API
 
 | Step | Strategy |
 |:---|:---|
-| **Dedup guard** | Load `global_processed_registry.json` as a set; skip any row whose `accession_no` is already present |
+| **Dedup guard** | Load `config/runtime/sec_processed_registry.json` as a set; skip any row whose `accession_no` is already present |
 | **Form 4 scoring** | Net-value tone (positive = buy signal); 10b5-1 planned-sale discount (−1); C-suite multipliers (+2 buy / −2 sell); zero-dollar vesting → `ACQUIRE/VEST` |
-| **8-K LLM** | `ChatOllama(model="options-expert-v1:latest", format="json")` → strict JSON with `summary`, `transaction_date`, `tone_score`, `topics` |
+| **8-K LLM** | `ChatOllama(model=OLLAMA_INGESTION_MODEL, format="json")` with env fallback (`OLLAMA_ROUTER_MODEL` or `llama3:latest`) → strict JSON with `summary`, `transaction_date`, `tone_score`, `topics` |
 | **Concurrency** | `ThreadPoolExecutor(max_workers=4)` — each future processes one Bronze row |
 | **Registry update** | Append `accession_no` to registry file after each successful Gold write |
 
@@ -70,7 +70,7 @@ SEC EDGAR REST API
 | **Bronze JSONL** | `Data/1_Bronze_Raw/SEC_Parsed_JSON/{YYYY-MM-DD}/{TICKER}.jsonl` |
 | **Bronze summary** | `Data/1_Bronze_Raw/SEC_Parsed_JSON/{YYYY-MM-DD}/_SUMMARY.json` |
 | **Gold JSONL** | `Data/3_Gold_Semantic/SEC_Insider_Trades/{YYYY-MM-DD}/qdrant_ready.jsonl` |
-| **Registry** | `config/SEC_Processing/global_processed_registry.json` |
+| **Registry** | `config/runtime/sec_processed_registry.json` |
 | **Ingestion log** | `logs/{YYYY-MM-DD}/SEC_Ingestion/ingestion_progress_{YYYY-MM-DD}.log` |
 
 ### Bronze JSONL Schema (per line)
@@ -108,57 +108,87 @@ SEC EDGAR REST API
 
 ---
 
-## 5. How to Test
+## 5. Strategy Selection Rationale (Why This Architecture Works)
 
-### Validate Bronze output
+### 5.1 Why 8-K Requires a Different Parsing Strategy
+Form 8-K is a high-noise document class: legal boilerplate, dense HTML tables, signature blocks, and repetitive headers can dilute the actual event signal. A naive `soup.get_text()` flattening step tends to:
+- destroy table semantics,
+- mix legal disclaimers with event text,
+- increase hallucination risk in downstream LLM summarization.
 
-```bash
-python Scripts/data_collection/scrapers/sec_ingestion.py
-# Expected: Data/1_Bronze_Raw/SEC_Parsed_JSON/{today}/{TICKER}.jsonl for each ticker
-```
+The chosen strategy favors **signal isolation before generation**:
+- keep meaningful structure in Markdown,
+- reduce noise before model inference,
+- preserve event granularity for retrieval.
 
-### Validate Gold processing
+### 5.2 8-K Normalization Standards
+1. **Semantic item chunking (`Item X.XX`)**
+   - 8-K filings are legally organized by event class (`Item 1.01`, `Item 2.02`, `Item 8.01`, etc.).
+   - `sec_ingestion.py` splits markdown text with item-aware regex and stores per-item chunks when available.
+   - Why: lowers token waste, improves event-local summaries, and enables more precise retrieval filtering.
 
-```bash
-python Scripts/data_collection/processors/sec_processor.py
-# Expected: Data/3_Gold_Semantic/SEC_Insider_Trades/{today}/qdrant_ready.jsonl
-```
+2. **Table-aware content preservation**
+   - 8-K often embeds event-critical numbers in HTML tables.
+   - The pipeline converts HTML to Markdown to retain row/column readability for model understanding.
+   - Why: preserves relational meaning that plain text flattening would destroy.
 
-### Inspect accession registry
+3. **Boilerplate suppression by structure**
+   - Script/style/head and non-semantic blocks are removed before markdown conversion.
+   - Item-based slicing naturally deprioritizes repetitive filing headers/footers and signature tails.
+   - Why: reduces legal-noise contamination and improves summary-to-signal ratio.
 
-```python
-import json
-reg = json.load(open("config/SEC_Processing/global_processed_registry.json"))
-print(f"Registry size: {len(reg)} accessions")
-```
+### 5.3 Why Form 4 Uses Rule-First Scoring
+Insider transactions have explicit machine-readable fields in XML. For this domain, deterministic rules are more reliable than free-form generation for directional labeling.
 
-### Qdrant retrieval smoke test (post-ingestion)
+The rule-first design in `sec_processor.py` uses:
+- transaction-code polarity (`P` buy vs `S` sell),
+- 10b5-1 planned-trade adjustments,
+- C-suite role weighting,
+- neutral handling for vesting/tax mechanics.
 
-```bash
-# Run after Qdrant_Ingestion.py has upserted the Gold JSONL
-python -m Scripts.tests.test_master_retriever
-# Query: "Any recent AAPL insider trades?"
-# Expected: gold_chunks > 0, source_type="sec", form_type="4"
-```
+Why: better calibration, lower variance, and auditability aligned with compliance-style workflows.
 
 ---
 
-## 6. Dependencies
+## 6. Metadata-to-Signal Design (How Trade Intelligence Is Constructed)
 
-| Library | Phase | Purpose |
-|:---|:---|:---|
-| `requests` | A | EDGAR HTTP calls |
-| `beautifulsoup4` | A | HTML stripping for 8-K |
-| `markdownify` | A | HTML → Markdown conversion |
-| `python-dotenv` | A + B | `.env` loading (`SEC_USER_AGENT`) |
-| `langchain-ollama` | B | LLM 8-K summarisation |
+### 6.1 Metadata Is Not Storage Overhead; It Is the Signal Interface
+Gold-layer SEC records use **text synthesis + metadata payload** as a dual-channel representation:
+- **Text** captures natural-language event context for semantic retrieval.
+- **Metadata** captures machine-enforceable facts for filtering, weighting, and temporal grounding.
 
-```bash
-# Phase A
-pip install requests beautifulsoup4 markdownify python-dotenv
+Without metadata constraints, retrieval quality degrades under mixed-source RAG because regulatory, macro, and options data compete in the same vector space.
 
-# Phase B (plus local Ollama with options-expert-v1 or llama3)
-pip install langchain-ollama python-dotenv
-```
+### 6.2 Core Transaction Fields and Why They Matter
+1. **`transactionCode` (Primary directional key)**
+   - `P` (open-market purchase): strongest insider bullish evidence.
+   - `S` (open-market sale): strongest insider bearish evidence.
+   - `M` / `F`: typically vesting/tax mechanics; often operationally neutral.
+   - Rationale: not all "acquisitions" or "sales" carry equal predictive value.
 
-**Required environment variable:** `SEC_USER_AGENT` — e.g. `"CompanyName contact@email.com"` (SEC fair-access policy requires a valid identifier in every request header).
+2. **10b5-1 plan detection (`is_10b5_1_planned`)**
+   - Extracted from Form 4 footnotes.
+   - If sale is preplanned, negative interpretation is discounted in scoring.
+   - Rationale: separates discretionary selling from scheduled liquidity events.
+
+3. **Post-transaction ownership (`post_transaction_shares`)**
+   - Captures holdings remaining after execution.
+   - Rationale: "sold shares" is incomplete without "what remains"; residual ownership changes conviction.
+
+4. **Officer seniority (`role` / `officerTitle`)**
+   - CEO/CFO/C-suite actions receive higher directional weight than lower-tier officers.
+   - Rationale: information depth and signaling impact are role-dependent.
+
+### 6.3 Retrieval-Critical Metadata for Production RAG
+- **`source_type="sec"`**: enables hard source filtering in the retriever.
+- **`form_type`**: separates insider flow (`4`) from event disclosures (`8-K`).
+- **`accession_no`**: deduplication and lineage-safe replay.
+- **`transaction_date` + `unified_timestamp`**: supports natural-language time intent and numeric range filters.
+- **`topics`, `tone_score`, `action_direction`**: compact downstream features for routing and evidence ranking.
+
+### 6.4 Design Principle for Gold Layer
+The SEC Gold contract intentionally combines:
+- **Natural-language synthesis** for context richness,
+- **Structured metadata payload** for deterministic control.
+
+This hybrid contract is the reason SEC signals remain both interpretable to users and controllable by retrieval logic.
