@@ -1,0 +1,196 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1250 1350" style="background-color: #f8fafc; font-family: 'Segoe UI', system-ui, sans-serif;">
+  <defs>
+    <!-- Arrowheads -->
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b" />
+    </marker>
+    <marker id="arrow-hybrid" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b5cf6" />
+    </marker>
+    <marker id="arrow-vector" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f59e0b" />
+    </marker>
+    <marker id="arrow-sql" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0ea5e9" />
+    </marker>
+
+    <!-- Drop Shadows -->
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-opacity="0.05" />
+    </filter>
+    <filter id="shadow-heavy" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-opacity="0.1" />
+    </filter>
+
+    <!-- Gradients -->
+    <linearGradient id="bg-retrieval" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#faf5ff" />
+      <stop offset="100%" stop-color="#f3e8ff" />
+    </linearGradient>
+    <linearGradient id="bg-silver" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f1f5f9" />
+      <stop offset="100%" stop-color="#e2e8f0" />
+    </linearGradient>
+    <linearGradient id="bg-gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fef3c7" />
+      <stop offset="100%" stop-color="#fde68a" />
+    </linearGradient>
+  </defs>
+
+  <!-- Title -->
+  <text x="625" y="45" font-size="32" font-weight="800" fill="#0f172a" text-anchor="middle">Retrieval Phase Workflow Architecture</text>
+  <text x="625" y="70" font-size="16" font-weight="500" fill="#64748b" text-anchor="middle">Master Retriever: Intelligent Routing, Compensation, and Deterministic Execution</text>
+
+  <!-- Main Container -->
+  <rect x="30" y="100" width="1190" height="1200" rx="16" fill="url(#bg-retrieval)" stroke="#d8b4fe" stroke-width="2" filter="url(#shadow)" />
+
+  <!-- ========================================== -->
+  <!-- 1. USER INPUT & INTENT SEPARATION          -->
+  <!-- ========================================== -->
+  <rect x="375" y="130" width="500" height="60" rx="8" fill="#ffffff" stroke="#c084fc" filter="url(#shadow)" />
+  <text x="625" y="155" font-size="14" font-weight="600" fill="#6b7280" text-anchor="middle">User Natural Language Query</text>
+  <text x="625" y="175" font-size="16" font-weight="800" fill="#4c1d95" text-anchor="middle">User Intent (Extracted Subject/Goal)</text>
+  
+  <path d="M 625 190 L 625 210" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
+
+  <!-- ========================================== -->
+  <!-- 2. TRANSFORMATION & GUARDRAILS             -->
+  <!-- ========================================== -->
+  <rect x="150" y="210" width="950" height="180" rx="8" fill="#ffffff" stroke="#e2e8f0" filter="url(#shadow)" />
+  <text x="170" y="235" font-size="18" font-weight="800" fill="#334155">A. Query Intent and Transformation Pipeline</text>
+  <text x="170" y="255" font-size="12" fill="#475569">Translates unstructured questions into deterministic, safe retrieval controls. Guarantees pipeline remains operational under model failures.</text>
+  
+  <!-- Classification Block -->
+  <rect x="170" y="275" width="280" height="90" rx="6" fill="#f8fafc" stroke="#cbd5e1" />
+  <text x="310" y="295" font-size="13" font-weight="800" fill="#4c1d95" text-anchor="middle">1. Intent Classification</text>
+  <text x="180" y="315" font-size="11" fill="#475569">• Primary: Ollama (llama3:latest)</text>
+  <text x="180" y="330" font-size="11" fill="#475569">• Fallback: gpt-4o-mini</text>
+  <text x="180" y="345" font-size="11" fill="#b45309" font-weight="700">• Failure Default: hybrid_both</text>
+
+  <!-- Stage 1 Block -->
+  <rect x="470" y="275" width="300" height="90" rx="6" fill="#f8fafc" stroke="#cbd5e1" />
+  <text x="620" y="295" font-size="13" font-weight="800" fill="#0369a1" text-anchor="middle">2. Stage 1: Metadata Extraction</text>
+  <text x="480" y="315" font-size="11" fill="#475569">• Enforces strict Ticker Allowlists</text>
+  <text x="480" y="330" font-size="11" fill="#475569">• Normalizes Time Window guardrails</text>
+  <text x="480" y="345" font-size="11" fill="#475569">• Explosion Caps (limits max tickers)</text>
+
+  <!-- Stage 2 Block -->
+  <rect x="790" y="275" width="290" height="90" rx="6" fill="#f8fafc" stroke="#cbd5e1" />
+  <text x="935" y="295" font-size="13" font-weight="800" fill="#b45309" text-anchor="middle">3. Stage 2: HyDE Generation</text>
+  <text x="800" y="315" font-size="11" fill="#475569">• Expands semantic conceptual range</text>
+  <text x="800" y="330" font-size="11" fill="#475569">• Generates paragraph &amp; rerank query</text>
+  <text x="800" y="345" font-size="11" fill="#dc2626" font-weight="700">• Fallback: Deterministic text synthesis</text>
+
+  <path d="M 625 390 L 625 410" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
+
+  <!-- ========================================== -->
+  <!-- 3. TEMPORAL ADAPTER                        -->
+  <!-- ========================================== -->
+  <rect x="150" y="410" width="950" height="70" rx="8" fill="#ffffff" stroke="#e2e8f0" filter="url(#shadow)" />
+  <text x="170" y="435" font-size="16" font-weight="800" fill="#334155">B. Temporal Integrity (Time Adapter)</text>
+  <text x="170" y="455" font-size="12" fill="#475569">Compiles one human timeframe (e.g., "past month") into multiple source-specific `TimePredicates` (DuckDB + Qdrant aligned).</text>
+  <text x="170" y="470" font-size="12" fill="#475569">Applies business-day alignment for daily market data and month-safe widening for macro reports to prevent blind spots.</text>
+
+  <path d="M 625 480 L 625 500" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
+
+  <!-- ========================================== -->
+  <!-- 4. ROUTING SWITCHBOARD & COMPENSATION      -->
+  <!-- ========================================== -->
+  <rect x="75" y="500" width="1100" height="170" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6" filter="url(#shadow)" />
+  <text x="625" y="530" font-size="18" font-weight="800" fill="#0f172a" text-anchor="middle">C. Execution Routing &amp; Entity Compensation Strategy</text>
+
+  <!-- Route: SQL Only -->
+  <rect x="95" y="550" width="320" height="70" rx="6" fill="#f0f9ff" stroke="#7dd3fc" />
+  <text x="255" y="570" font-size="14" font-weight="800" fill="#0284c7" text-anchor="middle">Route: sql_only</text>
+  <text x="105" y="590" font-size="11" fill="#0c4a6e">• Silver executes Primary Data pull.</text>
+  <text x="105" y="605" font-size="11" fill="#0c4a6e">• Gold probes with strict <tspan font-weight="700">top_k=2</tspan> as semantic hedge.</text>
+  <path d="M 255 620 L 255 710 L 320 710" stroke="#0ea5e9" stroke-width="3" fill="none" marker-end="url(#arrow-sql)" />
+  <path d="M 255 620 L 255 710 L 820 710" stroke="#0ea5e9" stroke-width="3" stroke-dasharray="4" fill="none" marker-end="url(#arrow-sql)" />
+
+  <!-- Route: Hybrid Both -->
+  <rect x="465" y="550" width="320" height="70" rx="6" fill="#f5f3ff" stroke="#c4b5fd" />
+  <text x="625" y="570" font-size="14" font-weight="800" fill="#6d28d9" text-anchor="middle">Route: hybrid_both</text>
+  <text x="475" y="590" font-size="11" fill="#4c1d95">• Gold retrieves full context (<tspan font-weight="700">top_k=5</tspan>).</text>
+  <text x="475" y="605" font-size="11" fill="#4c1d95">• Silver executes Primary + Optional Compensation.</text>
+  <path d="M 625 620 L 625 670 L 320 670" stroke="#8b5cf6" stroke-width="3" fill="none" marker-end="url(#arrow-hybrid)" />
+  <path d="M 625 620 L 625 670 L 820 670" stroke="#8b5cf6" stroke-width="3" fill="none" marker-end="url(#arrow-hybrid)" />
+
+  <!-- Route: Vector Only -->
+  <rect x="835" y="550" width="320" height="70" rx="6" fill="#fffbeb" stroke="#fde047" />
+  <text x="995" y="570" font-size="14" font-weight="800" fill="#d97706" text-anchor="middle">Route: vector_only</text>
+  <text x="845" y="590" font-size="11" fill="#78350f">• Gold executes Primary (<tspan font-weight="700">top_k=5</tspan>).</text>
+  <text x="845" y="605" font-size="11" fill="#78350f">• Silver executes Compensation-first policy only.</text>
+  <path d="M 995 620 L 995 690 L 820 690" stroke="#f59e0b" stroke-width="3" fill="none" marker-end="url(#arrow-vector)" />
+  <path d="M 995 620 L 995 690 L 320 690" stroke="#f59e0b" stroke-width="3" stroke-dasharray="4" fill="none" marker-end="url(#arrow-vector)" />
+
+  <!-- Compensation Strategy Note Box -->
+  <rect x="275" y="635" width="700" height="50" rx="8" fill="#ffedd5" stroke="#fdba74" filter="url(#shadow)" />
+  <text x="625" y="655" font-size="12" font-weight="800" fill="#c2410c" text-anchor="middle">⭐ Strategy: Metadata &amp; Entity Compensation</text>
+  <text x="625" y="670" font-size="11" fill="#9a3412" text-anchor="middle">HyDE-derived novel tickers are extracted and queried in an isolated "compensation context".</text>
+  <text x="625" y="683" font-size="11" fill="#9a3412" text-anchor="middle">This provides semantic richness without contaminating the Primary Silver deterministic numeric truth.</text>
+
+
+  <!-- ========================================== -->
+  <!-- 5. SILVER & GOLD DATABASES                 -->
+  <!-- ========================================== -->
+
+  <!-- SILVER RETRIEVAL -->
+  <rect x="50" y="740" width="550" height="350" rx="12" fill="url(#bg-silver)" stroke="#94a3b8" filter="url(#shadow)" />
+  <text x="325" y="775" font-size="20" font-weight="800" fill="#334155" text-anchor="middle">D. Deterministic Silver Retrieval</text>
+  <text x="325" y="795" font-size="13" fill="#475569" text-anchor="middle">(Structured SQL Queries via DuckDB Parquet Files)</text>
+
+  <rect x="80" y="815" width="490" height="50" rx="6" fill="#ffffff" stroke="#cbd5e1" />
+  <text x="95" y="835" font-size="13" font-weight="800" fill="#475569">1. Dispatcher &amp; Strict Matching</text>
+  <text x="95" y="853" font-size="11" fill="#64748b">Routes exactly matching tickers to Options, Macro, or GPR metric handlers.</text>
+
+  <rect x="80" y="875" width="490" height="50" rx="6" fill="#ffffff" stroke="#cbd5e1" />
+  <text x="95" y="895" font-size="13" font-weight="800" fill="#475569">2. Execution Namespaces</text>
+  <text x="95" y="913" font-size="11" fill="#64748b">Maintains strict separation between "Primary Query" and "Compensation Data".</text>
+
+  <rect x="80" y="935" width="490" height="60" rx="6" fill="#fffbeb" stroke="#fde68a" />
+  <text x="95" y="955" font-size="13" font-weight="800" fill="#b45309">⭐ Strategy: Lineage Anchors &amp; Fault Tolerance</text>
+  <text x="95" y="973" font-size="11" fill="#78350f">Explicit audit trail anchors map back to Bronze layer files.</text>
+  <text x="95" y="987" font-size="11" fill="#78350f">Runs on independent timeout budget to prevent DB locks crashing pipeline.</text>
+
+
+  <!-- GOLD RETRIEVAL -->
+  <rect x="650" y="740" width="550" height="350" rx="12" fill="url(#bg-gold)" stroke="#fbbf24" filter="url(#shadow)" />
+  <text x="925" y="775" font-size="20" font-weight="800" fill="#92400e" text-anchor="middle">E. Semantic Gold Vector Search</text>
+  <text x="925" y="795" font-size="13" fill="#b45309" text-anchor="middle">(Unstructured Qdrant Hybrid Semantic Retrieval)</text>
+
+  <rect x="680" y="815" width="490" height="40" rx="6" fill="#ffffff" stroke="#fde68a" />
+  <text x="695" y="840" font-size="13" font-weight="800" fill="#92400e">1. Smart Pre-Filter:</text>
+  <text x="835" y="840" font-size="12" fill="#b45309">Strict Time &amp; Metadata filtering before vector math.</text>
+
+  <rect x="680" y="865" width="240" height="40" rx="6" fill="#ffffff" stroke="#fde68a" />
+  <text x="800" y="883" font-size="12" font-weight="800" fill="#92400e" text-anchor="middle">2a. Dense Prefetch (HyDE)</text>
+  <text x="800" y="897" font-size="10" fill="#b45309" text-anchor="middle">Captures abstract semantic proximity</text>
+
+  <rect x="930" y="865" width="240" height="40" rx="6" fill="#ffffff" stroke="#fde68a" />
+  <text x="1050" y="883" font-size="12" font-weight="800" fill="#92400e" text-anchor="middle">2b. Sparse Prefetch (SPLADE)</text>
+  <text x="1050" y="897" font-size="10" fill="#b45309" text-anchor="middle">Tracks exact financial acronyms/tickers</text>
+
+  <rect x="680" y="915" width="490" height="40" rx="6" fill="#ffffff" stroke="#fde68a" />
+  <text x="695" y="940" font-size="13" font-weight="800" fill="#92400e">3. Server-side RRF Fusion &amp; Cross-Encoder Rerank</text>
+
+  <rect x="680" y="965" width="490" height="60" rx="6" fill="#fffbeb" stroke="#fde68a" />
+  <text x="695" y="985" font-size="13" font-weight="800" fill="#b45309">⭐ Strategy: Asymmetric Recall &amp; Degradation</text>
+  <text x="695" y="1003" font-size="11" fill="#78350f">Prefetch pulls limit=top_k*2 before reranking slices top 2 or 5.</text>
+  <text x="695" y="1017" font-size="11" fill="#78350f">Graceful constraint degradation (e.g., drop ticker) if results are empty.</text>
+
+
+  <!-- ========================================== -->
+  <!-- 6. CONTEXT ASSEMBLY                        -->
+  <!-- ========================================== -->
+  <path d="M 325 1090 L 325 1130 L 610 1130" stroke="#64748b" stroke-width="3" />
+  <path d="M 925 1090 L 925 1130 L 640 1130" stroke="#64748b" stroke-width="3" />
+  <path d="M 625 1130 L 625 1150" stroke="#64748b" stroke-width="3" marker-end="url(#arrow)" />
+
+  <rect x="325" y="1150" width="600" height="100" rx="12" fill="#ffffff" stroke="#3b82f6" stroke-width="3" filter="url(#shadow-heavy)" />
+  <text x="625" y="1180" font-size="20" font-weight="800" fill="#1e3a8a" text-anchor="middle">F. Unified Context Payload Assembly</text>
+  <text x="625" y="1205" font-size="14" fill="#334155" text-anchor="middle">Merges Gold context, Silver primary, Silver compensation, and latency metrics.</text>
+  
+  <rect x="425" y="1215" width="400" height="25" rx="4" fill="#f0f9ff" />
+  <text x="625" y="1232" font-size="12" font-weight="700" fill="#0369a1" text-anchor="middle">Status is explicitly tagged (success vs partial_failure)</text>
+  
+</svg>

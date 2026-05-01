@@ -1,0 +1,212 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 1550" style="background-color: #f8fafc; font-family: 'Segoe UI', system-ui, sans-serif;">
+  <defs>
+    <marker id="arrow-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b" />
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#10b981" />
+    </marker>
+    <marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#ef4444" />
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3b82f6" />
+    </marker>
+    <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f97316" />
+    </marker>
+
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-opacity="0.05" />
+    </filter>
+    <filter id="shadow-heavy" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-opacity="0.1" />
+    </filter>
+
+    <linearGradient id="bg-agent" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fff7ed" />
+      <stop offset="100%" stop-color="#ffedd5" />
+    </linearGradient>
+    <linearGradient id="bg-frontend" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f0fdfa" />
+      <stop offset="100%" stop-color="#ccfbf1" />
+    </linearGradient>
+  </defs>
+
+  <text x="750" y="45" font-size="32" font-weight="800" fill="#0f172a" text-anchor="middle">Multi-Agent Reasoning &amp; Frontend Runtime Architecture</text>
+  <text x="750" y="70" font-size="16" font-weight="500" fill="#64748b" text-anchor="middle">LangGraph Peer-Review State Machine (router.py) and State Protocol (state.py)</text>
+
+  <rect x="300" y="110" width="800" height="1060" rx="16" fill="url(#bg-agent)" stroke="#fdba74" stroke-width="2" filter="url(#shadow)" />
+  <text x="700" y="150" font-size="20" font-weight="800" fill="#9a3412" text-anchor="middle">III. Multi-Agent Reasoning Loop (The "Brain")</text>
+
+  <rect x="340" y="180" width="720" height="120" rx="8" fill="#ffffff" stroke="#94a3b8" filter="url(#shadow)" />
+  <text x="360" y="205" font-size="16" font-weight="800" fill="#334155">0. Node Retrieval Master (Graph Entrypoint)</text>
+  <text x="360" y="225" font-size="11" fill="#475569">Atomically handles intent classification, metadata extraction, and Gold/Silver concurrency.</text>
+  
+  <rect x="360" y="240" width="680" height="50" rx="6" fill="#f0f9ff" stroke="#bae6fd" />
+  <text x="375" y="258" font-size="11" font-weight="800" fill="#0369a1">⭐ Global Context &amp; Fallback Injections:</text>
+  <text x="375" y="272" font-size="10" fill="#0c4a6e">• Reads `latest_macro_context.md` into `state["macro_context"]` so all nodes share the same macro preamble.</text>
+  <text x="375" y="284" font-size="10" fill="#0c4a6e">• Automatically applies default time-window fallbacks if the user query lacks a specific temporal anchor.</text>
+
+  <path d="M 700 300 L 700 330" stroke="#64748b" stroke-width="2" marker-end="url(#arrow-gray)" />
+
+  <rect x="340" y="330" width="720" height="120" rx="8" fill="#ffffff" stroke="#ea580c" stroke-width="2" filter="url(#shadow)" />
+  <text x="360" y="355" font-size="16" font-weight="800" fill="#c2410c">1. Node Analyst (Strategy Drafting)</text>
+  <text x="360" y="375" font-size="11" fill="#475569">Synthesizes context into `draft_report`. Increments `revision_count` to track loop depth.</text>
+  
+  <rect x="360" y="390" width="680" height="50" rx="6" fill="#fffbeb" stroke="#fde68a" />
+  <text x="375" y="408" font-size="11" font-weight="800" fill="#b45309">⭐ Strategy: IV Regime Pinning &amp; Revision Memory</text>
+  <text x="375" y="422" font-size="10" fill="#78350f">• Locks `iv_regime_pinned` baseline on first pass to prevent thesis oscillation during rewrites.</text>
+  <text x="375" y="434" font-size="10" fill="#78350f">• Converts append-only `critic_feedback` into a structured block to resolve prior failures systemically.</text>
+
+  <path d="M 700 450 L 700 480" stroke="#64748b" stroke-width="2" marker-end="url(#arrow-gray)" />
+
+  <rect x="340" y="480" width="720" height="135" rx="8" fill="#ffffff" stroke="#3b82f6" stroke-width="2" filter="url(#shadow)" />
+  <text x="360" y="505" font-size="16" font-weight="800" fill="#1d4ed8">2. Node Checker ("Blue Team" Factual Gatekeeper)</text>
+  <text x="360" y="525" font-size="11" fill="#475569">Blocks fabricated numbers or invalid citations. Returns O(1) routing verdict (`pass`, `fatal`, `minor`).</text>
+  
+  <rect x="360" y="540" width="680" height="65" rx="6" fill="#eff6ff" stroke="#bfdbfe" />
+  <text x="375" y="557" font-size="11" font-weight="800" fill="#1e40af">⭐ Strategy: Ground Truth Auditing &amp; Anti-Data Shift</text>
+  <text x="375" y="571" font-size="10" fill="#1e3a8a">• Checks all numeric claims specifically against `silver_context_frozen` (the immutable ground truth).</text>
+  <text x="375" y="583" font-size="10" fill="#1e3a8a">• Validates citation IDs strictly against the `VALID_ANCHORS` whitelist to prevent source hallucination.</text>
+  <text x="375" y="595" font-size="10" font-weight="700" fill="#1e3a8a">If validation fails, marks `checker_verdict="fatal"` to trigger immediate rewrite.</text>
+
+  <path d="M 700 615 L 700 660" stroke="#10b981" stroke-width="3" marker-end="url(#arrow-green)" />
+  <rect x="710" y="625" width="70" height="20" rx="4" fill="#d1fae5" />
+  <text x="745" y="639" font-size="10" font-weight="700" fill="#047857" text-anchor="middle">Pass/Minor</text>
+
+  <path d="M 340 545 C 200 545, 200 390, 330 390" fill="none" stroke="#ef4444" stroke-width="3" stroke-dasharray="6" marker-end="url(#arrow-red)" />
+  <rect x="150" y="455" width="100" height="25" rx="4" fill="#fee2e2" stroke="#f87171" filter="url(#shadow)" />
+  <text x="200" y="472" font-size="11" font-weight="800" fill="#dc2626" text-anchor="middle">Fatal (Rewrite)</text>
+
+
+  <rect x="340" y="660" width="720" height="120" rx="8" fill="#ffffff" stroke="#ef4444" stroke-width="2" filter="url(#shadow)" />
+  <text x="360" y="685" font-size="16" font-weight="800" fill="#b91c1c">3. Node Critic ("Red Team" Logic Auditor)</text>
+  <text x="360" y="705" font-size="11" fill="#475569">Assumes numbers are correct (Checker passed). Stress-tests logic, risk posture, and regime mismatches.</text>
+  
+  <rect x="360" y="720" width="680" height="50" rx="6" fill="#fef2f2" stroke="#fecaca" />
+  <text x="375" y="737" font-size="11" font-weight="800" fill="#991b1b">⭐ Strategy: Actionability Gates &amp; Feedback Partitioning</text>
+  <text x="375" y="751" font-size="10" fill="#7f1d1d">• Separates blocking logic errors (`critic_feedback`) from non-blocking polish (`critic_minor_suggestions`).</text>
+  <text x="375" y="763" font-size="10" fill="#7f1d1d">• Employs deterministic actionability gates to prevent getting stuck in endless false-fatal loops.</text>
+
+  <path d="M 700 780 L 700 820" stroke="#10b981" stroke-width="3" marker-end="url(#arrow-green)" />
+  <rect x="710" y="790" width="70" height="20" rx="4" fill="#d1fae5" />
+  <text x="745" y="804" font-size="10" font-weight="700" fill="#047857" text-anchor="middle">Pass/Minor</text>
+
+  <path d="M 340 720 C 100 720, 100 400, 330 400" fill="none" stroke="#ef4444" stroke-width="3" stroke-dasharray="6" marker-end="url(#arrow-red)" />
+  <rect x="50" y="550" width="100" height="25" rx="4" fill="#fee2e2" stroke="#f87171" filter="url(#shadow)" />
+  <text x="100" y="567" font-size="11" font-weight="800" fill="#dc2626" text-anchor="middle">Fatal (Rewrite)</text>
+
+
+  <path d="M 700 820 L 700 890" stroke="#f97316" stroke-width="3" stroke-dasharray="8" marker-end="url(#arrow-orange)" />
+  <rect x="380" y="835" width="290" height="30" rx="6" fill="#ffedd5" stroke="#fdba74" />
+  <text x="525" y="854" font-size="11" font-weight="800" fill="#c2410c" text-anchor="middle">⚡ Circuit Breaker: `revision_count >= N`</text>
+  <text x="525" y="874" font-size="10" fill="#9a3412" text-anchor="middle">(Hard-force to Finalizer to prevent infinite loops)</text>
+
+
+  <rect x="340" y="890" width="720" height="130" rx="8" fill="#ffffff" stroke="#10b981" stroke-width="2" filter="url(#shadow)" />
+  <text x="360" y="915" font-size="16" font-weight="800" fill="#047857">4. Node Finalizer (Polish &amp; Traceability)</text>
+  <text x="360" y="935" font-size="11" fill="#475569">Translates the approved draft into a canonical, structured delivery object (`final_strategy`).</text>
+  
+  <rect x="360" y="950" width="680" height="60" rx="6" fill="#f0fdf4" stroke="#bbf7d0" />
+  <text x="375" y="967" font-size="11" font-weight="800" fill="#065f46">⭐ Strategy: Output Schema Consistency &amp; Lineage Payload</text>
+  <text x="375" y="981" font-size="10" fill="#064e3b">• Enforces Pydantic schema consistency to prevent the report degrading into free-form text.</text>
+  <text x="375" y="993" font-size="10" fill="#064e3b">• Embeds explicit `EvidenceLink` lineage objects (source_id, content_summary) back to exact records.</text>
+  <text x="375" y="1005" font-size="10" fill="#064e3b">• Evaluates `is_fallback` and revision depth to assign a deterministic confidence score.</text>
+
+  <path d="M 700 1020 L 700 1200" stroke="#0ea5e9" stroke-width="4" marker-end="url(#arrow-blue)" />
+  <rect x="710" y="1090" width="140" height="25" rx="4" fill="#e0f2fe" stroke="#7dd3fc" filter="url(#shadow)" />
+  <text x="780" y="1107" font-size="11" font-weight="800" fill="#0369a1" text-anchor="middle">Final Vetted Strategy</text>
+
+
+  <rect x="1120" y="180" width="350" height="840" rx="12" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="4" filter="url(#shadow)" />
+  <text x="1295" y="215" font-size="16" font-weight="800" fill="#334155" text-anchor="middle">Shared AgentState Protocol</text>
+  <text x="1295" y="235" font-size="11" fill="#64748b" text-anchor="middle">LangGraph TypedDict (state.py)</text>
+
+  <rect x="1140" y="260" width="310" height="60" rx="6" fill="#e0f2fe" stroke="#7dd3fc" />
+  <text x="1155" y="280" font-size="12" font-weight="800" fill="#0369a1">macro_context (Global Preamble)</text>
+  <text x="1155" y="298" font-size="10" fill="#0c4a6e">Text block loaded from `latest_macro_context.md`.</text>
+  <text x="1155" y="310" font-size="10" fill="#0c4a6e">Shares exact same background across all nodes.</text>
+
+  <rect x="1140" y="335" width="310" height="70" rx="6" fill="#fffbeb" stroke="#fde68a" />
+  <text x="1155" y="355" font-size="12" font-weight="800" fill="#b45309">silver_context_frozen (Ground Truth)</text>
+  <text x="1155" y="373" font-size="10" fill="#78350f">Immutable numeric truth baseline pulled by Master.</text>
+  <text x="1155" y="385" font-size="10" font-weight="700" fill="#78350f">Kept in state to avoid data shift during rewrites.</text>
+  <text x="1155" y="397" font-size="10" fill="#78350f">Used exclusively by Checker to validate facts.</text>
+
+  <rect x="1140" y="420" width="310" height="50" rx="6" fill="#ffffff" stroke="#e2e8f0" />
+  <text x="1155" y="440" font-size="12" font-weight="800" fill="#475569">iv_regime_pinned</text>
+  <text x="1155" y="458" font-size="10" fill="#64748b">Locked volatility baseline across revisions.</text>
+
+  <rect x="1140" y="485" width="310" height="60" rx="6" fill="#ffffff" stroke="#e2e8f0" />
+  <text x="1155" y="505" font-size="12" font-weight="800" fill="#475569">critic_feedback &amp; AgentFeedback</text>
+  <text x="1155" y="523" font-size="10" fill="#64748b">Append-only accumulation of `sender`, `error_type`</text>
+  <text x="1155" y="535" font-size="10" fill="#64748b">(fatal/minor), and exact `comment` to solve forgetfulness.</text>
+
+  <rect x="1140" y="560" width="310" height="60" rx="6" fill="#ffffff" stroke="#e2e8f0" />
+  <text x="1155" y="580" font-size="12" font-weight="800" fill="#475569">checker_verdict / critic_verdict</text>
+  <text x="1155" y="598" font-size="10" fill="#64748b">Literal: `pass` | `fatal` | `minor`</text>
+  <text x="1155" y="610" font-size="10" fill="#64748b">Used by router conditional edges for O(1) decisions.</text>
+
+  <rect x="1140" y="635" width="310" height="50" rx="6" fill="#ffffff" stroke="#e2e8f0" />
+  <text x="1155" y="655" font-size="12" font-weight="800" fill="#475569">revision_count &amp; is_fallback</text>
+  <text x="1155" y="673" font-size="10" fill="#64748b">Flow control metrics handling circuit breaks &amp; confidence.</text>
+
+  <rect x="1140" y="700" width="310" height="70" rx="6" fill="#ffffff" stroke="#e2e8f0" />
+  <text x="1155" y="720" font-size="12" font-weight="800" fill="#475569">final_strategy &amp; EvidenceLink</text>
+  <text x="1155" y="738" font-size="10" fill="#64748b">Structured Dict output containing the strict `EvidenceLink`</text>
+  <text x="1155" y="750" font-size="10" fill="#64748b">Lineage object (`source_id`, `content_summary`, `score`).</text>
+
+  <rect x="1140" y="785" width="310" height="60" rx="6" fill="#ffffff" stroke="#e2e8f0" />
+  <text x="1155" y="805" font-size="12" font-weight="800" fill="#475569">node_audit_log (Append-only)</text>
+  <text x="1155" y="823" font-size="10" fill="#64748b">`{\"node\", \"revision_n\", \"latency_ms\", \"key_state_in/out\"}`</text>
+  <text x="1155" y="835" font-size="10" fill="#64748b">Ensures full reproducible replay of pipeline history.</text>
+
+  <path d="M 1060 270 L 1140 270" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4" marker-end="url(#arrow-gray)" />
+  <path d="M 1060 380 L 1140 380" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4" marker-end="url(#arrow-gray)" />
+  <path d="M 1060 550 L 1140 550" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4" marker-end="url(#arrow-gray)" />
+  <path d="M 1060 720 L 1140 720" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4" marker-end="url(#arrow-gray)" />
+  <path d="M 1060 890 L 1140 890" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4" marker-end="url(#arrow-gray)" />
+
+
+  <rect x="50" y="1200" width="1420" height="300" rx="16" fill="url(#bg-frontend)" stroke="#5eead4" stroke-width="2" filter="url(#shadow)" />
+  <text x="760" y="1240" font-size="20" font-weight="800" fill="#0f766e" text-anchor="middle">IV. Frontend Runtime &amp; Observability Pipeline</text>
+
+  <rect x="80" y="1270" width="400" height="200" rx="8" fill="#ffffff" stroke="#99f6e4" filter="url(#shadow)" />
+  <text x="280" y="1300" font-size="16" font-weight="800" fill="#115e59" text-anchor="middle">Streamlit Controller &amp; Progressive Render</text>
+  
+  <rect x="100" y="1320" width="360" height="60" rx="6" fill="#f0fdfa" stroke="#ccfbf1" />
+  <text x="115" y="1340" font-size="12" font-weight="800" fill="#0f766e">1. run_router_nodes_stream</text>
+  <text x="115" y="1355" font-size="11" fill="#115e59">Streams live node-level events &amp; delta keys.</text>
+  <text x="115" y="1370" font-size="11" fill="#115e59">Surfaces the AI's "thought process" dynamically.</text>
+
+  <rect x="100" y="1390" width="360" height="60" rx="6" fill="#f0fdfa" stroke="#ccfbf1" />
+  <text x="115" y="1410" font-size="12" font-weight="800" fill="#0f766e">2. Progressive Dashboard Rendering</text>
+  <text x="115" y="1425" font-size="11" fill="#115e59">Renders intermediate retrieval contexts/phases.</text>
+  <text x="115" y="1440" font-size="11" font-weight="700" fill="#0f766e">Significantly reduces perceived user latency.</text>
+
+  <path d="M 480 1370 L 540 1370" stroke="#0ea5e9" stroke-width="3" marker-end="url(#arrow-blue)" />
+
+  <rect x="560" y="1270" width="400" height="200" rx="8" fill="#ffffff" stroke="#99f6e4" filter="url(#shadow)" />
+  <text x="760" y="1300" font-size="16" font-weight="800" fill="#115e59" text-anchor="middle">Final Strategy Dashboard Output</text>
+
+  <rect x="580" y="1320" width="360" height="130" rx="6" fill="#f8fafc" stroke="#e2e8f0" />
+  <text x="595" y="1345" font-size="13" font-weight="800" fill="#334155">Canonical Delivery Object</text>
+  <text x="595" y="1365" font-size="11" fill="#475569">• Executive Summary &amp; Trade Recommendation</text>
+  <text x="595" y="1385" font-size="11" fill="#475569">• Clickable Source Lineage (SEC/FRED/GDELT)</text>
+  <text x="595" y="1405" font-size="11" fill="#475569">• Quantitative Baselines (IV, Metrics)</text>
+  <text x="595" y="1425" font-size="11" font-weight="700" fill="#0369a1">• Deterministic Confidence Score Display</text>
+
+  <path d="M 960 1370 L 1020 1370" stroke="#10b981" stroke-width="3" marker-end="url(#arrow-green)" />
+
+  <rect x="1040" y="1270" width="390" height="200" rx="8" fill="#ffffff" stroke="#99f6e4" filter="url(#shadow)" />
+  <text x="1235" y="1300" font-size="16" font-weight="800" fill="#115e59" text-anchor="middle">Unified Observability &amp; Audit Trail</text>
+
+  <rect x="1060" y="1320" width="350" height="130" rx="6" fill="#fffbeb" stroke="#fde68a" />
+  <text x="1075" y="1345" font-size="13" font-weight="800" fill="#b45309">Run-Scoped Frontend Query Bundle</text>
+  <text x="1075" y="1365" font-size="11" fill="#78350f">Ensures every recommendation is fully reproducible:</text>
+  <text x="1075" y="1385" font-size="11" font-weight="700" fill="#92400e">1. `*_trace.jsonl` (Event rows &amp; execution timeline)</text>
+  <text x="1075" y="1405" font-size="11" font-weight="700" fill="#92400e">2. `*_final_state.json` (Merged graph state snapshot)</text>
+  <text x="1075" y="1425" font-size="11" font-weight="700" fill="#92400e">3. `*_summary.json` (Outcome, artifacts, run_id)</text>
+
+</svg>

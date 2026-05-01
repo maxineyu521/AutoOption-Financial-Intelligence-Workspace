@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1900" width="100%" height="100%" style="background-color: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569" />
+    </marker>
+    <marker id="arrow-fatal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#EF4444" />
+    </marker>
+    <marker id="arrow-pass" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#10B981" />
+    </marker>
+    
+    <filter id="drop-shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-opacity="0.1" />
+    </filter>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <text x="700" y="50" font-size="32" font-weight="bold" text-anchor="middle" fill="#0F172A">AutoOptions: Multi-Agent Financial RAG Workflow</text>
+  <text x="700" y="80" font-size="16" text-anchor="middle" fill="#64748B">Comprehensive Blueprint of Orchestration, Retrieval, Reasoning, and Observability</text>
+
+  <rect x="500" y="120" width="400" height="80" rx="12" fill="#8B5CF6" filter="url(#drop-shadow)" />
+  <text x="700" y="150" font-size="18" font-weight="bold" text-anchor="middle" fill="#FFFFFF">User Query / Entrypoint</text>
+  <text x="700" y="175" font-size="14" text-anchor="middle" fill="#E2E8F0">Frontend Streamlit (app.py) or CLI Orchestrator</text>
+
+  <path d="M 700 200 L 700 240" stroke="#475569" stroke-width="3" fill="none" marker-end="url(#arrow)" />
+
+  <rect x="150" y="250" width="1100" height="420" rx="16" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2" stroke-dasharray="8 8" />
+  <text x="700" y="280" font-size="20" font-weight="bold" text-anchor="middle" fill="#334155">1. Retrieval Master Node (Deterministic Data Envelope)</text>
+
+  <rect x="550" y="310" width="300" height="50" rx="8" fill="#E0F2FE" stroke="#0284C7" stroke-width="2" />
+  <text x="700" y="340" font-size="16" font-weight="bold" text-anchor="middle" fill="#0369A1">Intent Router Classification</text>
+  <text x="700" y="390" font-size="14" text-anchor="middle" fill="#475569">[ sql_only | vector_only | hybrid_both ]</text>
+
+  <path d="M 700 360 L 700 410" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+
+  <rect x="400" y="420" width="280" height="70" rx="8" fill="#F8FAFC" stroke="#94A3B8" stroke-width="1" />
+  <text x="540" y="445" font-size="14" font-weight="bold" text-anchor="middle" fill="#334155">Query Transformer</text>
+  <text x="540" y="465" font-size="12" text-anchor="middle" fill="#64748B">Stage 1: Metadata / Stage 2: HyDE</text>
+
+  <rect x="720" y="420" width="280" height="70" rx="8" fill="#F8FAFC" stroke="#94A3B8" stroke-width="1" />
+  <text x="860" y="445" font-size="14" font-weight="bold" text-anchor="middle" fill="#334155">Time Adapter</text>
+  <text x="860" y="465" font-size="12" text-anchor="middle" fill="#64748B">Compile Per-Source Predicates</text>
+
+  <path d="M 540 490 L 540 520 L 350 520 L 350 540" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+  <path d="M 860 490 L 860 520 L 1050 520 L 1050 540" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+
+  <rect x="200" y="550" width="300" height="80" rx="8" fill="#F1F5F9" stroke="#64748B" stroke-width="2" />
+  <text x="350" y="575" font-size="15" font-weight="bold" text-anchor="middle" fill="#334155">Silver SQL Engine (DuckDB)</text>
+  <text x="350" y="595" font-size="12" text-anchor="middle" fill="#64748B">Deterministic Options, Macro, &amp; GPR Stats</text>
+  <text x="350" y="615" font-size="12" font-style="italic" text-anchor="middle" fill="#0F172A">Output: silver_context_frozen</text>
+
+  <rect x="900" y="550" width="300" height="80" rx="8" fill="#FFFBEB" stroke="#D97706" stroke-width="2" />
+  <text x="1050" y="575" font-size="15" font-weight="bold" text-anchor="middle" fill="#92400E">Gold Vector Engine (Qdrant)</text>
+  <text x="1050" y="595" font-size="12" text-anchor="middle" fill="#B45309">Semantic News, SEC 8-K/4, Narratives</text>
+  <text x="1050" y="615" font-size="12" font-style="italic" text-anchor="middle" fill="#78350F">Output: gold_context + bronze_ref</text>
+
+  <rect x="580" y="565" width="240" height="50" rx="6" fill="#F0FDF4" stroke="#16A34A" stroke-width="2" />
+  <text x="700" y="585" font-size="14" font-weight="bold" text-anchor="middle" fill="#166534">latest_macro_context.md</text>
+  <text x="700" y="605" font-size="12" text-anchor="middle" fill="#15803D">Injected Daily Baseline</text>
+
+  <path d="M 350 630 L 350 680 L 680 680 L 680 720" stroke="#475569" stroke-width="3" fill="none" marker-end="url(#arrow)" />
+  <path d="M 1050 630 L 1050 680 L 720 680 L 720 720" stroke="#475569" stroke-width="3" fill="none" marker-end="url(#arrow)" />
+  <path d="M 700 615 L 700 720" stroke="#16A34A" stroke-width="2" fill="none" stroke-dasharray="4 4" marker-end="url(#arrow)" />
+
+  <rect x="150" y="730" width="1100" height="610" rx="16" fill="#F8FAFC" stroke="#475569" stroke-width="2" stroke-dasharray="8 8" />
+  <text x="700" y="760" font-size="20" font-weight="bold" text-anchor="middle" fill="#0F172A">2. Multi-Agent Reasoning Graph (Four-Stage Loop)</text>
+
+  <rect x="500" y="790" width="400" height="100" rx="12" fill="#10B981" filter="url(#drop-shadow)" />
+  <text x="700" y="815" font-size="18" font-weight="bold" text-anchor="middle" fill="#FFFFFF">Analyst Agent</text>
+  <text x="700" y="840" font-size="13" text-anchor="middle" fill="#ECFDF5">1. Calculates &amp; pins IV Regime (`iv_regime_pinned`)</text>
+  <text x="700" y="860" font-size="13" text-anchor="middle" fill="#ECFDF5">2. Synthesizes Draft Strategy</text>
+  <text x="700" y="880" font-size="13" text-anchor="middle" fill="#A7F3D0">3. Resolves Appended Critic Feedback</text>
+  
+  <path d="M 700 890 L 700 940" stroke="#475569" stroke-width="3" fill="none" marker-end="url(#arrow)" />
+
+  <rect x="500" y="950" width="400" height="100" rx="12" fill="#3B82F6" filter="url(#drop-shadow)" />
+  <text x="700" y="975" font-size="18" font-weight="bold" text-anchor="middle" fill="#FFFFFF">Checker Agent (Blue Team)</text>
+  <text x="700" y="1000" font-size="13" text-anchor="middle" fill="#EFF6FF">1. Deterministic Numeric Audit vs `silver_context_frozen`</text>
+  <text x="700" y="1020" font-size="13" text-anchor="middle" fill="#EFF6FF">2. Anti-Hallucination: Validates Citation Lineage Anchors</text>
+  <text x="700" y="1040" font-size="13" text-anchor="middle" fill="#DBEAFE">Output: Verdict (Pass / Fatal / Minor)</text>
+
+  <path d="M 500 1000 L 300 1000 L 300 840 L 490 840" stroke="#EF4444" stroke-width="3" fill="none" marker-end="url(#arrow-fatal)" />
+  <text x="310" y="990" font-size="14" font-weight="bold" fill="#EF4444">Fatal Verdict (Rewrite)</text>
+
+  <path d="M 700 1050 L 700 1100" stroke="#10B981" stroke-width="3" fill="none" marker-end="url(#arrow-pass)" />
+  <text x="710" y="1080" font-size="14" font-weight="bold" fill="#10B981">Pass / Minor</text>
+
+  <rect x="500" y="1110" width="400" height="100" rx="12" fill="#EF4444" filter="url(#drop-shadow)" />
+  <text x="700" y="1135" font-size="18" font-weight="bold" text-anchor="middle" fill="#FFFFFF">Critic Agent (Red Team)</text>
+  <text x="700" y="1160" font-size="13" text-anchor="middle" fill="#FEF2F2">1. Logic Audit: Assumes Data is Factual</text>
+  <text x="700" y="1180" font-size="13" text-anchor="middle" fill="#FEF2F2">2. Regime Backstops (e.g., Contradictory Macro/Bullishness)</text>
+  <text x="700" y="1200" font-size="13" text-anchor="middle" fill="#FEE2E2">Output: Actionability Gate Verdict (Pass / Fatal / Minor)</text>
+
+  <path d="M 900 1160 L 1100 1160 L 1100 860 L 910 860" stroke="#EF4444" stroke-width="3" fill="none" marker-end="url(#arrow-fatal)" />
+  <text x="910" y="1150" font-size="14" font-weight="bold" fill="#EF4444">Fatal Verdict (Contradiction)</text>
+
+  <path d="M 700 1210 L 700 1390" stroke="#10B981" stroke-width="3" fill="none" marker-end="url(#arrow-pass)" />
+  <text x="710" y="1260" font-size="14" font-weight="bold" fill="#10B981">Pass Strategy</text>
+
+  <path d="M 1150 790 L 1250 790 L 1250 1440 L 910 1440" stroke="#D97706" stroke-width="3" stroke-dasharray="6 6" fill="none" marker-end="url(#arrow)" />
+  <text x="1260" y="1100" font-size="14" font-weight="bold" fill="#D97706" transform="rotate(90, 1260, 1100)">Hard Circuit Breaker (`revision_count >= MAX`)</text>
+
+  <rect x="500" y="1400" width="400" height="90" rx="12" fill="#8B5CF6" filter="url(#drop-shadow)" />
+  <text x="700" y="1425" font-size="18" font-weight="bold" text-anchor="middle" fill="#FFFFFF">3. Finalizer Agent</text>
+  <text x="700" y="1450" font-size="13" text-anchor="middle" fill="#EDE9FE">Structured Delivery Payload (`FinalReport` JSON)</text>
+  <text x="700" y="1475" font-size="13" text-anchor="middle" fill="#EDE9FE">Assigns Confidence Score &amp; Explicit Lineage Links</text>
+
+  <path d="M 700 1490 L 700 1540" stroke="#475569" stroke-width="3" fill="none" marker-end="url(#arrow)" />
+
+  <rect x="300" y="1550" width="800" height="150" rx="12" fill="#F1F5F9" stroke="#94A3B8" stroke-width="2" />
+  <text x="700" y="1580" font-size="20" font-weight="bold" text-anchor="middle" fill="#0F172A">4. Institutional Delivery &amp; Observability Contracts</text>
+
+  <rect x="340" y="1600" width="340" height="80" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1" />
+  <text x="510" y="1625" font-size="14" font-weight="bold" text-anchor="middle" fill="#334155">Frontend Streamlit Bundle</text>
+  <text x="510" y="1645" font-size="12" text-anchor="middle" fill="#64748B">Progressive rendering across graph states</text>
+  <text x="510" y="1665" font-size="12" text-anchor="middle" fill="#64748B">Final Dashboard + Trace JSONL</text>
+
+  <rect x="720" y="1600" width="340" height="80" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1" />
+  <text x="890" y="1625" font-size="14" font-weight="bold" text-anchor="middle" fill="#334155">Backend Telemetry &amp; Lineage</text>
+  <text x="890" y="1645" font-size="12" text-anchor="middle" fill="#64748B">logs/runs/&lt;YYYY-MM-DD&gt;/&lt;run_id&gt;</text>
+  <text x="890" y="1665" font-size="12" text-anchor="middle" fill="#64748B">append-only node_audit_log &amp; query_audit_trail</text>
+
+</svg>
