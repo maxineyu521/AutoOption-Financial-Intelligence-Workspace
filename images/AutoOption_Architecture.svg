@@ -37,208 +37,239 @@
     </linearGradient>
   </defs>
 
-  <text x="800" y="45" font-size="32" font-weight="800" fill="#0f172a" text-anchor="middle">AutoOptions: Multi-Agent RAG Architecture</text>
-  <text x="800" y="70" font-size="16" font-weight="500" fill="#64748b" text-anchor="middle">Institutional Financial Pipeline with Deterministic Control &amp; Peer-Review</text>
+  <g id="background-columns">
+    <rect x="20" y="100" width="400" height="920" rx="16" fill="url(#bg-data)" fill-opacity="0.85" stroke="#bfdbfe" stroke-width="2" filter="url(#shadow)" />
+    <rect x="440" y="100" width="530" height="890" rx="16" fill="url(#bg-retrieval)" fill-opacity="0.85" stroke="#d8b4fe" stroke-width="2" filter="url(#shadow)" />
+    <rect x="1000" y="100" width="560" height="890" rx="16" fill="url(#bg-agent)" fill-opacity="0.85" stroke="#fdba74" stroke-width="2" filter="url(#shadow)" />
+  </g>
 
-  <rect x="20" y="100" width="400" height="920" rx="16" fill="url(#bg-data)" stroke="#bfdbfe" stroke-width="2" filter="url(#shadow)" />
-  
-  <text x="230" y="150" font-size="20" font-weight="700" fill="#1e3a8a" text-anchor="middle">I. Data Ingestion &amp; Storage</text>
-  <text x="230" y="170" font-size="12" font-weight="600" fill="#3b82f6" text-anchor="middle">(Medallion Architecture)</text>
+  <g id="header">
+    <text x="800" y="45" font-size="32" font-weight="800" fill="#0f172a" text-anchor="middle">AutoOptions: Multi-Agent RAG Architecture</text>
+    <text x="800" y="70" font-size="16" font-weight="500" fill="#64748b" text-anchor="middle">Institutional Financial Pipeline with Orchestrated Data Freshness &amp; Peer-Review</text>
+  </g>
 
-  <rect x="50" y="200" width="360" height="125" rx="8" fill="#ffffff" stroke="#e2e8f0" filter="url(#shadow)" />
-  <text x="220" y="235" font-size="14" font-weight="700" fill="#334155" text-anchor="middle">Heterogeneous Data Sources</text>
-  <rect x="65" y="250" width="140" height="30" rx="4" fill="#f1f5f9" />
-  <text x="135" y="270" font-size="11" fill="#475569" text-anchor="middle">Yahoo Finance (Options)</text>
-  <rect x="225" y="250" width="140" height="30" rx="4" fill="#f1f5f9" />
-  <text x="295" y="270" font-size="11" fill="#475569" text-anchor="middle">FRED (Macro Data)</text>
-  <rect x="65" y="290" width="90" height="30" rx="4" fill="#f1f5f9" />
-  <text x="110" y="310" font-size="11" fill="#475569" text-anchor="middle">GDELT (News)</text>
-  <rect x="165" y="290" width="90" height="30" rx="4" fill="#f1f5f9" />
-  <text x="210" y="310" font-size="11" fill="#475569" text-anchor="middle">SEC EDGAR</text>
-  <rect x="265" y="290" width="100" height="30" rx="4" fill="#f1f5f9" />
-  <text x="315" y="310" font-size="11" fill="#475569" text-anchor="middle">GPR Index</text>
+  <g id="column-1">
+    <text x="230" y="140" font-size="20" font-weight="700" fill="#1e3a8a" text-anchor="middle">I. Data Ingestion &amp; Storage</text>
+    <text x="230" y="160" font-size="12" font-weight="600" fill="#3b82f6" text-anchor="middle">Medallion Data Platform</text>
 
-  <path d="M 230 325 L 230 345" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
-  
-  <rect x="50" y="350" width="360" height="120" rx="8" fill="#ffffff" stroke="#cd853f" stroke-width="2" filter="url(#shadow)" />
-  <text x="70" y="375" font-size="14" font-weight="700" fill="#cd853f">Bronze Layer: Raw Parsing &amp; Chunking</text>
-  <text x="70" y="395" font-size="11" fill="#475569" font-weight="600">Pre-processing before vectorization:</text>
-  <text x="70" y="415" font-size="11" fill="#64748b">• SEC 8-K: Strip HTML, convert to Markdown, split by Item</text>
-  <text x="70" y="435" font-size="11" fill="#64748b">• SEC Form 4: Extract XML to structured transaction rows</text>
-  <text x="70" y="455" font-size="11" fill="#64748b">• News: Raw scraper output &amp; HTML caching</text>
+    <rect x="50" y="180" width="360" height="145" rx="8" fill="#ffffff" stroke="#e2e8f0" filter="url(#shadow)" />
+    <text x="220" y="210" font-size="14" font-weight="700" fill="#334155" text-anchor="middle">Heterogeneous Data Sources</text>
+    <text x="220" y="228" font-size="10" font-weight="500" fill="#64748b" text-anchor="middle">Granularities: TRADING_DAILY, DAILY, WEEKLY, MONTHLY</text>
+    
+    <rect x="65" y="240" width="140" height="30" rx="4" fill="#f1f5f9" />
+    <text x="135" y="260" font-size="11" fill="#475569" text-anchor="middle">Yahoo Finance (Options)</text>
+    <rect x="225" y="240" width="140" height="30" rx="4" fill="#f1f5f9" />
+    <text x="295" y="260" font-size="11" fill="#475569" text-anchor="middle">FRED (Macro Data)</text>
+    <rect x="65" y="280" width="90" height="30" rx="4" fill="#f1f5f9" />
+    <text x="110" y="300" font-size="11" fill="#475569" text-anchor="middle">GDELT (News)</text>
+    <rect x="165" y="280" width="90" height="30" rx="4" fill="#f1f5f9" />
+    <text x="210" y="300" font-size="11" fill="#475569" text-anchor="middle">SEC EDGAR</text>
+    <rect x="265" y="280" width="100" height="30" rx="4" fill="#f1f5f9" />
+    <text x="315" y="300" font-size="11" fill="#475569" text-anchor="middle">GPR Index</text>
 
-  <path d="M 150 470 L 150 495" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
-  
-  <rect x="50" y="500" width="360" height="100" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="2" filter="url(#shadow)" />
-  <text x="70" y="525" font-size="14" font-weight="700" fill="#475569">Silver Layer: Parquet &amp; DuckDB</text>
-  <text x="70" y="545" font-size="11" fill="#64748b">Deterministic Numeric Truth (IV, PCR, Macro, GPR)</text>
-  <rect x="70" y="555" width="320" height="35" rx="6" fill="#fffbeb" stroke="#fde68a" />
-  <text x="80" y="570" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: Immutable Numeric Baseline</text>
-  <text x="80" y="583" font-size="10" fill="#78350f">Separates hard math facts from LLM hallucination risk.</text>
+    <path d="M 230 325 L 230 340" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
+    
+    <rect x="50" y="345" width="360" height="145" rx="8" fill="#ffffff" stroke="#cd853f" stroke-width="2" filter="url(#shadow)" />
+    <text x="70" y="370" font-size="14" font-weight="700" fill="#cd853f">Bronze Layer: Raw Parsing &amp; Chunking</text>
+    <text x="70" y="390" font-size="11" fill="#475569" font-weight="600">Pre-processing before vectorization:</text>
+    <text x="70" y="410" font-size="11" fill="#64748b">• SEC 8-K: Strip HTML, Markdown, chunk by Item</text>
+    <text x="70" y="430" font-size="11" fill="#64748b">• SEC Form 4: Deterministic rule-based scoring</text>
+    <text x="70" y="450" font-size="11" fill="#64748b">• News: LLM-distilled summary units</text>
+    <text x="70" y="470" font-size="11" fill="#64748b">• Preserves SEC EDGAR accession links</text>
 
-  <path d="M 310 470 L 310 625" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
-  
-  <rect x="50" y="630" width="360" height="210" rx="8" fill="#ffffff" stroke="#fbbf24" stroke-width="2" filter="url(#shadow)" />
-  <text x="70" y="655" font-size="14" font-weight="700" fill="#d97706">Gold Layer: LLM Distillation &amp; Vectors</text>
-  <text x="70" y="675" font-size="11" fill="#475569" font-weight="600">Qdrant Vector Transformation &amp; Embedding:</text>
-  
-  <rect x="70" y="685" width="320" height="70" rx="6" fill="#fffbeb" stroke="#fde68a" />
-  <text x="80" y="700" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: LLM-Distilled Atomic Facts</text>
-  <text x="80" y="715" font-size="10" fill="#78350f">• 8-K &amp; News: Llama 3 generates JSON summaries.</text>
-  <text x="80" y="730" font-size="10" fill="#78350f">• Policy: 1 complete, self-contained record = 1 Vector Point.</text>
-  <text x="80" y="745" font-size="10" fill="#78350f">• Avoids generic token splitters to prevent signal noise.</text>
+    <path d="M 150 490 L 150 510" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
+    
+    <rect x="50" y="515" width="360" height="120" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="2" filter="url(#shadow)" />
+    <text x="70" y="540" font-size="14" font-weight="700" fill="#475569">Silver Layer: Parquet &amp; DuckDB</text>
+    <text x="70" y="560" font-size="11" fill="#64748b">Deterministic Numeric Truth (IV, PCR, Macro)</text>
+    <rect x="70" y="570" width="320" height="55" rx="6" fill="#fffbeb" stroke="#fde68a" />
+    <text x="80" y="585" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: Immutable Numeric Baseline</text>
+    <text x="80" y="602" font-size="10" fill="#78350f">• Separates hard math facts</text>
+    <text x="80" y="616" font-size="10" fill="#78350f">• Zero LLM hallucination risk</text>
 
-  <rect x="70" y="760" width="320" height="65" rx="6" fill="#fffbeb" stroke="#fde68a" />
-  <text x="80" y="775" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: Rich Metadata &amp; Dual Embedding</text>
-  <text x="80" y="790" font-size="10" fill="#78350f">Metadata (ticker, date, tone) treated as first-class entity.</text>
-  <text x="80" y="805" font-size="10" fill="#78350f">Dense (all-MiniLM) + Sparse (SPLADE) encoders applied.</text>
+    <path d="M 310 490 L 310 640" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
+    
+    <rect x="50" y="645" width="360" height="215" rx="8" fill="#ffffff" stroke="#fbbf24" stroke-width="2" filter="url(#shadow)" />
+    <text x="70" y="670" font-size="14" font-weight="700" fill="#d97706">Gold Layer: LLM Distillation &amp; Vectors</text>
+    <text x="70" y="690" font-size="11" fill="#475569" font-weight="600">Qdrant Vector Transformation &amp; Embedding:</text>
+    
+    <rect x="70" y="700" width="320" height="70" rx="6" fill="#fffbeb" stroke="#fde68a" />
+    <text x="80" y="715" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: LLM-Distilled Atomic Facts</text>
+    <text x="80" y="730" font-size="10" fill="#78350f">• At-ingest JSON summaries</text>
+    <text x="80" y="745" font-size="10" fill="#78350f">• 1 record = 1 Vector Point</text>
+    <text x="80" y="760" font-size="10" fill="#78350f">• No generic token splitters</text>
 
-  <rect x="50" y="860" width="360" height="100" rx="8" fill="#e0f2fe" stroke="#0284c7" stroke-width="2" filter="url(#shadow-heavy)" />
-  <text x="70" y="885" font-size="14" font-weight="800" fill="#0369a1">Static Agent Context (Macro Background)</text>
-  <text x="70" y="905" font-size="11" fill="#0c4a6e">Pre-compiled daily global background on Fed rates, GPR, etc.</text>
-  <text x="70" y="920" font-size="11" fill="#0c4a6e">Bypasses retrieval entirely. Acts as the baseline environment</text>
-  <text x="70" y="935" font-size="11" fill="#0c4a6e">that grounds the AI's understanding of the current market.</text>
+    <rect x="70" y="775" width="320" height="75" rx="6" fill="#fffbeb" stroke="#fde68a" />
+    <text x="80" y="790" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: Rich Metadata &amp; Dual Embedding</text>
+    <text x="80" y="805" font-size="10" fill="#78350f">• Typed metadata pre-injection</text>
+    <text x="80" y="820" font-size="10" fill="#78350f">• Dense (all-MiniLM) + Sparse (SPLADE)</text>
+    <text x="80" y="835" font-size="10" fill="#78350f">• Lineage-preserving payloads</text>
 
-  <path d="M 410 910 L 970 910 L 970 250 L 1020 250" fill="none" stroke="#0284c7" stroke-width="2" stroke-dasharray="6" marker-end="url(#arrow-macro)" />
-
-
-  <rect x="440" y="100" width="530" height="890" rx="16" fill="url(#bg-retrieval)" stroke="#d8b4fe" stroke-width="2" filter="url(#shadow)" />
-  <text x="705" y="140" font-size="20" font-weight="700" fill="#581c87" text-anchor="middle">II. Master Retrieval Phase</text>
-  <text x="705" y="160" font-size="12" font-weight="600" fill="#9333ea" text-anchor="middle">(Hybrid Route &amp; Fetch Architecture)</text>
-
-  <rect x="465" y="180" width="480" height="35" rx="8" fill="#ffffff" stroke="#c084fc" filter="url(#shadow)" />
-  <text x="705" y="202" font-size="14" font-weight="700" fill="#4c1d95" text-anchor="middle">User Natural Language Query</text>
-
-  <path d="M 705 215 L 705 230" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
-
-  <rect x="465" y="235" width="480" height="215" rx="8" fill="#ffffff" stroke="#e2e8f0" filter="url(#shadow)" />
-  <text x="485" y="260" font-size="14" font-weight="700" fill="#334155">Query Intent &amp; Transformation Router</text>
-  
-  <rect x="485" y="275" width="200" height="25" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
-  <text x="585" y="292" font-size="11" font-weight="600" fill="#475569" text-anchor="middle">1. Intent Classifier (SQL/Vector)</text>
-  
-  <rect x="705" y="275" width="220" height="25" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
-  <text x="815" y="292" font-size="11" font-weight="600" fill="#475569" text-anchor="middle">2. Metadata Extractor (Tickers/Forms)</text>
-
-  <rect x="485" y="310" width="440" height="65" rx="6" fill="#fffbeb" stroke="#fde68a" />
-  <text x="495" y="327" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: Metadata Guardrails &amp; Compensation</text>
-  <text x="495" y="343" font-size="10" fill="#78350f">• Enforces ticker allowlists &amp; prevents database explosion limits.</text>
-  <text x="495" y="357" font-size="10" fill="#78350f">• Deterministic rule-based fallbacks for missing/invalid time windows.</text>
-
-  <rect x="485" y="385" width="440" height="55" rx="6" fill="#fffbeb" stroke="#fde68a" />
-  <text x="495" y="402" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: Asymmetric Query Inputs</text>
-  <text x="495" y="418" font-size="10" fill="#78350f">• Dense Model gets a generated HyDE paragraph (captures concept).</text>
-  <text x="495" y="432" font-size="10" fill="#78350f">• Sparse Model gets a strict 8-15 word exact query (prevents dilution).</text>
-
-  <path d="M 705 450 L 705 465" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
-
-  <rect x="465" y="470" width="480" height="60" rx="8" fill="#ffffff" stroke="#e2e8f0" filter="url(#shadow)" />
-  <text x="485" y="495" font-size="14" font-weight="700" fill="#334155">Time Adapter</text>
-  <rect x="585" y="480" width="340" height="40" rx="6" fill="#fffbeb" stroke="#fde68a" />
-  <text x="595" y="495" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: Temporal Integrity</text>
-  <text x="595" y="511" font-size="10" fill="#78350f">• Compiles 1 semantic phrase into exact physical DB predicates.</text>
-
-  <path d="M 705 530 L 705 545" stroke="#64748b" stroke-width="2" />
-  <path d="M 565 545 L 845 545" stroke="#64748b" stroke-width="2" />
-  <path d="M 565 545 L 565 560" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
-  <path d="M 845 545 L 845 560" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
-
-  <rect x="455" y="565" width="220" height="150" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="4" filter="url(#shadow)" />
-  <text x="565" y="590" font-size="13" font-weight="700" fill="#334155" text-anchor="middle">Deterministic Silver SQL</text>
-  <rect x="465" y="605" width="200" height="35" rx="6" fill="#ffffff" stroke="#cbd5e1" />
-  <text x="565" y="620" font-size="11" font-weight="600" fill="#475569" text-anchor="middle">DuckDB Queries (Options/Macro)</text>
-  <rect x="465" y="650" width="200" height="45" rx="6" fill="#fffbeb" stroke="#fde68a" />
-  <text x="565" y="665" font-size="11" font-weight="700" fill="#b45309" text-anchor="middle">⭐ Lineage Anchors</text>
-  <text x="565" y="681" font-size="10" fill="#78350f" text-anchor="middle">• Emits strict source proofs</text>
-
-  <rect x="695" y="565" width="310" height="250" rx="8" fill="#f8fafc" stroke="#fbbf24" stroke-dasharray="4" filter="url(#shadow)" />
-  <text x="850" y="590" font-size="13" font-weight="700" fill="#334155" text-anchor="middle">Semantic Gold Vector Search</text>
-
-  <rect x="705" y="605" width="290" height="40" rx="6" fill="#fffbeb" stroke="#fde68a" />
-  <text x="850" y="620" font-size="11" font-weight="700" fill="#b45309" text-anchor="middle">⭐ Strategy: Pre-Filtering</text>
-  <text x="850" y="636" font-size="10" fill="#78350f" text-anchor="middle">• Filters Qdrant by payload metadata before math.</text>
-
-  <rect x="705" y="655" width="135" height="25" rx="4" fill="#ffffff" stroke="#cbd5e1" />
-  <text x="772" y="672" font-size="10" font-weight="600" fill="#475569" text-anchor="middle">Dense Similarity</text>
-  <rect x="860" y="655" width="135" height="25" rx="4" fill="#ffffff" stroke="#cbd5e1" />
-  <text x="927" y="672" font-size="10" font-weight="600" fill="#475569" text-anchor="middle">Sparse SPLADE</text>
-
-  <rect x="705" y="690" width="290" height="45" rx="6" fill="#fffbeb" stroke="#fde68a" />
-  <text x="850" y="705" font-size="11" font-weight="700" fill="#b45309" text-anchor="middle">⭐ Strategy: Reciprocal Rank Fusion (RRF)</text>
-  <text x="850" y="721" font-size="10" fill="#78350f" text-anchor="middle">• Fuses incompatible scores based on rank position.</text>
-
-  <rect x="705" y="745" width="290" height="45" rx="6" fill="#fffbeb" stroke="#fde68a" />
-  <text x="850" y="760" font-size="11" font-weight="700" fill="#b45309" text-anchor="middle">⭐ Strategy: Cross-Encoder Reranker</text>
-  <text x="850" y="776" font-size="10" fill="#78350f" text-anchor="middle">• Catches financial logic nuances (e.g. Vest vs Sell).</text>
-
-  <path d="M 565 715 L 565 855 L 690 855" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
-  <path d="M 850 815 L 850 855 L 720 855" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
-
-  <rect x="605" y="840" width="200" height="30" rx="6" fill="#3b82f6" filter="url(#shadow)" />
-  <text x="705" y="860" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">Unified Agent Context Envelope</text>
-
-  <path d="M 805 855 L 960 855 L 960 270 L 1020 270" stroke="#3b82f6" stroke-width="3" fill="none" marker-end="url(#arrow-blue)" />
+    <rect x="50" y="880" width="360" height="100" rx="8" fill="#e0f2fe" stroke="#0284c7" stroke-width="2" filter="url(#shadow-heavy)" />
+    <text x="70" y="905" font-size="14" font-weight="800" fill="#0369a1">Static Agent Context (Macro Background)</text>
+    <text x="70" y="925" font-size="11" fill="#0c4a6e">Pre-compiled daily global background on Fed rates, GPR, etc.</text>
+    <text x="70" y="940" font-size="11" fill="#0c4a6e">Bypasses retrieval entirely. Acts as the baseline environment</text>
+    <text x="70" y="955" font-size="11" fill="#0c4a6e">that grounds the AI's understanding of the current market.</text>
+  </g>
 
 
-  <rect x="1000" y="100" width="560" height="890" rx="16" fill="url(#bg-agent)" stroke="#fdba74" stroke-width="2" filter="url(#shadow)" />
+  <g id="column-2">
+    <text x="705" y="140" font-size="20" font-weight="700" fill="#581c87" text-anchor="middle">II. Master Retrieval Phase</text>
+    <text x="705" y="160" font-size="12" font-weight="600" fill="#9333ea" text-anchor="middle">(Hybrid Route &amp; Fetch Architecture)</text>
 
-  <text x="1280" y="160" font-size="20" font-weight="700" fill="#9a3412" text-anchor="middle">III. Multi-Agent Reasoning (The "Brain")</text>
-  <text x="1280" y="180" font-size="12" font-weight="600" fill="#ea580c" text-anchor="middle">(LangGraph Peer-Review State Machine)</text>
+    <rect x="465" y="180" width="480" height="35" rx="8" fill="#ffffff" stroke="#c084fc" filter="url(#shadow)" />
+    <text x="705" y="202" font-size="14" font-weight="700" fill="#4c1d95" text-anchor="middle">User Natural Language Query</text>
 
-  <rect x="1030" y="210" width="500" height="110" rx="8" fill="#ffffff" stroke="#e2e8f0" filter="url(#shadow)" />
-  <text x="1050" y="235" font-size="16" font-weight="800" fill="#c2410c">1. Node Analyst (Drafting)</text>
-  <text x="1050" y="255" font-size="11" fill="#475569">Synthesizes evidence into actionable strategy draft.</text>
-  <rect x="1050" y="265" width="460" height="40" rx="6" fill="#fffbeb" stroke="#fde68a" />
-  <text x="1060" y="280" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: IV Regime Pinning</text>
-  <text x="1060" y="295" font-size="10" fill="#78350f">Locks implied volatility baseline to prevent thesis oscillation during rewrites.</text>
+    <path d="M 705 215 L 705 230" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
 
-  <path d="M 1280 320 L 1280 345" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
+    <rect x="465" y="235" width="480" height="225" rx="8" fill="#ffffff" stroke="#e2e8f0" filter="url(#shadow)" />
+    <text x="485" y="260" font-size="14" font-weight="700" fill="#334155">Query Intent &amp; Transformation Router</text>
+    <text x="925" y="258" font-size="11" font-weight="600" fill="#64748b" text-anchor="end">Model: gpt-4o-mini</text>
+    
+    <rect x="485" y="275" width="220" height="25" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="595" y="292" font-size="11" font-weight="600" fill="#475569" text-anchor="middle">1. Intent Classifier (SQL/Vector/Both)</text>
+    
+    <rect x="715" y="275" width="210" height="25" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="820" y="292" font-size="11" font-weight="600" fill="#475569" text-anchor="middle">2. Extractor &amp; HyDE Generation</text>
 
-  <rect x="1030" y="350" width="500" height="130" rx="8" fill="#ffffff" stroke="#3b82f6" stroke-width="2" filter="url(#shadow)" />
-  <text x="1050" y="375" font-size="16" font-weight="800" fill="#1d4ed8">2. Node Checker ("Blue Team" Factual Gate)</text>
-  <text x="1050" y="395" font-size="11" fill="#475569">Verifies numeric consistency &amp; citation anchor validity.</text>
-  
-  <rect x="1050" y="410" width="460" height="55" rx="6" fill="#fffbeb" stroke="#fde68a" />
-  <text x="1060" y="425" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: Deterministic-First Audit</text>
-  <text x="1060" y="440" font-size="10" fill="#78350f">Applies Regex/Rule-based checks against the Frozen Silver Baseline BEFORE</text>
-  <text x="1060" y="455" font-size="10" fill="#78350f">LLM validation, instantly rejecting hallucinations with a "Fatal" tag.</text>
+    <rect x="485" y="310" width="440" height="65" rx="6" fill="#fffbeb" stroke="#fde68a" />
+    <text x="495" y="327" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: Metadata Guardrails &amp; Compensation</text>
+    <text x="495" y="343" font-size="10" fill="#78350f">• Enforces ticker allowlists &amp; prevents database explosion limits.</text>
+    <text x="495" y="357" font-size="10" fill="#78350f">• Two-stage transformation isolates query target concepts.</text>
 
-  <path d="M 1280 480 L 1280 505" stroke="#64748b" stroke-width="2" marker-end="url(#arrow-green)" />
-  
-  <path d="M 1030 415 C 960 415, 960 265, 1020 265" fill="none" stroke="#ef4444" stroke-width="2" stroke-dasharray="4" marker-end="url(#arrow-red)" />
-  <rect x="910" y="330" width="85" height="20" rx="4" fill="#fee2e2" />
-  <text x="952" y="344" font-size="10" font-weight="700" fill="#dc2626" text-anchor="middle">Fatal/Rewrite</text>
+    <rect x="485" y="385" width="440" height="60" rx="6" fill="#fffbeb" stroke="#fde68a" />
+    <text x="495" y="402" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: Asymmetric Query Inputs</text>
+    <text x="495" y="418" font-size="10" fill="#78350f">• Dense Model gets a generated HyDE paragraph (captures concept).</text>
+    <text x="495" y="434" font-size="10" fill="#78350f">• Sparse Model gets a strict 8-15 word exact query (prevents dilution).</text>
 
-  <rect x="1030" y="510" width="500" height="130" rx="8" fill="#ffffff" stroke="#ef4444" stroke-width="2" filter="url(#shadow)" />
-  <text x="1050" y="535" font-size="16" font-weight="800" fill="#b91c1c">3. Node Critic ("Red Team" Logic Audit)</text>
-  <text x="1050" y="555" font-size="11" fill="#475569">Stress-tests risk posture, logical contradictions &amp; regime mismatches.</text>
-  
-  <rect x="1050" y="570" width="460" height="55" rx="6" fill="#fffbeb" stroke="#fde68a" />
-  <text x="1060" y="585" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: Actionability Gates</text>
-  <text x="1060" y="600" font-size="10" fill="#78350f">Separates "Fatal" blockers from "Minor" suggestions. Prevents endless false-fatal</text>
-  <text x="1060" y="615" font-size="10" fill="#78350f">loops by ensuring rejections are mechanically actionable by the Analyst.</text>
+    <path d="M 705 460 L 705 475" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
 
-  <path d="M 1280 640 L 1280 665" stroke="#64748b" stroke-width="2" marker-end="url(#arrow-green)" />
-  
-  <path d="M 1530 575 C 1580 575, 1580 265, 1540 265" fill="none" stroke="#ef4444" stroke-width="2" stroke-dasharray="4" marker-end="url(#arrow-red)" />
-  <rect x="1540" y="410" width="50" height="20" rx="4" fill="#fee2e2" />
-  <text x="1565" y="424" font-size="10" font-weight="700" fill="#dc2626" text-anchor="middle">Fatal</text>
+    <rect x="465" y="480" width="480" height="65" rx="8" fill="#ffffff" stroke="#e2e8f0" filter="url(#shadow)" />
+    <text x="485" y="505" font-size="14" font-weight="700" fill="#334155">Time Adapter</text>
+    <rect x="585" y="490" width="340" height="45" rx="6" fill="#fffbeb" stroke="#fde68a" />
+    <text x="595" y="505" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: Temporal Integrity</text>
+    <text x="595" y="521" font-size="10" fill="#78350f">• Compiles per-source TimePredicate windows once.</text>
 
-  <rect x="1030" y="670" width="500" height="130" rx="8" fill="#ffffff" stroke="#10b981" stroke-width="2" filter="url(#shadow)" />
-  <text x="1050" y="695" font-size="16" font-weight="800" fill="#047857">4. Node Finalizer (Polish &amp; Traceability)</text>
-  <text x="1050" y="715" font-size="11" fill="#475569">Translates state into canonical delivery object for Streamlit UI.</text>
-  
-  <rect x="1050" y="730" width="460" height="55" rx="6" fill="#fffbeb" stroke="#fde68a" />
-  <text x="1060" y="745" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: Output Schema Consistency &amp; Lineage</text>
-  <text x="1060" y="760" font-size="10" fill="#78350f">Enforces strict JSON schema, embedding clickable evidence links directly to</text>
-  <text x="1060" y="775" font-size="10" fill="#78350f">original Bronze SEC/News files, assigning a deterministic confidence score.</text>
+    <path d="M 705 545 L 705 560" stroke="#64748b" stroke-width="2" />
+    <path d="M 565 560 L 845 560" stroke="#64748b" stroke-width="2" />
+    <path d="M 565 560 L 565 575" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
+    <path d="M 845 560 L 845 575" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
 
-  <path d="M 1280 800 L 1280 825" stroke="#10b981" stroke-width="3" marker-end="url(#arrow-green)" />
+    <rect x="455" y="580" width="220" height="175" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="4" filter="url(#shadow)" />
+    <text x="565" y="605" font-size="13" font-weight="700" fill="#334155" text-anchor="middle">Deterministic Silver SQL</text>
+    <rect x="465" y="620" width="200" height="45" rx="6" fill="#ffffff" stroke="#cbd5e1" />
+    <text x="565" y="635" font-size="11" font-weight="600" fill="#475569" text-anchor="middle">DuckDB Parquet Handlers</text>
+    <text x="565" y="650" font-size="10" font-weight="500" fill="#64748b" text-anchor="middle">Silver primary + optional compensation</text>
 
-  <rect x="1130" y="830" width="300" height="40" rx="8" fill="#10b981" filter="url(#shadow-heavy)" />
-  <text x="1280" y="855" font-size="14" font-weight="800" fill="#ffffff" text-anchor="middle">Vetted Final Options Strategy</text>
+    <rect x="465" y="675" width="200" height="65" rx="6" fill="#fffbeb" stroke="#fde68a" />
+    <text x="565" y="690" font-size="11" font-weight="700" fill="#b45309" text-anchor="middle">⭐ Lineage Anchors</text>
+    <text x="565" y="706" font-size="10" fill="#78350f" text-anchor="middle">• Emits strict source proofs</text>
+    <text x="565" y="722" font-size="10" fill="#78350f" text-anchor="middle">• Cited by Agent nodes</text>
 
-  <rect x="1030" y="890" width="500" height="40" rx="6" fill="#f8fafc" stroke="#e2e8f0" stroke-dasharray="2" />
-  <text x="1280" y="915" font-size="12" font-weight="600" fill="#475569" text-anchor="middle">Outputs run-scoped audit JSONL trails for frontend visibility</text>
+    <rect x="695" y="580" width="310" height="265" rx="8" fill="#f8fafc" stroke="#fbbf24" stroke-dasharray="4" filter="url(#shadow)" />
+    <text x="850" y="605" font-size="13" font-weight="700" fill="#334155" text-anchor="middle">Semantic Gold Vector Search</text>
+
+    <rect x="705" y="620" width="290" height="45" rx="6" fill="#fffbeb" stroke="#fde68a" />
+    <text x="850" y="635" font-size="11" font-weight="700" fill="#b45309" text-anchor="middle">⭐ Strategy: Pre-Filtering</text>
+    <text x="850" y="651" font-size="10" fill="#78350f" text-anchor="middle">• High-selectivity retrieval via schema payload.</text>
+
+    <rect x="705" y="675" width="135" height="25" rx="4" fill="#ffffff" stroke="#cbd5e1" />
+    <text x="772" y="692" font-size="10" font-weight="600" fill="#475569" text-anchor="middle">Dense Similarity</text>
+    <rect x="860" y="675" width="135" height="25" rx="4" fill="#ffffff" stroke="#cbd5e1" />
+    <text x="927" y="692" font-size="10" font-weight="600" fill="#475569" text-anchor="middle">Sparse SPLADE</text>
+
+    <rect x="705" y="710" width="290" height="50" rx="6" fill="#fffbeb" stroke="#fde68a" />
+    <text x="850" y="725" font-size="11" font-weight="700" fill="#b45309" text-anchor="middle">⭐ Strategy: Reciprocal Rank Fusion (RRF)</text>
+    <text x="850" y="741" font-size="10" fill="#78350f" text-anchor="middle">• Fuses scores based on rank position.</text>
+
+    <rect x="705" y="770" width="290" height="60" rx="6" fill="#fffbeb" stroke="#fde68a" />
+    <text x="850" y="785" font-size="11" font-weight="700" fill="#b45309" text-anchor="middle">⭐ Strategy: Cross-Encoder Reranker</text>
+    <text x="850" y="801" font-size="10" fill="#78350f" text-anchor="middle">• Strict-to-relaxed fallback tiers.</text>
+    <text x="850" y="817" font-size="10" fill="#78350f" text-anchor="middle">• Catches logic nuances (e.g., Vest vs Sell).</text>
+
+    <path d="M 565 755 L 565 870 L 605 870" stroke="#64748b" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+    <path d="M 850 845 L 850 870 L 805 870" stroke="#64748b" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+
+    <rect x="605" y="852" width="200" height="35" rx="6" fill="#3b82f6" filter="url(#shadow)" />
+    <text x="705" y="874" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">Unified Agent Context Envelope</text>
+  </g>
+
+
+  <g id="column-3">
+    <text x="1280" y="140" font-size="20" font-weight="700" fill="#9a3412" text-anchor="middle">III. Multi-Agent Reasoning (The "Brain")</text>
+    <text x="1280" y="160" font-size="12" font-weight="600" fill="#ea580c" text-anchor="middle">(LangGraph Peer-Review State Machine)</text>
+
+    <rect x="1030" y="180" width="500" height="145" rx="8" fill="#ffffff" stroke="#e2e8f0" filter="url(#shadow)" />
+    <text x="1050" y="205" font-size="16" font-weight="800" fill="#c2410c">1. Node Analyst (Drafting)</text>
+    <text x="1280" y="203" font-size="11" font-weight="700" fill="#ea580c" text-anchor="start">Model: options-expert-v1:latest</text>
+    <text x="1050" y="225" font-size="11" fill="#475569">Drafts strategy from merged context with citation discipline.</text>
+    
+    <rect x="1050" y="240" width="460" height="75" rx="6" fill="#fffbeb" stroke="#fde68a" />
+    <text x="1060" y="255" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: IV Regime Pinning</text>
+    <text x="1060" y="271" font-size="10" fill="#78350f">• Locks implied volatility baseline</text>
+    <text x="1060" y="287" font-size="10" fill="#78350f">• Prevents thesis oscillation</text>
+    <text x="1060" y="303" font-size="10" fill="#78350f">• Cites Silver Truth metrics directly</text>
+
+    <path d="M 1280 325 L 1280 335" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
+
+    <rect x="1030" y="340" width="500" height="130" rx="8" fill="#ffffff" stroke="#3b82f6" stroke-width="2" filter="url(#shadow)" />
+    <text x="1050" y="365" font-size="16" font-weight="800" fill="#1d4ed8">2. Node Checker ("Blue Team" Factual Gate)</text>
+    <text x="1390" y="363" font-size="11" font-weight="700" fill="#2563eb" text-anchor="start">Model: llama3:latest</text>
+    <text x="1050" y="385" font-size="11" fill="#475569">Verifies numeric consistency &amp; citation anchor validity.</text>
+    
+    <rect x="1050" y="400" width="460" height="55" rx="6" fill="#fffbeb" stroke="#fde68a" />
+    <text x="1060" y="415" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: Deterministic-First Audit</text>
+    <text x="1060" y="431" font-size="10" fill="#78350f">• Pre-LLM Frozen Silver baseline checks</text>
+    <text x="1060" y="447" font-size="10" fill="#78350f">• Instant "Fatal" tag for hallucinations</text>
+
+    <path d="M 1280 470 L 1280 485" stroke="#64748b" stroke-width="2" marker-end="url(#arrow-green)" />
+    
+    <path d="M 1030 405 C 960 405, 960 255, 1020 255" fill="none" stroke="#ef4444" stroke-width="2" stroke-dasharray="4" marker-end="url(#arrow-red)" />
+    <rect x="910" y="320" width="85" height="20" rx="4" fill="#fee2e2" />
+    <text x="952" y="334" font-size="10" font-weight="700" fill="#dc2626" text-anchor="middle">Fatal/Rewrite</text>
+
+    <rect x="1030" y="490" width="500" height="135" rx="8" fill="#ffffff" stroke="#ef4444" stroke-width="2" filter="url(#shadow)" />
+    <text x="1050" y="515" font-size="16" font-weight="800" fill="#b91c1c">3. Node Critic ("Red Team" Logic Audit)</text>
+    <text x="1390" y="513" font-size="11" font-weight="700" fill="#dc2626" text-anchor="start">Model: options-expert-v1</text>
+    <text x="1050" y="535" font-size="11" fill="#475569">Stress-tests risk posture, logical contradictions &amp; regime mismatches.</text>
+    
+    <rect x="1050" y="550" width="460" height="60" rx="6" fill="#fffbeb" stroke="#fde68a" />
+    <text x="1060" y="565" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: Actionability Gates</text>
+    <text x="1060" y="581" font-size="10" fill="#78350f">• Isolates "Fatal" blockers from "Minor" suggestions</text>
+    <text x="1060" y="597" font-size="10" fill="#78350f">• Deterministic gate logic to prevent infinite loops</text>
+
+    <path d="M 1280 625 L 1280 640" stroke="#64748b" stroke-width="2" marker-end="url(#arrow-green)" />
+    
+    <path d="M 1530 560 C 1580 560, 1580 255, 1540 255" fill="none" stroke="#ef4444" stroke-width="2" stroke-dasharray="4" marker-end="url(#arrow-red)" />
+    <rect x="1540" y="395" width="50" height="20" rx="4" fill="#fee2e2" />
+    <text x="1565" y="409" font-size="10" font-weight="700" fill="#dc2626" text-anchor="middle">Fatal</text>
+
+    <rect x="1030" y="645" width="500" height="135" rx="8" fill="#ffffff" stroke="#10b981" stroke-width="2" filter="url(#shadow)" />
+    <text x="1050" y="670" font-size="16" font-weight="800" fill="#047857">4. Node Finalizer (Polish &amp; Traceability)</text>
+    <text x="1390" y="668" font-size="11" font-weight="700" fill="#059669" text-anchor="start">Model: options-expert-v1</text>
+    <text x="1050" y="690" font-size="11" fill="#475569">Emits schema-constrained final report for downstream consumers.</text>
+    
+    <rect x="1050" y="705" width="460" height="60" rx="6" fill="#fffbeb" stroke="#fde68a" />
+    <text x="1060" y="720" font-size="11" font-weight="700" fill="#b45309">⭐ Strategy: Output Schema Consistency &amp; Lineage</text>
+    <text x="1060" y="736" font-size="10" fill="#78350f">• Strict JSON schema enforcement</text>
+    <text x="1060" y="752" font-size="10" fill="#78350f">• Full raw-to-final clickable evidence chain</text>
+
+    <path d="M 1280 780 L 1280 805" stroke="#10b981" stroke-width="3" marker-end="url(#arrow-green)" />
+
+    <rect x="1130" y="810" width="300" height="40" rx="8" fill="#10b981" filter="url(#shadow-heavy)" />
+    <text x="1280" y="835" font-size="14" font-weight="800" fill="#ffffff" text-anchor="middle">Structured Strategy Output</text>
+
+    <rect x="1030" y="870" width="500" height="85" rx="6" fill="#f8fafc" stroke="#e2e8f0" stroke-dasharray="2" />
+    <text x="1280" y="890" font-size="14" font-weight="800" fill="#334155" text-anchor="middle">Frontend Streamlit Runtime &amp; Observability</text>
+    <text x="1280" y="910" font-size="11" fill="#475569" text-anchor="middle">Consumes node-level stream events &amp; renders progressive UI.</text>
+    <text x="1280" y="925" font-size="11" fill="#475569" text-anchor="middle">Writes frontend trace, final_state, and summary bundle artifacts.</text>
+    <text x="1280" y="940" font-size="11" fill="#475569" text-anchor="middle">Provides run-scoped backend audit logs for deterministic node replay.</text>
+  </g>
+
+  <g id="cross-block-arrows">
+    <path d="M 410 930 L 990 930" fill="none" stroke="#0284c7" stroke-width="3" stroke-dasharray="6" marker-end="url(#arrow-macro)" />
+    <rect x="635" y="915" width="140" height="30" rx="4" fill="#e0f2fe" stroke="#0284c7" stroke-width="1" />
+    <text x="705" y="935" font-size="12" font-weight="700" fill="#0369a1" text-anchor="middle">Global Background</text>
+  </g>
 
 </svg>
