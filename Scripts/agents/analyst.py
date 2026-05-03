@@ -306,18 +306,8 @@ class AnalystAgent:
     """
 
     def __init__(self):
-        # Primary engine: local Ollama 70B via OpenAI-compatible endpoint.
-        # Secondary engine: remote OpenAI-compatible fallback (gpt-4o-mini).
-        self.backend = os.getenv("ANALYST_LLM_BACKEND", "ollama").strip().lower()
-        if self.backend != "ollama":
-            logger.warning("AnalystAgent: forcing backend to 'ollama' (configured=%s).", self.backend)
-
-        self.model_name = os.getenv("OLLAMA_ANALYST_MODEL", "options-expert-v1:latest")
-        self.base_url = _normalize_openai_base_url(
-            os.getenv("OLLAMA_OPENAI_BASE_URL"),
-            os.getenv("OLLAMA_HOST"),
-        )
-        self.api_key = os.getenv("OLLAMA_OPENAI_API_KEY", "ollama")
+        # Primary engine: gpt-4o-mini via OpenAI API.
+        # Backup engine: options-expert-v1:latest via local Ollama (OpenAI-compatible).
         self.temperature = float(os.getenv("ANALYST_TEMPERATURE", "0.0"))
         self.max_tokens = int(os.getenv("ANALYST_MAX_TOKENS", "180"))
         self.timeout_s = float(os.getenv("ANALYST_TIMEOUT_SECONDS", "120"))
@@ -335,31 +325,37 @@ class AnalystAgent:
         self.max_gold_chars = int(os.getenv("ANALYST_MAX_GOLD_CHARS", "3200"))
         self.max_payload_chars = int(os.getenv("ANALYST_MAX_PAYLOAD_CHARS", "9000"))
 
-        self.llm = self._build_ollama_llm(self.model_name)
+        # Primary: OpenAI gpt-4o-mini
+        self.model_name = os.getenv("ANALYST_PRIMARY_MODEL", "gpt-4o-mini")
+        self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+        self.openai_base_url = os.getenv("OPENAI_BASE_URL", "").strip()
+        self.openai_fallback_timeout_s = float(os.getenv("ANALYST_OPENAI_FALLBACK_TIMEOUT_SECONDS", "45"))
+
+        # Backup: Ollama options-expert-v1:latest
+        self.ollama_backup_model = os.getenv("OLLAMA_ANALYST_MODEL", "options-expert-v1:latest")
+        self.base_url = _normalize_openai_base_url(
+            os.getenv("OLLAMA_OPENAI_BASE_URL"),
+            os.getenv("OLLAMA_HOST"),
+        )
+        self.api_key = os.getenv("OLLAMA_OPENAI_API_KEY", "ollama")
+
+        self.llm = self._build_openai_fallback_llm(self.model_name)
         self.fallback_llm = None
         self.primary_healthy = True
         self.fallback_healthy = True
 
-        self.openai_fallback_model = os.getenv("ANALYST_OPENAI_FALLBACK_MODEL", "gpt-4o-mini")
-        self.openai_fallback_timeout_s = float(os.getenv("ANALYST_OPENAI_FALLBACK_TIMEOUT_SECONDS", "45"))
-        self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
-        self.openai_base_url = os.getenv("OPENAI_BASE_URL", "").strip()
-        self.openai_fallback_enabled = (
+        self.ollama_fallback_enabled = (
             self.enable_model_fallback
-            and os.getenv("ANALYST_OPENAI_FALLBACK_ENABLED", "1") == "1"
+            and os.getenv("ANALYST_OLLAMA_FALLBACK_ENABLED", "1") == "1"
         )
-        if self.openai_fallback_enabled:
-            self.fallback_llm = self._build_openai_fallback_llm(self.openai_fallback_model)
-            if not self.openai_api_key and not self.openai_base_url:
-                self.fallback_healthy = False
-                logger.warning(
-                    "AnalystAgent: OpenAI fallback enabled but OPENAI_API_KEY/OPENAI_BASE_URL missing."
-                )
+        if self.ollama_fallback_enabled:
+            self.fallback_llm = self._build_ollama_llm(self.ollama_backup_model)
 
-        if self.healthcheck_enabled:
-            self.primary_healthy = self._healthcheck_model(self.model_name)
-            if not self.primary_healthy and self.fallback_llm is not None and self.fallback_healthy:
-                logger.warning("AnalystAgent: primary unhealthy at startup; fallback path armed.")
+        if self.healthcheck_enabled and self.fallback_llm is not None:
+            ollama_ok = self._healthcheck_model(self.ollama_backup_model)
+            if not ollama_ok:
+                self.fallback_healthy = False
+                logger.info("AnalystAgent: Ollama backup unavailable at startup; OpenAI primary only.")
 
         self.system_prompt = get_analyst_system_prompt()
         self.system_prompt = (
@@ -374,9 +370,9 @@ class AnalystAgent:
             ("human", "Here is the context and query:\n\n{payload}"),
         ])
         logger.info(
-            "AnalystAgent: primary=%s (ollama) | fallback=%s (openai) | retries=%s | fast_fail_500=%s",
+            "AnalystAgent: primary=%s (openai) | backup=%s (ollama) | retries=%s | fast_fail_500=%s",
             self.model_name,
-            self.openai_fallback_model if self.fallback_llm is not None else "disabled",
+            self.ollama_backup_model if self.fallback_llm is not None else "disabled",
             self.max_retries,
             self.fast_fail_on_500,
         )
@@ -596,13 +592,13 @@ class AnalystAgent:
             )
 
         except Exception as e:
-            # Primary failed -> immediate OpenAI fallback path.
+            # Primary (OpenAI) failed -> switch to Ollama backup.
             if self.enable_model_fallback and self.fallback_llm is not None and self.fallback_healthy:
                 try:
                     fallback_started = asyncio.get_running_loop().time()
                     logger.warning(
-                        "AnalystAgent: primary path failed; switching to fallback model=%s",
-                        self.openai_fallback_model,
+                        "AnalystAgent: primary OpenAI path failed; switching to Ollama backup model=%s",
+                        self.ollama_backup_model,
                     )
                     payload = {
                         "payload": self._build_payload_text(
@@ -614,13 +610,13 @@ class AnalystAgent:
                             revision_block=revision_block,
                         )
                     }
-                    response = await self._invoke_with_retry(self.fallback_llm, payload, self.openai_fallback_model)
+                    response = await self._invoke_with_retry(self.fallback_llm, payload, self.ollama_backup_model)
                     draft = getattr(response, "content", str(response)).strip()
                     if draft:
                         switch_elapsed = asyncio.get_running_loop().time() - fallback_started
                         if switch_elapsed > self.fallback_switch_sla_s:
                             logger.warning(
-                                "AnalystAgent: fallback switch exceeded SLA %.2fs (actual=%.2fs)",
+                                "AnalystAgent: backup switch exceeded SLA %.2fs (actual=%.2fs)",
                                 self.fallback_switch_sla_s,
                                 switch_elapsed,
                             )
@@ -628,10 +624,10 @@ class AnalystAgent:
                             draft=draft,
                             iv_regime=iv_regime,
                             used_fallback=True,
-                            model_used=self.openai_fallback_model,
+                            model_used=self.ollama_backup_model,
                         )
                 except Exception as fallback_err:
-                    logger.exception("AnalystAgent: fallback model failed: %s", fallback_err)
+                    logger.exception("AnalystAgent: Ollama backup model failed: %s", fallback_err)
 
             logger.exception(f"AnalystAgent: LLM call failed: {e}")
             fallback_draft = (
