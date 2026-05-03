@@ -26,28 +26,9 @@ Operational objective:
 
 ## 3. Workflow and Retrieval Strategy
 
-### 3.1 End-to-End RRF Workflow
+### 3.1 Retrieval Workflow
+![Retrieval workflow](images/Retrieval_workflow.svg)
 
-```mermaid
-flowchart TD
-    A[FullTransformationResult] --> B[Build Smart Filter]
-    A --> C[Dense query text: hyde_paragraph]
-    A --> D[Sparse query text: rerank_query]
-
-    C --> E[Dense prefetch using named vector dense]
-    D --> F[Sparse prefetch using named vector sparse]
-
-    B --> E
-    B --> F
-
-    E --> G[Qdrant FusionQuery RRF]
-    F --> G
-
-    G --> H[CrossEncoder rerank]
-    H --> I[Score gate keep score > 0.01]
-    I --> J[Normalize RetrievedChunk]
-    J --> K[Write retrieval audit payload]
-```
 
 ### 3.2 Dense vs Sparse Strategy (Asymmetric Querying)
 
@@ -105,29 +86,6 @@ Fallback cascade:
 | `results_count` / `top_k_scores` | retrieval quality snapshot | same |
 | `latency_sec` / `status` / `error_msg` | runtime health | same |
 
-## 5. How to Test
-
-```bash
-python Scripts/tests/test_router_e2e.py
-python -m Scripts query "Past week macro geopolitics impact on GLD?"
-python Scripts/retrieval/qdrant_retriever.py
-```
-
-Validation checklist:
-- tier transitions are visible in audit logs when strict retrieval is empty,
-- `filter_applied` contains expected source/ticker/topic/time logic,
-- final chunks include `bronze_ref`, `record_date`, and valid post-rerank scores.
-
-## 6. Dependency Files, Linked Docs, and One-Line Commands
-
-### 6.1 Core dependency files
-
-- `Scripts/retrieval/qdrant_retriever.py`
-- `Scripts/retrieval/master_retriever.py`
-- `Scripts/retrieval/query_transform.py`
-- `Scripts/retrieval/time_adapter.py`
-- `Scripts/vector_store/connection.py`
-- `Scripts/retrieval/schema.py`
 
 ### 6.2 Linked documentation
 
@@ -141,9 +99,5 @@ Validation checklist:
 - [SEC Data Profile](../Data_source_docs/SEC_data.md)
 - [GPR Data Profile](../Data_source_docs/GPR_Index.md)
 
-### 6.3 One-line setup command
 
-```bash
-pip install -r requirements.txt
-```
 

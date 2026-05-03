@@ -26,20 +26,7 @@ Control objectives:
 ```
 
 ## 3. Code Strategy and Workflow
-
-```mermaid
-flowchart TD
-    A["Resolve Gold Files"] --> B["Create Or Reuse Collection"]
-    B --> C["Ensure Payload Indexes"]
-    C --> D["Load JSONL Records"]
-    D --> E["Build Point ID and Payload"]
-    E --> F["Compute Dense Embedding"]
-    E --> G["Compute Sparse Embedding"]
-    F --> H["Assemble Qdrant PointStruct"]
-    G --> H
-    H --> I["Batch Upsert"]
-    I --> J["Write Ingestion Logs"]
-```
+![Ingestion phase workflow](images/Ingestion_Phase_Workflow.svg)
 
 Key strategy notes:
 

@@ -29,6 +29,7 @@ flowchart TD
 - **Orchestration:** `Scripts/agents/router.py` compiles LangGraph topology and conditional routing.
 - **State discipline:** each node writes deterministic deltas into `AgentState`.
 - **Governance:** Checker (facts/lineage) gates Critic (logic/risk), then Finalizer structures output.
+- **Model strategy:** Analyst and Finalizer both default to `gpt-4o-mini` (OpenAI API) as the primary engine; `options-expert-v1:latest` (Ollama) is the automatic backup on failure.
 
 ---
 

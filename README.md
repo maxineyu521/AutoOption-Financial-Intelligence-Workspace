@@ -49,31 +49,7 @@ Every major architectural decision in AutoOptions is a direct consequence of the
 ---
 ## 2. Architecture Blueprint
 
-```mermaid
-flowchart TD
-    A[Data Ingestion: FRED / SEC / News / yfinance] --> B[Medallion Processing: Bronze -> Silver -> Gold]
-    B --> C[Backend Orchestration CLI: ingest warmup query daemon]
-    C --> D[MasterRetriever]
-    D --> D0[Intent classification: sql_only / vector_only / hybrid_both]
-    D0 --> Dm[Two-stage query transform: metadata + HyDE]
-    Dm --> Dt[Compile per-source time predicates]
-    Dt --> Dr{Route-specific retrieval plan}
-    Dr -->|hybrid_both| D1[Gold top_k=5 + Silver primary + optional compensation]
-    Dr -->|vector_only| D2[Gold top_k=5 + compensation-first Silver policy]
-    Dr -->|sql_only| D3[Silver primary + Gold probe top_k=2]
-    D1 --> E[Agent Graph]
-    D2 --> E
-    D3 --> E
-    E --> E1[Analyst]
-    E1 --> E2[Checker]
-    E2 --> E3[Critic]
-    E3 --> E4[Finalizer]
-    E4 --> F[Structured Recommendation Payload]
-    F --> G[Frontend Streamlit Runtime]
-    G --> H[Progressive Render and Operator Dashboard]
-    E --> I[Backend Audit Artifacts]
-    G --> J[Frontend Query Bundles]
-```
+![End-to-end architecture](images/AutoOption_Architecture.svg)
 
 ---
 
@@ -134,36 +110,9 @@ flowchart TD
 → Reference: [Observability](./docs/modular_guide/Observability.md) · [Time Schema Audit](./docs/Data_source_docs/Time_Schema_Audit.md)
 
 ---
-## 4. Runtime Workflow and Operating Commands
+## 4. Data Sources, Rationale, and Medallion Lifecycle
 
-### Runtime Workflow
-```mermaid
-flowchart TD
-    A[Operator starts session] --> B{Execution command}
-    B -->|ingest| C[Run ingestion stages with idempotent state tracking]
-    B -->|warmup| D[Warm role-specific LLM clients]
-    B -->|query| E[Build and execute LangGraph router workflow]
-
-    C --> F[Refresh Silver and Gold artifacts]
-    F --> G[Optional vector ingestion and index reconciliation]
-
-    E --> H[Route retrieval across SQL and Qdrant]
-    H --> I[Analyst draft strategy]
-    I --> J[Checker factual and contract validation]
-    J --> K[Critic risk challenge and revision]
-    K --> L[Finalizer emits schema-constrained report]
-
-    L --> M[Write backend run-scoped logs]
-    L --> N[Return response stream to frontend]
-    N --> O[Frontend progressive rendering]
-    O --> P[Write frontend trace/final_state/summary bundle]
-```
-
----
-
-## 5. Data Sources, Rationale, and Medallion Lifecycle
-
-### 5.1 Source Registry and Business Value
+### 4.1 Source Registry and Business Value
 
 | Source Domain | Acquisition Layer | Silver/Gold Contract | Core Business Value |
 | --- | --- | --- | --- |
@@ -172,10 +121,9 @@ flowchart TD
 | SEC filings | SEC EDGAR ingestion + processing | Bronze parsed Form 4 XML + Form 8-K HTML; Gold enriched semantic JSONL | Insider flow + material event intelligence with traceable accession-level lineage |
 | Geopolitical risk | `GPR_index.py` | Silver metrics + Gold narrative/JSONL | Risk-off lead indicator for metals and volatility |
 | Global news (GDELT + full text) | `news_scraper.py` | Bronze raw/full text + Gold enriched JSONL | Event/tone-driven volatility context |
-| COT positioning (planned extension) | planned tabular ingest | Parquet | Smart-money positioning bias |
-| PDF/vision research (planned extension) | planned multimodal parsers | JSONL semantic artifacts | Chart-heavy institutional narrative extraction |
 
-### 5.2 Medallion Processing Contract
+
+### 4.2 Medallion Processing Contract
 1. **Bronze:** raw source-native payloads (JSONL/HTML/XML/CSV).
 2. **Silver:** deterministic normalized Parquet tables (numeric system of record).
 3. **Gold:** retrieval-ready semantic artifacts (JSONL/Markdown) for vector search.
@@ -183,7 +131,19 @@ flowchart TD
 
 ---
 
+## 5. Runtime Workflow and Operating Commands
+
+### Runtime Workflow
+
+![Runtime workflow](images/AutoOption_Workflow.svg)
+
+---
+
+
+
 ## 6. Qdrant Pipeline and Hybrid Search Strategy
+
+![Ingestion phase workflow](images/Ingestion_Phase_Workflow.svg)
 
 ### 6.1 Ingestion and Indexing Principles
 - Inject structured metadata before vectorization (`ticker`, `source_type`, `form_type`, timestamps, lineage IDs) to enable deterministic filtering.
@@ -191,6 +151,8 @@ flowchart TD
 - Run asymmetric hybrid retrieval channels: dense semantic vectors (HyDE paragraph) + sparse lexical vectors (rerank query) with server-side fusion.
 - Apply cross-encoder reranking and score gating so only high-signal chunks enter downstream reasoning.
 - Preserve idempotency and auditability via accession/url-based lineage and retrieval audit trails.
+
+![Retrieval workflow](images/Retrieval_workflow.svg)
 
 ### 6.2 Retrieval Execution Logic
 1. Classify route intent (`sql_only`, `vector_only`, `hybrid_both`) and transform query into typed metadata + HyDE payload.
@@ -204,6 +166,8 @@ flowchart TD
 ---
 
 ## 7. Multi-Agent Orchestration and Prompting Control
+
+![Multi-agent and frontend workflow](images/Muti-agent_Frontend_workflow.svg)
 
 ### 7.1 Agent Responsibilities
 - **Analyst:** drafts strategy from merged context with citation discipline.
