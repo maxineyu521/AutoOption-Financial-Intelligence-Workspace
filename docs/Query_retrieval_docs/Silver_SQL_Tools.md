@@ -12,7 +12,7 @@ Primary guarantees:
 - Time windows are anchored to ingestion reality (not wall-clock assumptions).
 - Every SQL path emits lineage anchors and structured audit logs.
 
-## 2. Architecture (Markdown Block)
+## 2. Architecture
 
 ```text
 [MasterRetriever]

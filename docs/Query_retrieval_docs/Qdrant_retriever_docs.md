@@ -27,7 +27,7 @@ Operational objective:
 ## 3. Workflow and Retrieval Strategy
 
 ### 3.1 Retrieval Workflow
-![Retrieval workflow](images/Retrieval_workflow.svg)
+![Retrieval workflow](../../images/Retrieval_workflow.svg)
 
 
 ### 3.2 Dense vs Sparse Strategy (Asymmetric Querying)
