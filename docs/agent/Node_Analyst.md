@@ -86,7 +86,3 @@ Related docs:
 - [Data Source Summary](../Data_source_docs/Data_source_summary.md)
 - [LLM Pool Operations Guide](../modular_guide/LLM%20Pool%20Operations%20Guide.md)
 
-One-line install:
-```bash
-pip install -r requirements.txt
-```

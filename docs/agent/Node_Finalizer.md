@@ -87,8 +87,5 @@ Related docs:
 - [Observability](../modular_guide/Observability.md)
 - [Agent Architecture](./Agent_Architecture.md)
 
-One-line install:
-```bash
-pip install -r requirements.txt
-```
+
 

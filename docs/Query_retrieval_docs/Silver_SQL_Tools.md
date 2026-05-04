@@ -33,7 +33,7 @@ Primary guarantees:
 
 ### 3.1 End-to-End Retrieval Workflow
 
-![Retrieval workflow](images/Retrieval_workflow.svg)
+![Retrieval workflow](../../images/Retrieval_workflow.svg)
 
 ### 3.2 SQL Computation Logic (Detailed)
 
