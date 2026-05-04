@@ -12,7 +12,7 @@ Primary guarantees:
 - Time windows are anchored to ingestion reality (not wall-clock assumptions).
 - Every SQL path emits lineage anchors and structured audit logs.
 
-## 2. Architecture (Markdown Block)
+## 2. Architecture
 
 ```text
 [MasterRetriever]
@@ -33,21 +33,7 @@ Primary guarantees:
 
 ### 3.1 End-to-End Retrieval Workflow
 
-```mermaid
-flowchart TD
-    A["Metadata Extraction"] --> B["Partition Requested Metrics"]
-    B --> C{"Any Supported Metric"}
-    C -- No --> C1["Build Unsupported-Metrics Status Payload"]
-    C -- Yes --> D["Normalize Tickers and Apply Cap"]
-    D --> E["Dispatch Canonical Metric To Handler"]
-    E --> F["Build Source Aware Time Range"]
-    F --> G["Execute DuckDB Query"]
-    G --> H["Compute Derived Values"]
-    H --> I["Emit Values and Lineage Anchors"]
-    I --> J["Write SQL Audit Lines"]
-    C1 --> J
-    J --> K["Return Deterministic Silver Context Payload"]
-```
+![Retrieval workflow](../../images/Retrieval_workflow.svg)
 
 ### 3.2 SQL Computation Logic (Detailed)
 
@@ -174,9 +160,5 @@ What to validate:
 - [Qdrant Retriever Docs](./Qdrant_retriever_docs.md)
 - [Time Adapter](./Time_Adapter.md)
 
-### 6.3 One-line setup command
 
-```bash
-pip install -r requirements.txt
-```
 

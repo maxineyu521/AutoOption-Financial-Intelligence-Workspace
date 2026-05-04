@@ -5,37 +5,10 @@
 Define the production retrieval contract that transforms a user query into a unified, auditable context payload for the multi-agent pipeline.  
 The architecture must preserve deterministic numeric grounding (Silver), semantic breadth (Gold), and explicit degradation behavior under partial infrastructure failure.
 
-## 2. Architecture (Markdown Block)
+## 2. Architecture and Workflow
+![Retrieval workflow](../../images/Retrieval_workflow.svg)
 
-```text
-[User Query]
-   -> MasterRetriever
-      -> Intent Router (sql_only | vector_only | hybrid_both)
-      -> Query Transformer (Stage1 metadata + Stage2 HyDE)
-      -> Time Adapter (compile per-source predicates)
-      -> Gold Retriever (Qdrant hybrid retrieval)
-      -> Silver SQL Tool (DuckDB Parquet retrieval)
-      -> Optional HyDE entity compensation (Silver side)
-      -> Context assembly + status + latency + audit-friendly payload
-```
-
-## 3. Code Strategy and Workflow
-
-```mermaid
-flowchart TD
-    A[User Query] --> B[Intent Classification]
-    B --> C[Two-Stage Query Transform]
-    C --> D[Compile Per-Source Time Predicates]
-    D --> E{Route}
-    E -->|hybrid_both| F[Gold top_k=5 + Silver primary + optional compensation]
-    E -->|vector_only| G[Gold top_k=5 + compensation-first Silver policy]
-    E -->|sql_only| H[Silver primary + Gold probe top_k=2 + semantic hedge]
-    F --> I[Merge and normalize contexts]
-    G --> I
-    H --> I
-    I --> J[Attach time_range / hyde_anticipation / latency / status]
-    J --> K[Return AgentState-ready payload]
-```
+## 3. Code Strategy 
 
 Strategy highlights:
 
@@ -92,9 +65,5 @@ Validation focus:
 - [Time Adapter](./Time_Adapter.md)
 - [Observability](../Observability.md)
 
-### 6.3 One-line setup command
 
-```bash
-pip install -r requirements.txt
-```
 

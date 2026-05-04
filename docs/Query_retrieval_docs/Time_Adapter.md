@@ -6,7 +6,7 @@
 
 This prevents temporal mismatches caused by mixed data cadences (event-level, daily, monthly).
 
-## 2. Architecture (Markdown Block)
+## 2. Architecture
 
 ```text
 [Semantic TimeWindow + Anchor Date]

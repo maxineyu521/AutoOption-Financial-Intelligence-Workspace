@@ -34,7 +34,7 @@ Execution entrypoints:
 - **Evidence pool determinism:** citations are assembled from Silver lineage anchors and Gold `bronze_ref` metadata before model invocation.
 - **Deterministic field overrides:** report date and citation source types are reconciled post-generation using pipeline-known truth.
 - **Confidence governance policy:** score is capped by degradation state and revision depth to prevent overconfident outputs.
-- **Fallback continuity:** failed primary model path can switch to fallback model; full failure yields safe degraded report skeleton.
+- **Fallback continuity:** primary `gpt-4o-mini` (OpenAI API, env `FINALIZER_PRIMARY_MODEL`); automatic switch to `options-expert-v1:latest` (Ollama, env `OLLAMA_FINALIZER_MODEL`) on failure; full failure yields safe degraded report skeleton.
 - **Polish-channel integration:** `critic_minor_suggestions` are integrated as non-blocking quality improvements without changing directional thesis.
 - **Delivery normalization:** output object is serialized as stable `final_strategy` dict for backend and frontend contract compatibility.
 
@@ -87,8 +87,5 @@ Related docs:
 - [Observability](../modular_guide/Observability.md)
 - [Agent Architecture](./Agent_Architecture.md)
 
-One-line install:
-```bash
-pip install -r requirements.txt
-```
+
 

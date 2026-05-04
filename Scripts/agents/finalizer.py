@@ -352,12 +352,8 @@ class FinalizerAgent:
     """
 
     def __init__(self):
-        self.model_name = os.getenv("OLLAMA_FINALIZER_MODEL", "options-expert-v1:latest")
-        self.base_url = _normalize_openai_base_url(
-            os.getenv("OLLAMA_OPENAI_BASE_URL"),
-            os.getenv("OLLAMA_HOST"),
-        )
-        self.api_key = os.getenv("OLLAMA_OPENAI_API_KEY", "ollama")
+        # Primary engine: gpt-4o-mini via OpenAI API.
+        # Backup engine: options-expert-v1:latest via local Ollama (OpenAI-compatible).
         self.temperature = float(os.getenv("FINALIZER_TEMPERATURE", "0.0"))
         self.max_tokens = int(os.getenv("FINALIZER_MAX_TOKENS", "700"))
         self.timeout_s = float(os.getenv("FINALIZER_TIMEOUT_SECONDS", "120"))
@@ -366,21 +362,30 @@ class FinalizerAgent:
         self.fast_fail_on_500 = os.getenv("FINALIZER_FAST_FAIL_ON_OLLAMA_500", "1") == "1"
         self.fallback_switch_sla_s = float(os.getenv("FINALIZER_FALLBACK_SWITCH_SLA_SECONDS", "1.0"))
 
-        self.openai_fallback_enabled = os.getenv("FINALIZER_OPENAI_FALLBACK_ENABLED", "1") == "1"
-        self.openai_fallback_model = os.getenv("FINALIZER_OPENAI_FALLBACK_MODEL", "gpt-4o-mini")
-        self.openai_fallback_timeout_s = float(os.getenv("FINALIZER_OPENAI_FALLBACK_TIMEOUT_SECONDS", "45"))
+        # Primary: OpenAI gpt-4o-mini
+        self.model_name = os.getenv("FINALIZER_PRIMARY_MODEL", "gpt-4o-mini")
         self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
         self.openai_base_url = os.getenv("OPENAI_BASE_URL", "").strip()
+        self.openai_fallback_timeout_s = float(os.getenv("FINALIZER_OPENAI_FALLBACK_TIMEOUT_SECONDS", "45"))
+
+        # Backup: Ollama options-expert-v1:latest
+        self.ollama_backup_model = os.getenv("OLLAMA_FINALIZER_MODEL", "options-expert-v1:latest")
+        self.base_url = _normalize_openai_base_url(
+            os.getenv("OLLAMA_OPENAI_BASE_URL"),
+            os.getenv("OLLAMA_HOST"),
+        )
+        self.api_key = os.getenv("OLLAMA_OPENAI_API_KEY", "ollama")
+        self.ollama_fallback_enabled = os.getenv("FINALIZER_OLLAMA_FALLBACK_ENABLED", "1") == "1"
 
         self.max_macro_chars = int(os.getenv("FINALIZER_MAX_MACRO_CHARS", "2600"))
         self.max_draft_chars = int(os.getenv("FINALIZER_MAX_DRAFT_CHARS", "7000"))
         self.max_evidence_chars = int(os.getenv("FINALIZER_MAX_EVIDENCE_CHARS", "3000"))
         self.max_payload_chars = int(os.getenv("FINALIZER_MAX_PAYLOAD_CHARS", "12000"))
 
-        self.llm = self._build_ollama_llm(self.model_name)
+        self.llm = self._build_openai_fallback_llm(self.model_name)
         self.fallback_llm = (
-            self._build_openai_fallback_llm(self.openai_fallback_model)
-            if self.openai_fallback_enabled
+            self._build_ollama_llm(self.ollama_backup_model)
+            if self.ollama_fallback_enabled
             else None
         )
 
@@ -536,7 +541,7 @@ class FinalizerAgent:
             prefer_fallback = bool(state.get("analyst_fallback_used", False))
             active_llm = self.fallback_llm if (prefer_fallback and self.fallback_llm is not None) else self.llm
             active_model_name = (
-                self.openai_fallback_model if (prefer_fallback and self.fallback_llm is not None)
+                self.ollama_backup_model if (prefer_fallback and self.fallback_llm is not None)
                 else self.model_name
             )
             logger.info(
@@ -587,8 +592,8 @@ class FinalizerAgent:
                         degraded_reason=degraded_reason,
                     )
                     logger.warning(
-                        "FinalizerAgent: switching to fallback model=%s",
-                        self.openai_fallback_model,
+                        "FinalizerAgent: switching to Ollama backup model=%s",
+                        self.ollama_backup_model,
                     )
                     report = await self._invoke_with_retry(
                         self.fallback_llm,

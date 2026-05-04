@@ -34,7 +34,7 @@ Execution entrypoints:
 - **Revision memory contract:** append-only `critic_feedback` is transformed into a structured revision block so each rewrite addresses unresolved failures.
 - **Prompt payload governance:** payload includes macro context, Silver metric table, Gold snippets, valid citation ID pools, and strict anti-hallucination policy.
 - **Citation hardening:** only IDs listed in `VALID_SILVER_IDS` and `VALID_GOLD_IDS` are allowed; placeholders are explicitly blocked.
-- **Model resilience path:** retries, fast-fail handling for runner errors, optional OpenAI fallback model, and degraded draft output when all paths fail.
+- **Model resilience path:** primary `gpt-4o-mini` (OpenAI API, env `ANALYST_PRIMARY_MODEL`); automatic switch to `options-expert-v1:latest` (Ollama, env `OLLAMA_ANALYST_MODEL`) on failure; degraded draft output when both paths fail.
 - **Router contract separation:** `analyst.py` returns structured envelope (`draft`, `iv_regime`, fallback info), while `router.py` owns state mutation (`revision_count`, verdict reset).
 
 Workflow sequence:
@@ -86,7 +86,3 @@ Related docs:
 - [Data Source Summary](../Data_source_docs/Data_source_summary.md)
 - [LLM Pool Operations Guide](../modular_guide/LLM%20Pool%20Operations%20Guide.md)
 
-One-line install:
-```bash
-pip install -r requirements.txt
-```
