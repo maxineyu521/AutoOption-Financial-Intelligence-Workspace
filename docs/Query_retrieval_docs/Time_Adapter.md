@@ -33,7 +33,7 @@ flowchart TD
     F --> H
     G --> H
     H --> I[Emit TimePredicate]
-    I --> J[serialize with to_dict()]
+    I --> J[serialize]
     J --> K[MasterRetriever time_range.source_predicates]
 ```
 
