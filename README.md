@@ -3,7 +3,7 @@
 ## 1. Financial Logic and Problem Framing
 
 ### 1.1 The Information Gap
-Macro signals that move precious-metals markets are publicly visible — Fed rates, geopolitical risk indexes, dollar dynamics, CPI prints. But for most investors, the path from "rates are rising" to "which `GLD` option to trade, at what strike, with what structure, and with what confidence" remains opaque.
+Macro signals that move precious-metals markets are publicly visible — Fed rates, geopolitical risk indexes, dollar dynamics, CPI prints. But for most investors, the path from 'rates are rising' to defining the appropriate volatility posture and option strategy structure remains opaque.
 
 The raw information exists. The **translation layer** does not.
 
