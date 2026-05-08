@@ -51,6 +51,10 @@ from Scripts.retrieval.schema import (
     FullTransformationResult,
     MetadataExtraction,
     QueryIntent,
+    RetrievalOutcome,
+    ScopeContract,
+    SourceCoverageContract,
+    TimeContract,
     TimeWindow,
     # Re-exported global time-window policy. The physical constants live in
     # schema.py to keep Gold/Silver free of a circular import against this
@@ -65,6 +69,15 @@ from Scripts.retrieval.time_adapter import (
     TimePredicate,
     compile_all as compile_all_time_predicates,
 )
+from Scripts.core.financial_ontology import (
+    ALLOWED_METRICS,
+    ALLOWED_SOURCES,
+    INSIDER_FLOW_QUERY_SLOTS,
+    METRIC_TO_COLUMN_MAPPING,
+    SEC_ACTION_TAXONOMY,
+    missing_slots_for_query_family,
+)
+from Scripts.core.financial_reasoning_contract import build_data_capability_profile
 
 # Public re-export surface — keeps `__all__` explicit for static analysers.
 __all__ = ["MasterRetriever", "TIME_WINDOW_DAYS", "time_window_to_days"]
@@ -129,25 +142,34 @@ class MasterRetriever:
         self.transformer = QueryTransformer()
 
         # --- 2. Router LLM configuration (cheap, short responses) ---
-        self.router_llm = ChatOllama(
-            model=os.getenv("OLLAMA_ROUTER_MODEL", "llama3:latest"),
-            temperature=float(os.getenv("ROUTER_TEMPERATURE", 0.0)),
-            num_predict=20,
+        router_provider = os.getenv("ROUTER_PROVIDER", "").strip().lower()
+        if router_provider not in {"openai", "ollama"}:
+            router_provider = "openai"
+        self.router_provider = router_provider
+
+        default_openai_model = os.getenv("ROUTER_OPENAI_FALLBACK_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
+        default_ollama_model = os.getenv("OLLAMA_ROUTER_MODEL", "llama3:latest").strip() or "llama3:latest"
+        self.router_model_name = os.getenv("ROUTER_MODEL", "").strip() or (
+            default_openai_model if self.router_provider == "openai" else default_ollama_model
         )
-        self.router_fallback_enabled = os.getenv("ROUTER_OPENAI_FALLBACK_ENABLED", "1") == "1"
-        self.router_fallback_model = os.getenv("ROUTER_OPENAI_FALLBACK_MODEL", "gpt-4o-mini")
+        self.router_llm = self._build_router_llm(self.router_provider, self.router_model_name)
+
+        self.router_fallback_enabled = os.getenv(
+            "ROUTER_ENABLE_MODEL_FALLBACK",
+            os.getenv("ROUTER_OPENAI_FALLBACK_ENABLED", "1"),
+        ) == "1"
+        self.router_fallback_provider = "ollama" if self.router_provider == "openai" else "openai"
+        self.router_fallback_model = (
+            default_ollama_model
+            if self.router_fallback_provider == "ollama"
+            else default_openai_model
+        )
         self.router_fallback_llm = None
         if self.router_fallback_enabled:
-            openai_kwargs: Dict[str, Any] = {
-                "model": self.router_fallback_model,
-                "temperature": float(os.getenv("ROUTER_TEMPERATURE", 0.0)),
-                "api_key": os.getenv("OPENAI_API_KEY", ""),
-                "timeout": float(os.getenv("ROUTER_OPENAI_TIMEOUT_SECONDS", "40")),
-            }
-            openai_base_url = os.getenv("OPENAI_BASE_URL", "").strip()
-            if openai_base_url:
-                openai_kwargs["base_url"] = openai_base_url
-            self.router_fallback_llm = ChatOpenAI(**openai_kwargs)
+            self.router_fallback_llm = self._build_router_llm(
+                self.router_fallback_provider,
+                self.router_fallback_model,
+            )
 
         # --- 3. Runtime knobs (env-tunable without code change) ---
         self.gold_timeout = float(os.getenv("GOLD_TIMEOUT", 10.0))
@@ -157,6 +179,26 @@ class MasterRetriever:
             f"🏛️ MasterRetriever ready | Gold_TO: {self.gold_timeout}s | "
             f"Silver_TO: {self.silver_timeout}s | HE_novel_cap: {_HE_NOVEL_TICKERS_CAP}"
         )
+
+    def _build_router_llm(self, provider: str, model_name: str):
+        temperature = float(os.getenv("ROUTER_TEMPERATURE", 0.0))
+        if provider == "ollama":
+            return ChatOllama(
+                model=model_name,
+                temperature=temperature,
+                num_predict=20,
+            )
+
+        openai_kwargs: Dict[str, Any] = {
+            "model": model_name,
+            "temperature": temperature,
+            "api_key": os.getenv("OPENAI_API_KEY", ""),
+            "timeout": float(os.getenv("ROUTER_OPENAI_TIMEOUT_SECONDS", "40")),
+        }
+        openai_base_url = os.getenv("OPENAI_BASE_URL", "").strip()
+        if openai_base_url:
+            openai_kwargs["base_url"] = openai_base_url
+        return ChatOpenAI(**openai_kwargs)
 
     # ======================================================================
     # A. Intent classification (unchanged — proven in production)
@@ -187,8 +229,8 @@ class MasterRetriever:
             if self.router_fallback_enabled and self.router_fallback_llm is not None:
                 try:
                     logger.warning(
-                        f"⚠️ [Router] Ollama failed ({type(e).__name__}); "
-                        f"retrying with OpenAI fallback model={self.router_fallback_model}"
+                        f"⚠️ [Router] {self.router_provider} failed ({type(e).__name__}); "
+                        f"retrying with {self.router_fallback_provider} fallback model={self.router_fallback_model}"
                     )
                     fb_response = await (prompt | self.router_fallback_llm).ainvoke({
                         "examples": INTENT_FEW_SHOT_EXAMPLES,
@@ -235,6 +277,216 @@ class MasterRetriever:
                 "🧭 [MacroOnlyHint] Dropped SEC source_type for macro-rate query | "
                 f"tickers={tickers or ['(none)']} | sources={metadata.source_types}"
             )
+
+    @staticmethod
+    def _metadata_source_values(metadata: MetadataExtraction | None) -> List[str]:
+        raw = list(getattr(metadata, "source_types", None) or [])
+        values = [str(getattr(s, "value", s)).lower() for s in raw]
+        supported = set(ALLOWED_SOURCES) | {"options", "macro_history"}
+        ordered: List[str] = []
+        for item in values:
+            if item in supported and item not in ordered:
+                ordered.append(item)
+        return ordered
+
+    @staticmethod
+    def _strict_source_hits(
+        *,
+        strict_sources: List[str],
+        silver_context: Dict[str, Any],
+        gold_context: List[Any],
+    ) -> List[str]:
+        values = dict((silver_context or {}).get("values") or {})
+        gold_sources = {
+            str(getattr(chunk, "source_type", None) or (chunk.get("source_type", "") if isinstance(chunk, dict) else "")).lower()
+            for chunk in gold_context or []
+        }
+        hits: List[str] = []
+        if "options" in strict_sources and values:
+            option_keys = (
+                "latest_atm_iv", "pcr_volume", "pcr_open_interest",
+                "SPY_daily_option_volume", "AAPL_daily_option_volume", "QQQ_daily_option_volume",
+                "GLD_daily_option_volume", "SLV_daily_option_volume",
+            )
+            if any(key in values for key in option_keys):
+                hits.append("options")
+        if "macro_history" in strict_sources and values:
+            macro_keys = ("VIX_value", "DXY_value", "GSPC_value", "IXIC_value", "FEDFUNDS_value", "CPIAUCSL_value")
+            if any(key in values for key in macro_keys):
+                hits.append("macro_history")
+        if "gpr" in strict_sources and (("gpr" in gold_sources) or ("gpr_index_level" in values)):
+            hits.append("gpr")
+        if "sec" in strict_sources and "sec" in gold_sources:
+            hits.append("sec")
+        if "news" in strict_sources and "news" in gold_sources:
+            hits.append("news")
+        return hits
+
+    @staticmethod
+    def _soft_context_sources(query_family: str) -> List[str]:
+        if query_family in {"cross_asset_regime", "geopolitical_commodity"}:
+            return ["news"]
+        return []
+
+    @staticmethod
+    def _query_slots(query_family: str) -> Dict[str, str]:
+        if query_family == "insider_flow_driven":
+            return dict(INSIDER_FLOW_QUERY_SLOTS)
+        return {}
+
+    @staticmethod
+    def _infer_query_family(metadata: MetadataExtraction, user_query: str) -> str:
+        metrics = [str(m).lower() for m in (getattr(metadata, "metrics", None) or [])]
+        source_types = {str(getattr(s, "value", s)).lower() for s in (getattr(metadata, "source_types", None) or [])}
+        event_keyword = str(getattr(metadata, "event_keyword", "") or "").lower()
+        query_l = (user_query or "").lower()
+
+        if "sec" in source_types:
+            return "insider_flow_driven"
+        if (
+            "gpr" in source_types
+            or "gpr index" in metrics
+            or "geopolitical" in event_keyword
+        ) and any(token in query_l for token in ("gld", "slv", "gold", "silver", "precious")):
+            return "geopolitical_commodity"
+        if (
+            "macro_history" in source_types
+            or any(term in metrics for term in ("macro trend", "price change (%)"))
+        ) and any(token in query_l for token in ("vix", "dxy", "qqq", "spy", "hedge")):
+            return "cross_asset_regime"
+        return "options_microstructure"
+
+    def _build_runtime_contracts(
+        self,
+        *,
+        user_query: str,
+        metadata: MetadataExtraction,
+        silver_context: Dict[str, Any],
+        silver_context_frozen: Optional[Dict[str, Any]],
+        gold_context: List[Any],
+        time_range: Dict[str, Any],
+        is_fallback: bool,
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        strict_sources = self._metadata_source_values(metadata)
+        query_family = self._infer_query_family(metadata, user_query)
+        soft_context_sources = self._soft_context_sources(query_family)
+        query_slots = self._query_slots(query_family)
+        requested_window = str(getattr(getattr(metadata, "time_window", None), "value", getattr(metadata, "time_window", None)) or "past_six_months")
+        requested_days = time_window_to_days(requested_window, default=180)
+        effective_window = str((time_range or {}).get("time_window_label") or requested_window)
+        effective_days = int((time_range or {}).get("window_days") or requested_days)
+        time_defaulted = bool((time_range or {}).get("is_default_window_applied"))
+        time_extended = bool(is_fallback or effective_days > requested_days)
+
+        truth_ctx = silver_context_frozen if isinstance(silver_context_frozen, dict) and silver_context_frozen else silver_context
+        truth_values = dict((truth_ctx or {}).get("values") or {})
+        strict_sources_hit = self._strict_source_hits(
+            strict_sources=strict_sources,
+            silver_context=truth_ctx or {},
+            gold_context=gold_context,
+        )
+        gold_sources_hit = {
+            str(getattr(chunk, "source_type", None) or (chunk.get("source_type", "") if isinstance(chunk, dict) else "")).lower()
+            for chunk in gold_context or []
+        }
+        soft_sources_hit = [src for src in soft_context_sources if src in gold_sources_hit]
+        missing_strict_sources = [src for src in strict_sources if src not in strict_sources_hit]
+        missing_query_slots = missing_slots_for_query_family(query_family, missing_strict_sources)
+
+        data_capability_profile = build_data_capability_profile(metadata, truth_ctx or {}, gold_context or [], time_range or {})
+        if data_capability_profile.get("can_support_concrete_option_structure"):
+            output_mode_ceiling = "actionable_options"
+            specificity_ceiling = "structure_allowed"
+        elif data_capability_profile.get("has_options_chain_support") or data_capability_profile.get("has_gold_evidence") or data_capability_profile.get("has_price_signal"):
+            output_mode_ceiling = "directional_watchlist"
+            specificity_ceiling = "watchlist_only"
+        else:
+            output_mode_ceiling = "informational_only"
+            specificity_ceiling = "no_structure"
+
+        unavailable_metrics = [
+            metric for metric in (getattr(metadata, "metrics", None) or [])
+            if metric in METRIC_TO_COLUMN_MAPPING and not METRIC_TO_COLUMN_MAPPING.get(metric)
+        ]
+        supported_tickers = []
+        allowed_tickers = set(getattr(self.transformer, "allowed_tickers", []) or [])
+        for ticker in (getattr(metadata, "tickers", None) or []):
+            ticker_u = str(ticker).upper().strip()
+            if not ticker_u:
+                continue
+            if not allowed_tickers or ticker_u in allowed_tickers or ticker_u.startswith("^"):
+                if ticker_u not in supported_tickers:
+                    supported_tickers.append(ticker_u)
+
+        disclosures: List[str] = []
+        if unavailable_metrics:
+            disclosures.append(
+                "Unavailable metrics require a caveat, not a substitute: "
+                + ", ".join(str(m) for m in unavailable_metrics)
+            )
+        if missing_strict_sources:
+            disclosures.append(
+                "Missing strict sources lower output confidence: "
+                + ", ".join(missing_strict_sources)
+            )
+        if missing_query_slots:
+            disclosures.append(
+                "Missing query slots cannot be answered reliably: "
+                + ", ".join(missing_query_slots)
+            )
+        if query_family == "insider_flow_driven":
+            disclosures.append(
+                "SEC action taxonomy is explicit: SELL means insider disposition, BUY means open-market purchase, and ACQUIRE/VEST means vesting-related acquisition rather than open-market buying or selling."
+            )
+        if time_defaulted:
+            disclosures.append("The requested query omitted a time phrase, so the effective window used the project default.")
+        if time_extended:
+            disclosures.append("The effective evidence window was widened or fallback-adjusted and should be disclosed in the answer.")
+
+        time_contract = TimeContract(
+            requested_window=requested_window,
+            effective_window=effective_window,
+            window_days=effective_days,
+            is_default_window_applied=time_defaulted,
+            is_extended_window=time_extended,
+        )
+        source_coverage = SourceCoverageContract(
+            strict_sources_expected=strict_sources,
+            strict_sources_hit=strict_sources_hit,
+            soft_sources_expected=soft_context_sources,
+            soft_sources_hit=soft_sources_hit,
+            missing_strict_sources=missing_strict_sources,
+            missing_query_slots=missing_query_slots,
+        )
+        scope_contract = ScopeContract(
+            query_family=query_family,
+            strict_sources=strict_sources,
+            soft_context_sources=soft_context_sources,
+            allowed_metrics=[m for m in (getattr(metadata, "metrics", None) or []) if m in ALLOWED_METRICS],
+            unavailable_metrics=unavailable_metrics,
+            supported_tickers=supported_tickers,
+            requested_time_window=requested_window,
+            effective_time_window=effective_window,
+            output_mode_ceiling=output_mode_ceiling,
+            specificity_ceiling=specificity_ceiling,
+            required_disclosures=disclosures,
+            query_slots=query_slots,
+            sec_action_taxonomy=dict(SEC_ACTION_TAXONOMY) if query_family == "insider_flow_driven" else {},
+        )
+        retrieval_outcome = RetrievalOutcome(
+            strict_sources_hit=strict_sources_hit,
+            soft_sources_hit=soft_sources_hit,
+            missing_strict_sources=missing_strict_sources,
+            missing_query_slots=missing_query_slots,
+            has_gold_evidence=bool(gold_context),
+            has_silver_evidence=bool(truth_values),
+            is_fallback=bool(is_fallback),
+            time_window_extended=time_extended,
+            time_window_defaulted=time_defaulted,
+            time_contract=time_contract,
+            source_coverage=source_coverage,
+        )
+        return scope_contract.model_dump(), retrieval_outcome.model_dump()
 
     # ======================================================================
     # B. Engine wrappers (per-engine timeouts + exception isolation)
@@ -806,6 +1058,23 @@ class MasterRetriever:
             logger.warning(f"silver_context_frozen deepcopy failed ({type(e).__name__}): {e}")
             final_context["silver_context_frozen"] = None
 
+        try:
+            scope_contract, retrieval_outcome = self._build_runtime_contracts(
+                user_query=user_query,
+                metadata=metadata,
+                silver_context=final_context["silver_context"],
+                silver_context_frozen=final_context.get("silver_context_frozen"),
+                gold_context=final_context["gold_context"],
+                time_range=time_range,
+                is_fallback=(final_context["status"] != "success"),
+            )
+            final_context["scope_contract"] = scope_contract
+            final_context["retrieval_outcome"] = retrieval_outcome
+        except Exception as e:
+            logger.warning(f"runtime contract compilation failed ({type(e).__name__}): {e}")
+            final_context["scope_contract"] = None
+            final_context["retrieval_outcome"] = None
+
         final_context["latency_stats"]["total_e2e"] = f"{time.time() - overall_start:.3f}s"
         logger.info(
             f"✅ [Master Retriever] route={route} | E2E: {final_context['latency_stats']['total_e2e']} "
@@ -871,6 +1140,8 @@ class MasterRetriever:
                 "error": reason,
             },
             "hyde_anticipation": None,
+            "scope_contract": None,
+            "retrieval_outcome": None,
             "status": "partial_failure",
             "latency_stats": {"total_e2e": f"{time.time() - start_ts:.3f}s"},
         }

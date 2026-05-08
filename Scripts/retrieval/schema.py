@@ -5,7 +5,7 @@ Senior Architect Version: Two-Stage Pipeline (Extractor + HyDE)
 """
 
 from pydantic import BaseModel, Field, field_validator, ConfigDict
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 from enum import Enum
 from datetime import datetime
 
@@ -164,7 +164,9 @@ class SECMetadata(BaseModel):
     form_type: str
     accession_no: str
     filed_at: str
+    filed_at_epoch_s: Optional[int] = None
     transaction_date: Optional[str] = None
+    transaction_date_epoch_s: Optional[int] = None
     action_direction: ActionDirection = ActionDirection.NONE
     tone_score: int
     url: str
@@ -174,6 +176,82 @@ class QueryIntent(BaseModel):
     is_complex: bool = Field(default=False)
     search_top_k: int = Field(default=5)
     requires_hyde: bool = Field(default=True)
+
+
+class TimeContract(BaseModel):
+    """Read-only summary of the requested versus effective time window."""
+
+    requested_window: str = Field(default=TimeWindow.PAST_SIX_MONTHS.value)
+    effective_window: str = Field(default=TimeWindow.PAST_SIX_MONTHS.value)
+    window_days: int = Field(default=180)
+    is_default_window_applied: bool = Field(default=False)
+    is_extended_window: bool = Field(default=False)
+
+    model_config = ConfigDict(frozen=True)
+
+
+class SourceCoverageContract(BaseModel):
+    """Read-only source-coverage summary produced after retrieval completes."""
+
+    strict_sources_expected: List[str] = Field(default_factory=list)
+    strict_sources_hit: List[str] = Field(default_factory=list)
+    soft_sources_expected: List[str] = Field(default_factory=list)
+    soft_sources_hit: List[str] = Field(default_factory=list)
+    missing_strict_sources: List[str] = Field(default_factory=list)
+    missing_query_slots: List[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(frozen=True)
+
+
+class ScopeContract(BaseModel):
+    """Runtime scope contract compiled once by MasterRetriever."""
+
+    query_family: Literal[
+        "options_microstructure",
+        "insider_flow_driven",
+        "cross_asset_regime",
+        "geopolitical_commodity",
+    ] = Field(default="options_microstructure")
+    strict_sources: List[str] = Field(default_factory=list)
+    soft_context_sources: List[str] = Field(default_factory=list)
+    allowed_metrics: List[str] = Field(default_factory=list)
+    unavailable_metrics: List[str] = Field(default_factory=list)
+    supported_tickers: List[str] = Field(default_factory=list)
+    requested_time_window: str = Field(default=TimeWindow.PAST_SIX_MONTHS.value)
+    effective_time_window: str = Field(default=TimeWindow.PAST_SIX_MONTHS.value)
+    output_mode_ceiling: Literal[
+        "actionable_options",
+        "directional_watchlist",
+        "informational_only",
+    ] = Field(default="directional_watchlist")
+    specificity_ceiling: Literal[
+        "structure_allowed",
+        "watchlist_only",
+        "no_structure",
+    ] = Field(default="watchlist_only")
+    required_disclosures: List[str] = Field(default_factory=list)
+    query_slots: Dict[str, str] = Field(default_factory=dict)
+    sec_action_taxonomy: Dict[str, str] = Field(default_factory=dict)
+
+    model_config = ConfigDict(frozen=True)
+
+
+class RetrievalOutcome(BaseModel):
+    """Read-only retrieval outcome summary shared with downstream agents."""
+
+    strict_sources_hit: List[str] = Field(default_factory=list)
+    soft_sources_hit: List[str] = Field(default_factory=list)
+    missing_strict_sources: List[str] = Field(default_factory=list)
+    missing_query_slots: List[str] = Field(default_factory=list)
+    has_gold_evidence: bool = Field(default=False)
+    has_silver_evidence: bool = Field(default=False)
+    is_fallback: bool = Field(default=False)
+    time_window_extended: bool = Field(default=False)
+    time_window_defaulted: bool = Field(default=False)
+    time_contract: TimeContract = Field(default_factory=TimeContract)
+    source_coverage: SourceCoverageContract = Field(default_factory=SourceCoverageContract)
+
+    model_config = ConfigDict(frozen=True)
 
 class RetrievedChunk(BaseModel):
     content: str
@@ -186,6 +264,78 @@ class SQLResult(BaseModel):
     df_json: str
     query_executed: str
     summary: str
+
+
+def _as_mapping(obj: Any) -> Dict[str, Any]:
+    if isinstance(obj, dict):
+        return obj
+    for method_name in ("model_dump", "dict"):
+        method = getattr(obj, method_name, None)
+        if callable(method):
+            try:
+                dumped = method()
+                if isinstance(dumped, dict):
+                    return dumped
+            except Exception:
+                continue
+    return {}
+
+
+def render_scope_contract_block(scope_contract: Any) -> str:
+    scope = _as_mapping(scope_contract)
+    if not scope:
+        return "(scope contract unavailable)"
+    lines = [
+        "=== SCOPE CONTRACT ===",
+        f"query_family={scope.get('query_family')}",
+        f"strict_sources={scope.get('strict_sources')}",
+        f"soft_context_sources={scope.get('soft_context_sources')}",
+        f"allowed_metrics={scope.get('allowed_metrics')}",
+        f"unavailable_metrics={scope.get('unavailable_metrics')}",
+        f"supported_tickers={scope.get('supported_tickers')}",
+        f"requested_time_window={scope.get('requested_time_window')}",
+        f"effective_time_window={scope.get('effective_time_window')}",
+        f"output_mode_ceiling={scope.get('output_mode_ceiling')}",
+        f"specificity_ceiling={scope.get('specificity_ceiling')}",
+        f"required_disclosures={scope.get('required_disclosures')}",
+        f"query_slots={scope.get('query_slots')}",
+        f"sec_action_taxonomy={scope.get('sec_action_taxonomy')}",
+    ]
+    return "\n".join(lines)
+
+
+def render_retrieval_outcome_block(retrieval_outcome: Any) -> str:
+    outcome = _as_mapping(retrieval_outcome)
+    if not outcome:
+        return "(retrieval outcome unavailable)"
+    lines = [
+        "=== RETRIEVAL OUTCOME ===",
+        f"strict_sources_hit={outcome.get('strict_sources_hit')}",
+        f"soft_sources_hit={outcome.get('soft_sources_hit')}",
+        f"missing_strict_sources={outcome.get('missing_strict_sources')}",
+        f"missing_query_slots={outcome.get('missing_query_slots')}",
+        f"has_gold_evidence={outcome.get('has_gold_evidence')}",
+        f"has_silver_evidence={outcome.get('has_silver_evidence')}",
+        f"is_fallback={outcome.get('is_fallback')}",
+        f"time_window_extended={outcome.get('time_window_extended')}",
+        f"time_window_defaulted={outcome.get('time_window_defaulted')}",
+    ]
+    return "\n".join(lines)
+
+
+def render_time_contract_block(time_contract: Any) -> str:
+    contract = _as_mapping(time_contract)
+    if not contract:
+        return "(time contract unavailable)"
+    lines = [
+        "=== TIME CONTRACT ===",
+        f"requested_window={contract.get('requested_window')}",
+        f"effective_window={contract.get('effective_window')}",
+        f"window_days={contract.get('window_days')}",
+        f"is_default_window_applied={contract.get('is_default_window_applied')}",
+        f"is_extended_window={contract.get('is_extended_window')}",
+    ]
+    return "\n".join(lines)
 
 class AgentState(BaseModel):
     input_query: str

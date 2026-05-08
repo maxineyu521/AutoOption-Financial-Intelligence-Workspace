@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import AIMessage, HumanMessage
-from langchain_openai import ChatOpenAI
+from Scripts.core import llm_pool
 
 
 # --- 1. Path and environment bootstrap ---
@@ -75,22 +75,26 @@ class QueryTransformer:
         # 从环境变量读取配置，默认使用 gpt-4o-mini
         self.extractor_model_name = extractor_model or os.getenv("TRANSFORM_EXTRACTOR_MODEL", "gpt-4o-mini")
         self.hyde_model_name = hyde_model or os.getenv("TRANSFORM_HYDE_MODEL", "gpt-4o-mini")
-        
-        api_key = os.getenv("OPENAI_API_KEY")
-        
-        # 1. 结构化抽取引擎 (必须使用 .with_structured_output)
-        self.extractor_llm = ChatOpenAI(
+
+        # 1. 结构化抽取引擎
+        self.extractor_llm = llm_pool.get_client(
+            "query_extract",
             model=self.extractor_model_name,
-            temperature=0,
-            api_key=api_key
         ).with_structured_output(MetadataExtraction)
 
-        # 2. HyDE 生成引擎（结构化输出，返回 hyde_paragraph + rerank_query）
-        self.hyde_llm = ChatOpenAI(
+        # 2. HyDE 生成引擎
+        self.hyde_llm = llm_pool.get_client(
+            "query_hyde",
             model=self.hyde_model_name,
-            temperature=0.1, 
-            api_key=api_key
         ).with_structured_output(HyDEGeneration)
+
+        logger.info(
+            "QueryTransformer init | extractor=%s | hyde=%s | openai_timeout=%s | base_url=%s",
+            self.extractor_model_name,
+            self.hyde_model_name,
+            os.getenv("OPENAI_TIMEOUT_SECONDS", "60"),
+            os.getenv("OPENAI_BASE_URL", "").strip() or "(default)",
+        )
 
         self.allowed_tickers = self._load_allowed_tickers()
         self._build_prompts()

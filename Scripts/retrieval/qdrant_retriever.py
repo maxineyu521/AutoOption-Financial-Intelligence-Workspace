@@ -166,6 +166,27 @@ class FinancialHybridRetriever:
             keys = list(self._SOURCE_TYPE_TO_KEY.values())
         return [time_predicates[k] for k in keys if k in time_predicates]
 
+    @staticmethod
+    def _range_capable_time_keys(
+        source_vals: List[str],
+        selected_predicates: Optional[List["TimePredicate"]] = None,
+    ) -> List[str]:
+        keys: List[str] = []
+        if selected_predicates:
+            for pred in selected_predicates:
+                for key, unit in zip(pred.time_keys, pred.key_units):
+                    if str(unit).lower() == "epoch_s" and key not in keys:
+                        keys.append(key)
+        if not keys:
+            for key in ("unified_timestamp", "publish_timestamp"):
+                if key not in keys:
+                    keys.append(key)
+            if "sec" in [str(s).lower() for s in source_vals]:
+                for key in ("transaction_date_epoch_s", "filed_at_epoch_s"):
+                    if key not in keys:
+                        keys.append(key)
+        return keys
+
     # ------------------------------------------------------------------
     # Filter builder — now three-mode (hard / soft-ticker / no-ticker).
     # ------------------------------------------------------------------
@@ -314,6 +335,7 @@ class FinancialHybridRetriever:
             end_timestamp: int
             time_source_tag = "union_per_source"
 
+            selected_predicates: List["TimePredicate"] = []
             if fallback_days is not None:
                 # Legacy fallback-tier escalation path (Tier 2/3) — force
                 # a single wide window; ignore per-source widening so the
@@ -323,10 +345,10 @@ class FinancialHybridRetriever:
                 end_timestamp = int(time.time())
                 time_source_tag = f"legacy_fallback_{fallback_days}d"
             elif time_predicates:
-                selected = self._select_gold_predicates(source_vals, time_predicates)
-                if selected:
-                    start_timestamp, end_timestamp = union_epoch_range(selected)
-                    widened = [p.source.value for p in selected if p.widened]
+                selected_predicates = self._select_gold_predicates(source_vals, time_predicates)
+                if selected_predicates:
+                    start_timestamp, end_timestamp = union_epoch_range(selected_predicates)
+                    widened = [p.source.value for p in selected_predicates if p.widened]
                     if widened:
                         logger.info(
                             f"🕒 [GoldTime] Per-source widening applied: {widened} | "
@@ -357,18 +379,16 @@ class FinancialHybridRetriever:
                 time_source_tag = f"inline_{days_delta}d"
 
             time_range = models.Range(gte=start_timestamp, lte=end_timestamp)
+            time_keys = self._range_capable_time_keys(source_vals, selected_predicates)
             must_conditions.append(
                 models.Filter(
-                    should=[
-                        models.FieldCondition(key="unified_timestamp", range=time_range),
-                        models.FieldCondition(key="publish_timestamp", range=time_range),
-                    ]
+                    should=[models.FieldCondition(key=key, range=time_range) for key in time_keys]
                 )
             )
             logger.debug(
                 f"🕒 [GoldTime] mode={time_source_tag} | "
                 f"range=[{datetime.fromtimestamp(start_timestamp).date()}..{datetime.fromtimestamp(end_timestamp).date()}] "
-                f"| gte_epoch_s={start_timestamp} lte_epoch_s={end_timestamp}"
+                f"| gte_epoch_s={start_timestamp} lte_epoch_s={end_timestamp} | keys={time_keys}"
             )
 
         # --- Assemble final filter ---------------------------------------

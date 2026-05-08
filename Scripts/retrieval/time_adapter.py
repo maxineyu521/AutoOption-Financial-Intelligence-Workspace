@@ -2,8 +2,9 @@
     Different data sources use different time types and granularities:
 
         Gold.News   : `unified_timestamp` / `publish_timestamp`  (Unix seconds, event-level)
-        Gold.SEC    : `unified_timestamp` / `filed_at` / `transaction_date`
-                      (Unix seconds + ISO-8601 strings, event-level)
+        Gold.SEC    : `unified_timestamp` / `transaction_date_epoch_s` /
+                      `filed_at_epoch_s` / `filed_at` / `transaction_date`
+                      (Unix seconds + ISO dates, event-level)
         Gold.GPR    : `unified_timestamp` / `publish_timestamp`  (Unix seconds, MONTHLY)
         Silver.Options : `snapshot_date`          (VARCHAR ISO date, trading-day)
         Silver.Macro   : `observation_date` / `retrieval_date`  (VARCHAR ISO date, daily)
@@ -14,8 +15,8 @@
         current month so GPR always returns its most recent observation).
       - "yesterday" against a DAILY source on a Monday = 0 rows (weekend
         gap; we must widen at least to Friday).
-      - A naive Unix-seconds filter against SEC returns 0 because legacy
-        SEC payloads only carry ISO-8601 strings, not an epoch key.
+      - A naive Unix-seconds filter against SEC returns 0 if the payload
+        only carries ISO dates and no numeric companion timestamp.
 
     This adapter compiles **one `TimePredicate` per source**, pre-widened
     for the source's granularity, so every downstream retriever receives
@@ -140,11 +141,18 @@ SOURCE_SPECS: Dict[SourceTimeKey, SourceTimeSpec] = {
     ),
     SourceTimeKey.GOLD_SEC: SourceTimeSpec(
         granularity=TimeGranularity.EVENT,
-        # Legacy SEC payloads only carry ISO strings. Post-2026-04-22
-        # ingestion stamps a numeric `unified_timestamp` derived from
-        # `transaction_date` → the Qdrant numeric Range now binds.
-        time_keys=("unified_timestamp", "filed_at", "transaction_date"),
-        key_units=("epoch_s", "iso_datetime", "iso_date"),
+        # SEC uses transaction_date as the canonical event timestamp. We
+        # keep both numeric companion keys and the original ISO payload keys
+        # so Qdrant can bind numeric Ranges while audits still show the
+        # source-native dates.
+        time_keys=(
+            "unified_timestamp",
+            "transaction_date_epoch_s",
+            "filed_at_epoch_s",
+            "filed_at",
+            "transaction_date",
+        ),
+        key_units=("epoch_s", "epoch_s", "epoch_s", "iso_date", "iso_date"),
         # SEC filings land in bursts; a 3-day floor keeps weekend-edge
         # "yesterday" queries non-empty without widening the semantic intent.
         min_lookback_days=3,
