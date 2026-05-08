@@ -6,10 +6,12 @@ from datetime import datetime, timezone
 from newspaper import Article
 from duckduckgo_search import DDGS
 import warnings
-from langchain_ollama import ChatOllama
 import uuid
 import re
 import hashlib
+
+from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 
 warnings.filterwarnings('ignore')
 
@@ -24,13 +26,29 @@ _INGESTION_MODEL = os.getenv(
     "OLLAMA_INGESTION_MODEL",
     os.getenv("OLLAMA_ROUTER_MODEL", "llama3:latest"),
 )
-print(f"Initializing local {_INGESTION_MODEL} as the data cleaning engine...")
-llm = ChatOllama(
-    model=_INGESTION_MODEL,
-    temperature=0,
-    base_url=os.getenv("OLLAMA_HOST", "http://localhost:11434"),
-    keep_alive=os.getenv("OLLAMA_KEEP_ALIVE", "30m"),
-)
+_OPENAI_INGESTION_MODEL = os.getenv("OPENAI_INGESTION_MODEL", "gpt-4o-mini")
+_INGESTION_LLM_PROVIDER = os.getenv("INGESTION_LLM_PROVIDER", "openai").lower()
+
+if _INGESTION_LLM_PROVIDER == "ollama":
+    print(f"Initializing local {_INGESTION_MODEL} as the data cleaning engine...")
+    llm = ChatOllama(
+        model=_INGESTION_MODEL,
+        temperature=0,
+        base_url=os.getenv("OLLAMA_HOST", "http://localhost:11434"),
+        keep_alive=os.getenv("OLLAMA_KEEP_ALIVE", "30m"),
+    )
+else:
+    print(f"Initializing {_OPENAI_INGESTION_MODEL} as the data cleaning engine...")
+    _openai_kwargs = {
+        "model": _OPENAI_INGESTION_MODEL,
+        "temperature": 0,
+        "api_key": os.getenv("OPENAI_API_KEY", ""),
+        "timeout": float(os.getenv("OPENAI_TIMEOUT_SECONDS", "60")),
+    }
+    _openai_base_url = os.getenv("OPENAI_BASE_URL", "").strip()
+    if _openai_base_url:
+        _openai_kwargs["base_url"] = _openai_base_url
+    llm = ChatOpenAI(**_openai_kwargs)
 
 # 1. Get current system date (Format: YYYY-MM-DD)
 current_date = datetime.now().strftime("%Y-%m-%d")

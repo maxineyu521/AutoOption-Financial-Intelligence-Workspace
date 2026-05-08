@@ -6,6 +6,7 @@ import argparse
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 
 # ==========================================
@@ -103,7 +104,8 @@ def process_form4_rules(ticker: str, parsed_data: dict) -> dict:
         "summary": summary,
         "transaction_date": transactions[0].get("date", "Unknown"),
         "tone_score": tone_score,
-        "action_direction": action_direction
+        "action_direction": action_direction,
+        "is_10b5_1_planned": is_10b5_1,
     }
 
 # ==========================================
@@ -117,14 +119,29 @@ _INGESTION_MODEL = os.getenv(
     "OLLAMA_INGESTION_MODEL",
     os.getenv("OLLAMA_ROUTER_MODEL", "llama3:latest"),
 )
+_OPENAI_INGESTION_MODEL = os.getenv("OPENAI_INGESTION_MODEL", "gpt-4o-mini")
+_INGESTION_LLM_PROVIDER = os.getenv("INGESTION_LLM_PROVIDER", "openai").lower()
 try:
-    llm = ChatOllama(
-        model=_INGESTION_MODEL,
-        temperature=0,
-        base_url=os.getenv("OLLAMA_HOST", "http://localhost:11434"),
-        keep_alive=os.getenv("OLLAMA_KEEP_ALIVE", "30m"),
-        format="json",
-    )
+    if _INGESTION_LLM_PROVIDER == "ollama":
+        llm = ChatOllama(
+            model=_INGESTION_MODEL,
+            temperature=0,
+            base_url=os.getenv("OLLAMA_HOST", "http://localhost:11434"),
+            keep_alive=os.getenv("OLLAMA_KEEP_ALIVE", "30m"),
+            format="json",
+        )
+    else:
+        _openai_kwargs = {
+            "model": _OPENAI_INGESTION_MODEL,
+            "temperature": 0,
+            "api_key": os.getenv("OPENAI_API_KEY", ""),
+            "timeout": float(os.getenv("OPENAI_TIMEOUT_SECONDS", "60")),
+            "model_kwargs": {"response_format": {"type": "json_object"}},
+        }
+        _openai_base_url = os.getenv("OPENAI_BASE_URL", "").strip()
+        if _openai_base_url:
+            _openai_kwargs["base_url"] = _openai_base_url
+        llm = ChatOpenAI(**_openai_kwargs)
 except Exception:
     llm = None
 
@@ -174,6 +191,7 @@ def process_single_record(raw_data: dict, global_processed: set):
             "transaction_date": result.get("transaction_date", "Unknown"),
             "tone_score": result.get("tone_score", 0),
             "action_direction": result.get("action_direction", "NONE"),
+            "is_10b5_1_planned": result.get("is_10b5_1_planned", False),
             "topics": topics,
             "processed_at": datetime.now().isoformat()
         }
