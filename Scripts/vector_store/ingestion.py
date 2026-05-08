@@ -325,10 +325,26 @@ class QdrantHybridIngestor:
         # Fallback
         return {"news": today, "gpr": current_month, "sec": today}
 
-    def run_pipeline(self, full_refresh: bool = True, source_types: Optional[set[str]] = None) -> dict:
+    def run_pipeline(
+        self,
+        full_refresh: bool = True,
+        source_types: Optional[set[str]] = None,
+        **kwargs,
+    ) -> dict:
         """
         :param full_refresh: if True, full refresh the pipeline
         """
+        if source_types is None and "source_types" in kwargs:
+            source_types = kwargs.pop("source_types")
+        else:
+            kwargs.pop("source_types", None)
+
+        if kwargs:
+            logger.warning(
+                "Ignoring unsupported run_pipeline kwargs: %s",
+                sorted(kwargs.keys()),
+            )
+
         logger.info("="*50)
         logger.info(f"🚀 Starting Hybrid Search Data Ingestion Pipeline (Full Refresh: {full_refresh})")
         if source_types:
