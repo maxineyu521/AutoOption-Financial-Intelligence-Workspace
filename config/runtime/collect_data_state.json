@@ -1,10 +1,11 @@
 {
   "last_run_keys": {
-    "gpr_monthly": "2026-04",
-    "macro_trading_daily": "2026-04-21",
-    "news_daily": "2026-04-21",
-    "options_daily": "2026-04-21",
-    "sec_ingestion_weekly": "2026-W16",
-    "sec_processor_weekly": "2026-W16"
-  }
+    "gpr_monthly": "2026-05",
+    "macro_trading_daily": "2026-05-07",
+    "news_daily": "2026-05-07",
+    "options_daily": "2026-05-07",
+    "sec_ingestion_weekly": "2026-W19",
+    "sec_processor_weekly": "2026-W19"
+  },
+  "updated_at": "2026-05-07T18:14:35"
 }
