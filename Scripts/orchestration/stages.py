@@ -103,6 +103,18 @@ class Stage(ABC):
         """Default freshness check: compare stored ``run_key`` vs current."""
         return run_state.is_up_to_date(self.name, self.cadence, when)
 
+    def describe(self) -> Dict[str, Any]:
+        """Lightweight, serialisable metadata for CLI/status/docs."""
+        return {
+            "name": self.name,
+            "cadence": self.cadence.value,
+            "depends_on": list(self.depends_on),
+            "critical": bool(self.critical),
+            "timeout_s": int(self.timeout_s),
+            "max_retries": int(self.max_retries),
+            "kind": self.__class__.__name__,
+        }
+
     def run(
         self,
         run_state: RunState,
@@ -245,6 +257,17 @@ class ScriptStage(Stage):
             )
         return stdout, stderr
 
+    def describe(self) -> Dict[str, Any]:
+        payload = super().describe()
+        payload.update(
+            {
+                "script_path": str(self.script_path),
+                "project_root": str(self.project_root),
+                "extra_args": list(self.extra_args),
+            }
+        )
+        return payload
+
 
 # ---------------------------------------------------------------------------
 # Concrete: in-process callable (future-facing)
@@ -288,6 +311,11 @@ class CallableStage(Stage):
         # it up; the Pipeline runner unpacks this for callers that care.
         import json as _json  # local to keep global imports minimal
         return _json.dumps(metrics, default=str), ""
+
+    def describe(self) -> Dict[str, Any]:
+        payload = super().describe()
+        payload.update({"callable": getattr(self._fn, "__name__", repr(self._fn))})
+        return payload
 
 
 __all__ = [

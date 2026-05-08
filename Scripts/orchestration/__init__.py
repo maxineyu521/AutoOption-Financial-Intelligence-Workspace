@@ -24,6 +24,7 @@ from Scripts.orchestration.stages import (
 from Scripts.orchestration.pipeline import (
     Pipeline,
     build_default_pipeline,
+    default_stage_manifest,
 )
 
 __all__ = [
@@ -41,4 +42,5 @@ __all__ = [
     "CallableStage",
     "Pipeline",
     "build_default_pipeline",
+    "default_stage_manifest",
 ]

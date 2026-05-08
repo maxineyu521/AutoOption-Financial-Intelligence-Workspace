@@ -104,6 +104,9 @@ class Pipeline:
     def stage(self, name: str) -> Stage:
         return self._by_name[name]
 
+    def describe(self) -> List[Dict[str, Any]]:
+        return [stage.describe() for stage in self._stages]
+
     # ---- execution ---------------------------------------------------------
 
     def run_once(
@@ -301,7 +304,20 @@ def build_default_pipeline(
     return Pipeline(stages, run_state=run_state)
 
 
+def default_stage_manifest(
+    *,
+    run_state: Optional[RunState] = None,
+    project_root: Optional[Path] = None,
+) -> List[Dict[str, Any]]:
+    """Return the serialisable manifest for the default ingest DAG."""
+    return build_default_pipeline(
+        run_state=run_state,
+        project_root=project_root,
+    ).describe()
+
+
 __all__ = [
     "Pipeline",
     "build_default_pipeline",
+    "default_stage_manifest",
 ]

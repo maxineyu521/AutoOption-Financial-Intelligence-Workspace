@@ -364,6 +364,7 @@ class RunState:
             "exists":     self.state_path.exists(),
             "updated_at": self._doc.updated_at,
             "last_run_keys": dict(self._doc.last_run_keys),
+            "dataset_anchor_keys": dict(DATASET_ANCHOR_KEYS),
             "anchors": {
                 ds: self.latest_anchor_date(ds).isoformat()
                 for ds in DATASET_ANCHOR_KEYS
