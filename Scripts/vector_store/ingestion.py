@@ -13,6 +13,7 @@ import uuid
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 from tqdm import tqdm
 from dotenv import load_dotenv
 
@@ -118,6 +119,12 @@ class QdrantHybridIngestor:
         # payloads that only carry one of the two.
         ("unified_timestamp", models.PayloadSchemaType.INTEGER),
         ("publish_timestamp", models.PayloadSchemaType.INTEGER),
+        # SEC-specific numeric companion timestamps. These mirror the
+        # ISO-date payload fields (`filed_at`, `transaction_date`) so the
+        # Qdrant retriever can bind a Range filter without depending on
+        # DATETIME payload support or legacy `unified_timestamp` semantics.
+        ("filed_at_epoch_s", models.PayloadSchemaType.INTEGER),
+        ("transaction_date_epoch_s", models.PayloadSchemaType.INTEGER),
         # -- Optional numeric auxiliary filters (News tone ranges) --
         ("tone_score",        models.PayloadSchemaType.INTEGER),
         ("llm_tone_score",    models.PayloadSchemaType.INTEGER),
@@ -213,15 +220,24 @@ class QdrantHybridIngestor:
                     has_bronze_evidence = False
                     
                 # 2. unified timestamp
-                raw_date = metadata.get("publish_timestamp") # News takes precedence over this
-                if not raw_date:
-                    raw_date = metadata.get("publish_date") or metadata.get("filed_at") or metadata.get("transaction_date")
+                # SEC is anchored to transaction_date first, then filed_at.
+                # This keeps the primary event timestamp aligned with the
+                # transaction the user usually means when asking about Form-4
+                # insider selling/buying/vesting.
+                if source_type == "sec":
+                    raw_date = metadata.get("transaction_date") or metadata.get("filed_at")
+                else:
+                    raw_date = metadata.get("publish_timestamp") # News takes precedence over this
+                    if not raw_date:
+                        raw_date = metadata.get("publish_date") or metadata.get("filed_at") or metadata.get("transaction_date")
                 
                 # if the date is already an integer timestamp (News/GPR), use it; otherwise convert to timestamp
                 if isinstance(raw_date, int):
                     unified_ts = raw_date
                 else:
                     unified_ts = self._to_unix_timestamp(str(raw_date))
+                filed_at_epoch_s = self._to_unix_timestamp(str(metadata.get("filed_at", "") or ""))
+                transaction_date_epoch_s = self._to_unix_timestamp(str(metadata.get("transaction_date", "") or ""))
                 
                 # 3. defensive metadata construction to prevent data loss
                 payload = {
@@ -229,6 +245,8 @@ class QdrantHybridIngestor:
                     "source_type": source_type,
                     "has_bronze_evidence": has_bronze_evidence,
                     "unified_timestamp": unified_ts,
+                    "filed_at_epoch_s": filed_at_epoch_s,
+                    "transaction_date_epoch_s": transaction_date_epoch_s,
                     
                     # provide default values to prevent empty values from being filtered out
                     "ticker": metadata.get("ticker", "NONE"),
@@ -248,7 +266,7 @@ class QdrantHybridIngestor:
                     values=sparse_gen.values.tolist()
                 )
                 
-                # 5. 构建与 Upsert
+                # 5. Upsert
                 points.append(PointStruct(
                     id=point_id,
                     vector={
@@ -307,17 +325,26 @@ class QdrantHybridIngestor:
         # Fallback
         return {"news": today, "gpr": current_month, "sec": today}
 
-    def run_pipeline(self, full_refresh: bool = True):
+    def run_pipeline(self, full_refresh: bool = True, source_types: Optional[set[str]] = None) -> dict:
         """
         :param full_refresh: if True, full refresh the pipeline
         """
         logger.info("="*50)
         logger.info(f"🚀 Starting Hybrid Search Data Ingestion Pipeline (Full Refresh: {full_refresh})")
+        if source_types:
+            logger.info(f"Source filter enabled: {sorted(source_types)}")
         logger.info("="*50)
         
         if not self.gold_layer_dir.exists():
             logger.error(f"❌ Data directory not found: {self.gold_layer_dir}")
-            return
+            return {
+                "status": "failed",
+                "collection": self.collection_name,
+                "full_refresh": full_refresh,
+                "source_types": sorted(source_types) if source_types else None,
+                "total_upserted": 0,
+                "error": f"Data directory not found: {self.gold_layer_dir}",
+            }
             
         self.init_collection_with_indexes()
         
@@ -325,6 +352,9 @@ class QdrantHybridIngestor:
         target_states = self._get_run_states()
         
         total_upserted = 0
+        files_processed = []
+        files_skipped = []
+        source_counts = {}
         file_mappings = [
             ("sec", "qdrant_ready.jsonl"),
             ("news", "qdrant_asset_precious_metals_spot_processed.jsonl"),
@@ -336,6 +366,8 @@ class QdrantHybridIngestor:
         ]
         
         for source_type, filename in file_mappings:
+            if source_types and source_type not in source_types:
+                continue
             found_files = list(self.gold_layer_dir.rglob(filename))
             
             # get the date identifier for this data source
@@ -346,13 +378,34 @@ class QdrantHybridIngestor:
                 if full_refresh or (target_date_str and target_date_str in str(f_path)):
                     count = self.process_and_upsert_file(f_path, source_type)
                     total_upserted += count
+                    source_counts[source_type] = source_counts.get(source_type, 0) + count
+                    files_processed.append({
+                        "source_type": source_type,
+                        "path": str(f_path.relative_to(self.project_root)),
+                        "upserted": count,
+                    })
                 else:
-                    # not the target date history file, skip (silent, no logging)
-                    pass
+                    # not the target date history file, skip
+                    files_skipped.append({
+                        "source_type": source_type,
+                        "path": str(f_path.relative_to(self.project_root)),
+                        "target_state": target_date_str,
+                    })
 
         logger.info("="*50)
         logger.info(f"🎉 Pipeline Complete! Documents Upserted this run: {total_upserted}")
         logger.info("="*50)
+        return {
+            "status": "ok",
+            "collection": self.collection_name,
+            "full_refresh": full_refresh,
+            "source_types": sorted(source_types) if source_types else None,
+            "target_states": target_states,
+            "total_upserted": total_upserted,
+            "source_counts": source_counts,
+            "files_processed": files_processed,
+            "files_skipped": files_skipped,
+        }
 
 if __name__ == "__main__":
     import argparse
