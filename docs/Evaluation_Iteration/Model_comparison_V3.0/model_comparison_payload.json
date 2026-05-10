@@ -1,0 +1,1952 @@
+[
+  {
+    "label": "Finalizer gpt-4o Baseline",
+    "run_dir": "logs\\agentic_eval\\2026-05-09\\20260509_143613",
+    "metrics": {
+      "generated_at": "2026-05-09T21:40:41.028762",
+      "run_dir": "logs\\agentic_eval\\2026-05-09\\20260509_143613",
+      "n_cases": 20,
+      "node_run_counts": {
+        "retrieval_master": 20,
+        "analyst": 20,
+        "checker": 20,
+        "critic": 20,
+        "finalizer": 20
+      },
+      "checker_verdict_counts": {
+        "pass": 11,
+        "minor": 9
+      },
+      "critic_verdict_counts": {
+        "pass": 20
+      },
+      "finalizer_status_counts": {
+        "complete": 20
+      },
+      "finalizer_trigger_counts": {
+        "critic": 20
+      },
+      "mean_revision_count": 1,
+      "max_revision_count": 1,
+      "degraded_case_count": 0,
+      "degraded_case_rate": 0.0,
+      "checker_circuit_break_count": 0,
+      "completed_after_critic_count": 20,
+      "analyst_slot_answer_rate": 0.9083,
+      "analyst_semantic_evidence_carry_avg": 0.725,
+      "analyst_raw_metric_retention_avg": 0.2438,
+      "analyst_intent_coverage_avg": 0.9083,
+      "analyst_logic_integrity_rate": 0.975,
+      "analyst_truth_integrity_rate": 0.7167,
+      "analyst_structure_hint_presence_rate": 0.35,
+      "checker_fix_adoption_avg": 0.875,
+      "critic_feedback_adoption_avg": 1.0,
+      "critic_actionability_downgrade_success_rate": 1.0,
+      "critic_risk_disclosure_success_rate": 1.0,
+      "critic_non_actionable_information_retention_delta_avg": -0.0688,
+      "critic_spurious_fatal_proxy_rate": 0.0,
+      "finalizer_slot_answer_rate": 0.8583,
+      "finalizer_semantic_evidence_retention_avg": 0.6562,
+      "finalizer_disclosure_honesty_rate": 0.925,
+      "finalizer_evidence_retention_avg": 0.6444,
+      "finalizer_disclosure_retention_rate": 0.95,
+      "finalizer_logic_integrity_rate": 1.0,
+      "finalizer_truth_integrity_rate": 0.9167,
+      "finalizer_information_value_avg": 0.7217,
+      "finalizer_risk_disclosure_pass_rate": 1.0,
+      "finalizer_illustrative_structure_rate": 0.5714,
+      "downgraded_answer_usefulness_floor_avg": 0.475,
+      "finalizer_query_first_pass_rate": 0.2,
+      "finalizer_truthfulness_pass_rate": 0.55,
+      "critical_failure_case_rate": 0.0,
+      "material_failure_case_rate": 0.25,
+      "compliance_failure_case_rate": 0.25,
+      "analyst_contribution_avg": 0.8313,
+      "checker_contribution_avg": 0.95,
+      "critic_contribution_avg": 0.9413,
+      "finalizer_contribution_avg": 0.8171,
+      "analyst_to_final_logic_gain_avg": 0.025,
+      "analyst_to_final_truth_gain_avg": 0.2,
+      "analyst_to_final_information_gain_avg": -0.1408,
+      "analyst_to_final_intent_gain_avg": -0.05,
+      "structure_safing_gain_rate": 0.35,
+      "event_rows": 100
+    },
+    "cases": {
+      "Microstructure - SPY hedge posture": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 0.6667,
+        "finalizer_slot_answer_rate": 0.6667,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.5,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "pcr_signal": "answered",
+          "atm_iv_signal": "answered",
+          "liquidity_signal": "missed"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Microstructure - QQQ downside hedge": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "pcr_signal": "answered",
+          "atm_iv_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Microstructure - IWM downside screen": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "compliance",
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [
+          "Informational_only degraded mode required a why-not-now explanation, but it was missing."
+        ],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "pcr_signal": "unsupported_by_retrieval",
+          "atm_iv_signal": "answered",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Microstructure - GLD volatility screen": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "directional_watchlist",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "pcr_signal": "unsupported_by_retrieval",
+          "atm_iv_signal": "answered",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Single-name options - AAPL IV skew posture": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "iv_or_skew_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Single-name options - NVDA premium posture": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "compliance",
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [
+          "Informational_only degraded mode required a why-not-now explanation, but it was missing."
+        ],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "iv_or_skew_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Single-name options - AMD skew setup": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "compliance",
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [
+          "Informational_only degraded mode required a why-not-now explanation, but it was missing."
+        ],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "iv_or_skew_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Single-name options - TSLA downside liquidity": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "compliance",
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [
+          "Informational_only degraded mode required a why-not-now explanation, but it was missing."
+        ],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "iv_or_skew_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Cross-asset regime - QQQ IV versus VIX": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "material",
+        "critical_failures": [],
+        "material_failures": [
+          "Answer repeats None-valued microstructure placeholders instead of honest unavailability disclosure."
+        ],
+        "compliance_failures": [],
+        "mode": "directional_watchlist",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 1.0,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "iv_vs_vix_regime": "unsupported_by_retrieval"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Cross-asset regime - SPY Fed and yields impact": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.0,
+        "final_semantic_evidence": 0.0,
+        "analyst_slot_answer_rate": 0.0,
+        "finalizer_slot_answer_rate": 0.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "iv_vs_vix_regime": "missed"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Cross-asset regime - SPY CPI and VIX": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "directional_watchlist",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 1.0,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "iv_vs_vix_regime": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Cross-asset regime - IWM small-cap stress": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "material",
+        "critical_failures": [],
+        "material_failures": [
+          "Answer repeats None-valued microstructure placeholders instead of honest unavailability disclosure."
+        ],
+        "compliance_failures": [
+          "Informational_only degraded mode required a why-not-now explanation, but it was missing."
+        ],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 1.0,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "iv_vs_vix_regime": "unsupported_by_retrieval"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Geopolitical commodity - GLD risk backdrop": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 1.0,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.5,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "gpr_regime_signal": "answered",
+          "options_regime_implication": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Insider flow - AAPL selling signal": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "material",
+        "critical_failures": [],
+        "material_failures": [
+          "Missing-source or missing-slot disclosure is absent or incomplete."
+        ],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 1.0,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.5,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "sec_insider_signal": "answered",
+          "options_liquidity_posture": "unsupported_by_retrieval"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Insider flow - NVDA insider signal": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "sec_insider_signal": "disclosed_unanswerable",
+          "options_liquidity_posture": "unsupported_by_retrieval"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Insider flow - AMD buying versus vesting": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "sec_insider_signal": "disclosed_unanswerable",
+          "options_liquidity_posture": "unsupported_by_retrieval"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Insider flow - TSLA default window posture": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.875,
+        "final_semantic_evidence": 0.375,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 0.5,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "sec_insider_signal": "disclosed_unanswerable",
+          "options_liquidity_posture": "missed"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Geopolitical commodity - GLD hedge posture": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "material",
+        "critical_failures": [],
+        "material_failures": [
+          "Answer presents ATM IV as None rather than explicitly stating missing options evidence."
+        ],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.875,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 0.5,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "gpr_regime_signal": "answered",
+          "options_regime_implication": "missed"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Geopolitical commodity - SLV safe-haven posture": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "material",
+        "critical_failures": [],
+        "material_failures": [
+          "Answer presents ATM IV as None rather than explicitly stating missing options evidence."
+        ],
+        "compliance_failures": [],
+        "mode": "directional_watchlist",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 0.5,
+        "finalizer_slot_answer_rate": 0.5,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "gpr_regime_signal": "answered",
+          "options_regime_implication": "missed"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Geopolitical commodity - GLD volatility and risk": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "gpr_regime_signal": "answered",
+          "options_regime_implication": "answered"
+        },
+        "informational_value_under_downgrade": null
+      }
+    }
+  },
+  {
+    "label": "Hard-Missing vs Market-Read Split",
+    "run_dir": "logs\\agentic_eval\\2026-05-09\\20260509_164803",
+    "metrics": {
+      "generated_at": "2026-05-09T21:35:59.691303",
+      "run_dir": "logs\\agentic_eval\\2026-05-09\\20260509_164803",
+      "n_cases": 20,
+      "node_run_counts": {
+        "retrieval_master": 20,
+        "analyst": 20,
+        "checker": 20,
+        "critic": 20,
+        "finalizer": 20
+      },
+      "checker_verdict_counts": {
+        "pass": 12,
+        "minor": 8
+      },
+      "critic_verdict_counts": {
+        "pass": 20
+      },
+      "finalizer_status_counts": {
+        "complete": 20
+      },
+      "finalizer_trigger_counts": {
+        "critic": 20
+      },
+      "mean_revision_count": 1,
+      "max_revision_count": 1,
+      "degraded_case_count": 0,
+      "degraded_case_rate": 0.0,
+      "checker_circuit_break_count": 0,
+      "completed_after_critic_count": 20,
+      "analyst_slot_answer_rate": 0.9083,
+      "analyst_semantic_evidence_carry_avg": 0.7188,
+      "analyst_raw_metric_retention_avg": 0.2455,
+      "analyst_intent_coverage_avg": 0.9083,
+      "analyst_logic_integrity_rate": 0.975,
+      "analyst_truth_integrity_rate": 0.7667,
+      "analyst_structure_hint_presence_rate": 0.4,
+      "checker_fix_adoption_avg": 0.75,
+      "critic_feedback_adoption_avg": 1.0,
+      "critic_actionability_downgrade_success_rate": 1.0,
+      "critic_risk_disclosure_success_rate": 1.0,
+      "critic_non_actionable_information_retention_delta_avg": -0.0625,
+      "critic_spurious_fatal_proxy_rate": 0.0,
+      "finalizer_slot_answer_rate": 0.8583,
+      "finalizer_semantic_evidence_retention_avg": 0.6562,
+      "finalizer_disclosure_honesty_rate": 0.925,
+      "finalizer_evidence_retention_avg": 0.6389,
+      "finalizer_disclosure_retention_rate": 0.95,
+      "finalizer_logic_integrity_rate": 1.0,
+      "finalizer_truth_integrity_rate": 0.9167,
+      "finalizer_information_value_avg": 0.7229,
+      "finalizer_risk_disclosure_pass_rate": 1.0,
+      "finalizer_illustrative_structure_rate": 0.6667,
+      "downgraded_answer_usefulness_floor_avg": 0.6,
+      "finalizer_query_first_pass_rate": 0.2,
+      "finalizer_truthfulness_pass_rate": 0.6,
+      "critical_failure_case_rate": 0.0,
+      "material_failure_case_rate": 0.25,
+      "compliance_failure_case_rate": 0.15,
+      "analyst_contribution_avg": 0.8422,
+      "checker_contribution_avg": 0.8917,
+      "critic_contribution_avg": 0.9575,
+      "finalizer_contribution_avg": 0.8173,
+      "analyst_to_final_logic_gain_avg": 0.025,
+      "analyst_to_final_truth_gain_avg": 0.15,
+      "analyst_to_final_information_gain_avg": -0.1373,
+      "analyst_to_final_intent_gain_avg": -0.05,
+      "structure_safing_gain_rate": 0.4,
+      "event_rows": 100
+    },
+    "cases": {
+      "Microstructure - SPY hedge posture": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "directional_watchlist",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 0.6667,
+        "finalizer_slot_answer_rate": 0.6667,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "pcr_signal": "answered",
+          "atm_iv_signal": "answered",
+          "liquidity_signal": "missed"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Microstructure - QQQ downside hedge": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "pcr_signal": "answered",
+          "atm_iv_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Microstructure - IWM downside screen": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "pcr_signal": "unsupported_by_retrieval",
+          "atm_iv_signal": "answered",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Microstructure - GLD volatility screen": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "pcr_signal": "unsupported_by_retrieval",
+          "atm_iv_signal": "answered",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Single-name options - AAPL IV skew posture": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "compliance",
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [
+          "Informational_only answer carried market_read_only posture that belongs in directional_watchlist."
+        ],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "iv_or_skew_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Single-name options - NVDA premium posture": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "iv_or_skew_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Single-name options - AMD skew setup": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "iv_or_skew_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Single-name options - TSLA downside liquidity": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "iv_or_skew_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Cross-asset regime - QQQ IV versus VIX": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "material",
+        "critical_failures": [],
+        "material_failures": [
+          "Answer repeats None-valued microstructure placeholders instead of honest unavailability disclosure."
+        ],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 1.0,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.5,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "iv_vs_vix_regime": "unsupported_by_retrieval"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Cross-asset regime - SPY Fed and yields impact": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "directional_watchlist",
+        "analyst_semantic_evidence": 0.0,
+        "final_semantic_evidence": 0.0,
+        "analyst_slot_answer_rate": 0.0,
+        "finalizer_slot_answer_rate": 0.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.5,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "iv_vs_vix_regime": "missed"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Cross-asset regime - SPY CPI and VIX": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 1.0,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "iv_vs_vix_regime": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Cross-asset regime - IWM small-cap stress": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "material",
+        "critical_failures": [],
+        "material_failures": [
+          "Answer repeats None-valued microstructure placeholders instead of honest unavailability disclosure."
+        ],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 1.0,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "iv_vs_vix_regime": "unsupported_by_retrieval"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Geopolitical commodity - GLD risk backdrop": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "compliance",
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [
+          "Informational_only answer carried market_read_only posture that belongs in directional_watchlist."
+        ],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 1.0,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.5,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "gpr_regime_signal": "answered",
+          "options_regime_implication": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Insider flow - AAPL selling signal": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "material",
+        "critical_failures": [],
+        "material_failures": [
+          "Missing-source or missing-slot disclosure is absent or incomplete."
+        ],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 1.0,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.5,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "sec_insider_signal": "answered",
+          "options_liquidity_posture": "unsupported_by_retrieval"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Insider flow - NVDA insider signal": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "sec_insider_signal": "disclosed_unanswerable",
+          "options_liquidity_posture": "unsupported_by_retrieval"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Insider flow - AMD buying versus vesting": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "sec_insider_signal": "disclosed_unanswerable",
+          "options_liquidity_posture": "unsupported_by_retrieval"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Insider flow - TSLA default window posture": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.875,
+        "final_semantic_evidence": 0.375,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 0.5,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "sec_insider_signal": "disclosed_unanswerable",
+          "options_liquidity_posture": "missed"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Geopolitical commodity - GLD hedge posture": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "material",
+        "critical_failures": [],
+        "material_failures": [
+          "Answer presents ATM IV as None rather than explicitly stating missing options evidence."
+        ],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 0.5,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "gpr_regime_signal": "answered",
+          "options_regime_implication": "missed"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Geopolitical commodity - SLV safe-haven posture": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "material",
+        "critical_failures": [],
+        "material_failures": [
+          "Answer presents ATM IV as None rather than explicitly stating missing options evidence."
+        ],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 0.5,
+        "finalizer_slot_answer_rate": 0.5,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "gpr_regime_signal": "answered",
+          "options_regime_implication": "missed"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Geopolitical commodity - GLD volatility and risk": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "compliance",
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [
+          "Informational_only answer carried market_read_only posture that belongs in directional_watchlist."
+        ],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "gpr_regime_signal": "answered",
+          "options_regime_implication": "answered"
+        },
+        "informational_value_under_downgrade": null
+      }
+    }
+  },
+  {
+    "label": "Watchlist Gate v1",
+    "run_dir": "logs\\agentic_eval\\2026-05-09\\20260509_173314",
+    "metrics": {
+      "generated_at": "2026-05-09T21:05:25.021455",
+      "run_dir": "logs\\agentic_eval\\2026-05-09\\20260509_173314",
+      "n_cases": 20,
+      "node_run_counts": {
+        "retrieval_master": 20,
+        "analyst": 20,
+        "checker": 20,
+        "critic": 20,
+        "finalizer": 20
+      },
+      "checker_verdict_counts": {
+        "pass": 12,
+        "minor": 8
+      },
+      "critic_verdict_counts": {
+        "pass": 20
+      },
+      "finalizer_status_counts": {
+        "complete": 20
+      },
+      "finalizer_trigger_counts": {
+        "critic": 20
+      },
+      "mean_revision_count": 1,
+      "max_revision_count": 1,
+      "degraded_case_count": 0,
+      "degraded_case_rate": 0.0,
+      "checker_circuit_break_count": 0,
+      "completed_after_critic_count": 20,
+      "analyst_slot_answer_rate": 0.9083,
+      "analyst_semantic_evidence_carry_avg": 0.7188,
+      "analyst_raw_metric_retention_avg": 0.2425,
+      "analyst_intent_coverage_avg": 0.9083,
+      "analyst_logic_integrity_rate": 0.975,
+      "analyst_truth_integrity_rate": 0.7833,
+      "analyst_structure_hint_presence_rate": 0.45,
+      "checker_fix_adoption_avg": 0.775,
+      "critic_feedback_adoption_avg": 1.0,
+      "critic_actionability_downgrade_success_rate": 1.0,
+      "critic_risk_disclosure_success_rate": 1.0,
+      "critic_non_actionable_information_retention_delta_avg": -0.0437,
+      "critic_spurious_fatal_proxy_rate": 0.0,
+      "finalizer_slot_answer_rate": 0.8833,
+      "finalizer_semantic_evidence_retention_avg": 0.675,
+      "finalizer_disclosure_honesty_rate": 0.95,
+      "finalizer_evidence_retention_avg": 0.6569,
+      "finalizer_disclosure_retention_rate": 0.95,
+      "finalizer_logic_integrity_rate": 1.0,
+      "finalizer_truth_integrity_rate": 0.9833,
+      "finalizer_information_value_avg": 0.7471,
+      "finalizer_risk_disclosure_pass_rate": 1.0,
+      "finalizer_illustrative_structure_rate": 0.4,
+      "downgraded_answer_usefulness_floor_avg": 0.6,
+      "finalizer_query_first_pass_rate": 0.2,
+      "finalizer_truthfulness_pass_rate": 0.85,
+      "critical_failure_case_rate": 0.0,
+      "material_failure_case_rate": 0.05,
+      "compliance_failure_case_rate": 0.1,
+      "analyst_contribution_avg": 0.8464,
+      "checker_contribution_avg": 0.9,
+      "critic_contribution_avg": 0.9613,
+      "finalizer_contribution_avg": 0.8441,
+      "analyst_to_final_logic_gain_avg": 0.025,
+      "analyst_to_final_truth_gain_avg": 0.2,
+      "analyst_to_final_information_gain_avg": -0.1169,
+      "analyst_to_final_intent_gain_avg": -0.025,
+      "structure_safing_gain_rate": 0.45,
+      "event_rows": 100
+    },
+    "cases": {
+      "Microstructure - SPY hedge posture": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 0.6667,
+        "finalizer_slot_answer_rate": 0.6667,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "pcr_signal": "answered",
+          "atm_iv_signal": "answered",
+          "liquidity_signal": "missed"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Microstructure - QQQ downside hedge": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "pcr_signal": "answered",
+          "atm_iv_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Microstructure - IWM downside screen": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "pcr_signal": "unsupported_by_retrieval",
+          "atm_iv_signal": "answered",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Microstructure - GLD volatility screen": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "pcr_signal": "unsupported_by_retrieval",
+          "atm_iv_signal": "answered",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Single-name options - AAPL IV skew posture": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "iv_or_skew_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Single-name options - NVDA premium posture": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "iv_or_skew_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Single-name options - AMD skew setup": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "iv_or_skew_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Single-name options - TSLA downside liquidity": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "iv_or_skew_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Cross-asset regime - QQQ IV versus VIX": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 1.0,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.5,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "iv_vs_vix_regime": "unsupported_by_retrieval"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Cross-asset regime - SPY Fed and yields impact": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.0,
+        "final_semantic_evidence": 0.0,
+        "analyst_slot_answer_rate": 0.0,
+        "finalizer_slot_answer_rate": 0.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "iv_vs_vix_regime": "missed"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Cross-asset regime - SPY CPI and VIX": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 1.0,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "iv_vs_vix_regime": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Cross-asset regime - IWM small-cap stress": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 1.0,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "iv_vs_vix_regime": "unsupported_by_retrieval"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Geopolitical commodity - GLD risk backdrop": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "compliance",
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [
+          "Informational_only answer carried market_read_only posture that belongs in directional_watchlist."
+        ],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 1.0,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.5,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "gpr_regime_signal": "answered",
+          "options_regime_implication": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Insider flow - AAPL selling signal": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "material",
+        "critical_failures": [],
+        "material_failures": [
+          "Missing-source or missing-slot disclosure is absent or incomplete."
+        ],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 1.0,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.5,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "sec_insider_signal": "answered",
+          "options_liquidity_posture": "unsupported_by_retrieval"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Insider flow - NVDA insider signal": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "sec_insider_signal": "disclosed_unanswerable",
+          "options_liquidity_posture": "unsupported_by_retrieval"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Insider flow - AMD buying versus vesting": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "sec_insider_signal": "disclosed_unanswerable",
+          "options_liquidity_posture": "unsupported_by_retrieval"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Insider flow - TSLA default window posture": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.875,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "sec_insider_signal": "disclosed_unanswerable",
+          "options_liquidity_posture": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Geopolitical commodity - GLD hedge posture": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "directional_watchlist",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 0.5,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "gpr_regime_signal": "answered",
+          "options_regime_implication": "missed"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Geopolitical commodity - SLV safe-haven posture": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 0.5,
+        "finalizer_slot_answer_rate": 0.5,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "gpr_regime_signal": "answered",
+          "options_regime_implication": "missed"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Geopolitical commodity - GLD volatility and risk": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "compliance",
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [
+          "Informational_only answer carried market_read_only posture that belongs in directional_watchlist."
+        ],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "gpr_regime_signal": "answered",
+          "options_regime_implication": "answered"
+        },
+        "informational_value_under_downgrade": null
+      }
+    }
+  },
+  {
+    "label": "Protected Watchlist Floor + Re-eval",
+    "run_dir": "logs\\agentic_eval\\2026-05-09\\20260509_180947\\reeval_node",
+    "metrics": {
+      "generated_at": "2026-05-09T21:00:25.592708",
+      "run_dir": "logs\\agentic_eval\\2026-05-09\\20260509_180947",
+      "n_cases": 20,
+      "node_run_counts": {
+        "retrieval_master": 20,
+        "analyst": 20,
+        "checker": 20,
+        "critic": 20,
+        "finalizer": 20
+      },
+      "checker_verdict_counts": {
+        "pass": 12,
+        "minor": 8
+      },
+      "critic_verdict_counts": {
+        "pass": 20
+      },
+      "finalizer_status_counts": {
+        "complete": 20
+      },
+      "finalizer_trigger_counts": {
+        "critic": 20
+      },
+      "mean_revision_count": 1,
+      "max_revision_count": 1,
+      "degraded_case_count": 0,
+      "degraded_case_rate": 0.0,
+      "checker_circuit_break_count": 0,
+      "completed_after_critic_count": 20,
+      "analyst_slot_answer_rate": 0.9083,
+      "analyst_semantic_evidence_carry_avg": 0.7188,
+      "analyst_raw_metric_retention_avg": 0.2549,
+      "analyst_intent_coverage_avg": 0.9083,
+      "analyst_logic_integrity_rate": 0.975,
+      "analyst_truth_integrity_rate": 0.7667,
+      "analyst_structure_hint_presence_rate": 0.45,
+      "checker_fix_adoption_avg": 0.775,
+      "critic_feedback_adoption_avg": 1.0,
+      "critic_actionability_downgrade_success_rate": 1.0,
+      "critic_risk_disclosure_success_rate": 1.0,
+      "critic_non_actionable_information_retention_delta_avg": -0.05,
+      "critic_spurious_fatal_proxy_rate": 0.0,
+      "finalizer_slot_answer_rate": 0.8833,
+      "finalizer_semantic_evidence_retention_avg": 0.6687,
+      "finalizer_disclosure_honesty_rate": 0.95,
+      "finalizer_evidence_retention_avg": 0.6569,
+      "finalizer_disclosure_retention_rate": 0.95,
+      "finalizer_logic_integrity_rate": 1.0,
+      "finalizer_truth_integrity_rate": 0.9833,
+      "finalizer_information_value_avg": 0.7917,
+      "finalizer_risk_disclosure_pass_rate": 1.0,
+      "finalizer_illustrative_structure_rate": 0.4286,
+      "downgraded_answer_usefulness_floor_avg": 0.6,
+      "finalizer_query_first_pass_rate": 0.2,
+      "finalizer_truthfulness_pass_rate": 0.9,
+      "critical_failure_case_rate": 0.0,
+      "material_failure_case_rate": 0.05,
+      "compliance_failure_case_rate": 0.05,
+      "analyst_contribution_avg": 0.8422,
+      "checker_contribution_avg": 0.9083,
+      "critic_contribution_avg": 0.96,
+      "finalizer_contribution_avg": 0.8486,
+      "analyst_to_final_logic_gain_avg": 0.025,
+      "analyst_to_final_truth_gain_avg": 0.2167,
+      "analyst_to_final_information_gain_avg": -0.1079,
+      "analyst_to_final_intent_gain_avg": -0.025,
+      "structure_safing_gain_rate": 0.45,
+      "event_rows": 100
+    },
+    "cases": {
+      "Microstructure - SPY hedge posture": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "directional_watchlist",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 0.6667,
+        "finalizer_slot_answer_rate": 0.6667,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "pcr_signal": "answered",
+          "atm_iv_signal": "answered",
+          "liquidity_signal": "missed"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Microstructure - QQQ downside hedge": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "directional_watchlist",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "pcr_signal": "answered",
+          "atm_iv_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Microstructure - IWM downside screen": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "directional_watchlist",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "pcr_signal": "unsupported_by_retrieval",
+          "atm_iv_signal": "answered",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Microstructure - GLD volatility screen": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "directional_watchlist",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "pcr_signal": "unsupported_by_retrieval",
+          "atm_iv_signal": "answered",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Single-name options - AAPL IV skew posture": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "directional_watchlist",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "iv_or_skew_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Single-name options - NVDA premium posture": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "directional_watchlist",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "iv_or_skew_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Single-name options - AMD skew setup": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "directional_watchlist",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "iv_or_skew_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Single-name options - TSLA downside liquidity": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "directional_watchlist",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "iv_or_skew_signal": "unsupported_by_retrieval",
+          "liquidity_signal": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Cross-asset regime - QQQ IV versus VIX": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 1.0,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.5,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "iv_vs_vix_regime": "unsupported_by_retrieval"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Cross-asset regime - SPY Fed and yields impact": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.0,
+        "final_semantic_evidence": 0.0,
+        "analyst_slot_answer_rate": 0.0,
+        "finalizer_slot_answer_rate": 0.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "iv_vs_vix_regime": "missed"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Cross-asset regime - SPY CPI and VIX": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 1.0,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "iv_vs_vix_regime": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Cross-asset regime - IWM small-cap stress": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 1.0,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "iv_vs_vix_regime": "unsupported_by_retrieval"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Geopolitical commodity - GLD risk backdrop": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "compliance",
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [
+          "Informational_only answer carried market_read_only posture that belongs in directional_watchlist."
+        ],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 1.0,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.5,
+        "risk_disclosure_pass": null,
+        "slot_status": {
+          "gpr_regime_signal": "answered",
+          "options_regime_implication": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Insider flow - AAPL selling signal": {
+        "financial_truthfulness_pass": false,
+        "highest_failure_severity": "material",
+        "critical_failures": [],
+        "material_failures": [
+          "Missing-source or missing-slot disclosure is absent or incomplete."
+        ],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 0.875,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 0.5,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "sec_insider_signal": "answered",
+          "options_liquidity_posture": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Insider flow - NVDA insider signal": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "sec_insider_signal": "disclosed_unanswerable",
+          "options_liquidity_posture": "unsupported_by_retrieval"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Insider flow - AMD buying versus vesting": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "sec_insider_signal": "disclosed_unanswerable",
+          "options_liquidity_posture": "unsupported_by_retrieval"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Insider flow - TSLA default window posture": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "informational_only",
+        "analyst_semantic_evidence": 0.875,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "sec_insider_signal": "disclosed_unanswerable",
+          "options_liquidity_posture": "answered"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Geopolitical commodity - GLD hedge posture": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "directional_watchlist",
+        "analyst_semantic_evidence": 1.0,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 0.5,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "gpr_regime_signal": "answered",
+          "options_regime_implication": "missed"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Geopolitical commodity - SLV safe-haven posture": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "directional_watchlist",
+        "analyst_semantic_evidence": 0.5,
+        "final_semantic_evidence": 0.5,
+        "analyst_slot_answer_rate": 0.5,
+        "finalizer_slot_answer_rate": 0.5,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "gpr_regime_signal": "answered",
+          "options_regime_implication": "missed"
+        },
+        "informational_value_under_downgrade": null
+      },
+      "Geopolitical commodity - GLD volatility and risk": {
+        "financial_truthfulness_pass": true,
+        "highest_failure_severity": null,
+        "critical_failures": [],
+        "material_failures": [],
+        "compliance_failures": [],
+        "mode": "directional_watchlist",
+        "analyst_semantic_evidence": 0.75,
+        "final_semantic_evidence": 0.75,
+        "analyst_slot_answer_rate": 1.0,
+        "finalizer_slot_answer_rate": 1.0,
+        "critic_adoption": 1.0,
+        "checker_adoption": 1.0,
+        "risk_disclosure_pass": true,
+        "slot_status": {
+          "gpr_regime_signal": "answered",
+          "options_regime_implication": "answered"
+        },
+        "informational_value_under_downgrade": null
+      }
+    }
+  }
+]
