@@ -10,6 +10,13 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from Scripts.core.financial_ontology import (
+    ALLOWED_CATEGORIES,
+    ALLOWED_METRICS,
+    ALLOWED_SOURCES,
+    DATASET_PHYSICAL_SCHEMA,
+)
+
 # ==========================================
 # 1. PROFESSIONAL FINANCIAL TERMINOLOGY (Taxonomy)
 # ==========================================
@@ -132,6 +139,59 @@ def build_modelfile_system_prompt() -> str:
     """.strip()
 
 
+def _compact_join(values: List[str], limit: int = 12) -> str:
+    trimmed = [str(v).strip() for v in values if str(v).strip()]
+    if not trimmed:
+        return "(none)"
+    if len(trimmed) <= limit:
+        return ", ".join(trimmed)
+    return ", ".join(trimmed[:limit]) + f", ... (+{len(trimmed) - limit} more)"
+
+
+@lru_cache(maxsize=1)
+def get_financial_ontology_context() -> str:
+    """
+    Compact ontology contract injected into agent system prompts.
+
+    Goal:
+    - Keep API and Ollama runs anchored to the same financial vocabulary.
+    - Remind every node what the project can and cannot legitimately cite.
+    """
+    options_fields = sorted(DATASET_PHYSICAL_SCHEMA.get("options", []))
+    macro_fields = sorted(DATASET_PHYSICAL_SCHEMA.get("macro", []))
+    sec_fields = sorted(DATASET_PHYSICAL_SCHEMA.get("sec_qdrant_payload", []))
+    news_fields = sorted(DATASET_PHYSICAL_SCHEMA.get("news_qdrant_payload", []))
+
+    return (
+        "=== PROJECT FINANCIAL DOMAIN CONTRACT ===\n"
+        "This system operates inside a financial RAG pipeline with strict source discipline.\n"
+        f"- Allowed Gold source_types: {_compact_join(sorted(ALLOWED_SOURCES), limit=8)}\n"
+        f"- Allowed semantic categories: {_compact_join(sorted(ALLOWED_CATEGORIES), limit=10)}\n"
+        f"- Allowed metric labels: {_compact_join(sorted(ALLOWED_METRICS), limit=12)}\n"
+        "- Silver parquet is the source of truth for quantitative claims.\n"
+        "- Gold Qdrant records are the source of truth for qualitative/news/SEC claims.\n"
+        "- If a requested metric is not in project scope, say so plainly instead of inferring substitutes.\n"
+        "- Preserve financial terminology exactly; do not rename source fields or invent synthetic fields.\n"
+        f"- Options Silver fields include: {_compact_join(options_fields)}\n"
+        f"- Macro Silver fields include: {_compact_join(macro_fields)}\n"
+        f"- SEC Gold payload fields include: {_compact_join(sec_fields)}\n"
+        f"- News Gold payload fields include: {_compact_join(news_fields)}"
+    )
+
+
+def get_shared_financial_system_prompt() -> str:
+    """
+    Shared financial context for all agent nodes, regardless of provider.
+    """
+    return (
+        "=== INSTITUTIONAL FINANCIAL OPERATING CONTEXT ===\n"
+        f"{ANALYSIS_FRAMEWORKS['options_expert_logic'].strip()}\n\n"
+        f"{ANALYSIS_FRAMEWORKS['macro_geopolitics'].strip()}\n\n"
+        f"{ANALYSIS_FRAMEWORKS['investment_analysis'].strip()}\n\n"
+        f"{get_financial_ontology_context()}"
+    )
+
+
 @lru_cache(maxsize=1)
 def load_modelfile_system_prompt(modelfile_path: Optional[str] = None) -> str:
     """
@@ -162,4 +222,7 @@ def get_analyst_system_prompt() -> str:
     1) Prefer `modelfile` SYSTEM for strict runtime/training alignment.
     2) Fall back to synthesized institutional prompt if missing.
     """
-    return load_modelfile_system_prompt()
+    return (
+        f"{load_modelfile_system_prompt()}\n\n"
+        f"{get_shared_financial_system_prompt()}"
+    ).strip()
