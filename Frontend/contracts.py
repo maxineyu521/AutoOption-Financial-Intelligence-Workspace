@@ -118,11 +118,35 @@ def normalize_state(raw_state: Dict[str, Any]) -> Dict[str, Any]:
     final_report = to_mapping(final_strategy.get("final_report"))
     iv_regime = to_mapping(state.get("iv_regime_pinned"))
     time_range = to_mapping(state.get("time_range"))
+    scope_contract = to_mapping(state.get("scope_contract"))
+    retrieval_outcome = to_mapping(state.get("retrieval_outcome"))
+    critic_reasoning_profile = to_mapping(state.get("critic_reasoning_profile"))
+    finalizer_input_card = to_mapping(state.get("finalizer_input_card"))
 
     silver_values = to_mapping(silver_context.get("values"))
     silver_links = sorted(_collect_links(silver_context))
     lineage_anchors = to_list(silver_context.get("lineage_anchors"))
     latest_update = _extract_latest_update_date(lineage_anchors)
+    posture_trace = to_mapping(
+        finalizer_input_card.get("posture_reasoning_trace")
+        or critic_reasoning_profile.get("posture_reasoning_trace")
+    )
+    posture_label = (
+        finalizer_input_card.get("posture_label")
+        or critic_reasoning_profile.get("posture_label")
+        or posture_trace.get("derived_label")
+        or ""
+    )
+    posture_takeaway = (
+        finalizer_input_card.get("posture_takeaway")
+        or critic_reasoning_profile.get("posture_takeaway")
+        or ""
+    )
+    posture_rationale = (
+        finalizer_input_card.get("posture_rationale")
+        or critic_reasoning_profile.get("posture_rationale")
+        or ""
+    )
 
     sec_sales: List[Dict[str, Any]] = []
     for chunk in gold_chunks:
@@ -156,9 +180,20 @@ def normalize_state(raw_state: Dict[str, Any]) -> Dict[str, Any]:
         "sec_sales": sec_sales,
         "time_range": time_range,
         "source_predicates": _normalize_predicates(time_range),
+        "scope_contract": scope_contract,
+        "retrieval_outcome": retrieval_outcome,
         "final_strategy": final_strategy,
         "final_report": final_report,
+        "recommendation_mode": state.get("recommendation_mode"),
+        "actionability_mode": state.get("actionability_mode"),
+        "structure_visibility_mode": state.get("structure_visibility_mode"),
         "iv_regime_pinned": iv_regime,
+        "critic_reasoning_profile": critic_reasoning_profile,
+        "finalizer_input_card": finalizer_input_card,
+        "posture_label": posture_label,
+        "posture_takeaway": posture_takeaway,
+        "posture_rationale": posture_rationale,
+        "posture_reasoning_trace": posture_trace,
         "node_audit_log": to_list(state.get("node_audit_log")),
     }
 
@@ -182,13 +217,13 @@ def quick_query_quality(query: str) -> Dict[str, Any]:
 
     suggestions: List[str] = []
     if not has_ticker:
-        suggestions.append("Add a covered ticker (e.g., AAPL, SPY, GLD).")
+        suggestions.append("Start with a covered asset, such as AAPL, SPY, QQQ, GLD, or SLV.")
     if not has_time:
-        suggestions.append("Add a clear time phrase (today / past week / past month).")
+        suggestions.append("Add a time window like today, past week, or past month.")
     if not has_metric:
-        suggestions.append("Name at least one metric (PCR, IV, skew, VIX, GPR, liquidity).")
+        suggestions.append("Name the signal you care about: IV, skew, PCR, VIX, GPR, liquidity, Form 4, or insider selling.")
     if not has_intent:
-        suggestions.append("State your intent (hedge, signal, strategy, or position).")
+        suggestions.append("Say the goal: options posture, SEC filing risk, geopolitics narrative, or macro regime.")
 
     return {
         "score": score,
@@ -213,14 +248,14 @@ def state_query_quality(normalized_state: Dict[str, Any]) -> Dict[str, Any]:
 
     suggestions: List[str] = []
     if not tickers:
-        suggestions.append("Ticker is missing.")
+        suggestions.append("Add the asset first so retrieval can anchor the evidence.")
     elif len(in_universe) != len(tickers):
         miss = [t for t in tickers if t not in universe]
-        suggestions.append(f"Out-of-universe ticker(s): {', '.join(miss)}.")
+        suggestions.append(f"{', '.join(miss)} is outside the tracked universe; try a covered ticker or ask a macro-only question.")
     if not time_window:
-        suggestions.append("Time window missing in parsed metadata.")
+        suggestions.append("Add a clear window such as today, past week, or past month.")
     if not metrics:
-        suggestions.append("Metric mapping is empty; add explicit metric words.")
+        suggestions.append("Add explicit signal words such as IV, skew, PCR, VIX, GPR, liquidity, Form 4, or insider selling.")
 
     return {
         "score": score,
@@ -244,15 +279,15 @@ def evidence_blend_summary(normalized_state: Dict[str, Any]) -> str:
         try:
             delta_days = (date.today() - datetime.strptime(latest_update, "%Y-%m-%d").date()).days
             if delta_days <= 2:
-                freshness = f"fresh Silver snapshot ({latest_update})"
+                freshness = f"fresh structured data snapshot ({latest_update})"
             elif delta_days <= 7:
-                freshness = f"moderately fresh Silver snapshot ({latest_update})"
+                freshness = f"moderately fresh structured data snapshot ({latest_update})"
             else:
-                freshness = f"stale Silver snapshot ({latest_update})"
+                freshness = f"stale structured data snapshot ({latest_update})"
         except ValueError:
             pass
 
-    gold_phrase = f"Gold semantic confidence avg {avg_gold:.3f}" if avg_gold is not None else "Gold confidence unavailable"
+    gold_phrase = f"narrative confidence avg {avg_gold:.3f}" if avg_gold is not None else "narrative confidence unavailable"
     sec_dates = [s.get("filed_at") for s in sec_sales if s.get("filed_at")]
     sec_recency = max(sec_dates) if sec_dates else "n/a"
     sec_phrase = f"{len(sec_sales)} Form-4 SELL filings, latest filed {sec_recency}" if sec_sales else "no recent Form-4 SELL filing evidence"

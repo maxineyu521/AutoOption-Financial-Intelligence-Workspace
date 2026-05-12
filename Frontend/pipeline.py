@@ -10,6 +10,12 @@ from .config import MAX_ROUTER_STEPS
 APPEND_ONLY_KEYS = {"critic_feedback", "node_audit_log"}
 
 
+def _field(obj: Any, key: str, default: Any = None) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
 def _merge_state(state: Dict[str, Any], delta: Dict[str, Any]) -> None:
     for key, value in (delta or {}).items():
         if key in APPEND_ONLY_KEYS and isinstance(value, list):
@@ -19,7 +25,10 @@ def _merge_state(state: Dict[str, Any], delta: Dict[str, Any]) -> None:
             state[key] = value
 
 
-async def run_router_nodes_stream(query: str) -> AsyncIterator[Dict[str, Any]]:
+async def run_router_nodes_stream(
+    query: str,
+    query_builder_contract: Dict[str, Any] | None = None,
+) -> AsyncIterator[Dict[str, Any]]:
     """
     Stream node-level updates by directly calling router.py node functions.
     This avoids waiting for a full final_state before rendering the UI.
@@ -28,6 +37,7 @@ async def run_router_nodes_stream(query: str) -> AsyncIterator[Dict[str, Any]]:
 
     state: Dict[str, Any] = {
         "original_query": query,
+        "query_builder_contract": query_builder_contract or None,
         "critic_feedback": [],
         "node_audit_log": [],
     }
@@ -43,8 +53,57 @@ async def run_router_nodes_stream(query: str) -> AsyncIterator[Dict[str, Any]]:
 
     # Retrieval node
     yield await _run_node("retrieval_master", router.master_retrieval_node, state)
+    for message in [
+        "Parse query intent with ontology-aware metadata extraction.",
+        "Compile source-aware time predicates for structured data and narrative evidence retrieval.",
+        "Build HyDE anticipation: a hypothetical market thesis used to expand semantic recall.",
+        "Query DuckDB and Parquet for deterministic options, macro, and GPR numerics.",
+        "Query semantic retrieval for news, SEC filings, and broader narrative evidence.",
+    ]:
+        yield {
+            "event": "stage_detail",
+            "node": "retrieval_master",
+            "message": message,
+            "state": copy.deepcopy(state),
+        }
+        await asyncio.sleep(0)
     retrieval_delta = await router.master_retrieval_node(state)
     _merge_state(state, retrieval_delta)
+    metadata = state.get("metadata")
+    silver_values = ((state.get("silver_context") or {}).get("values") or {})
+    hyde = state.get("hyde_anticipation") or {}
+    time_range = state.get("time_range") or {}
+    summary_messages = [
+        (
+            "Intent extracted: "
+            f"tickers={_field(metadata, 'tickers', []) or []}; "
+            f"metrics={_field(metadata, 'metrics', []) or []}; "
+            f"sources={_field(metadata, 'source_types', []) or []}."
+        ),
+        (
+            "Time window compiled: "
+            f"{time_range.get('start_date', 'N/A')} -> {time_range.get('end_date', 'N/A')} "
+            f"({time_range.get('time_window_label', 'N/A')}, {time_range.get('window_days', 'N/A')}d)."
+        ),
+        (
+            "HyDE ready: "
+            f"{str(hyde.get('rerank_query') or hyde.get('paragraph') or 'no expansion needed')[:180]}"
+        ),
+        (
+            "Structured data retrieval complete: "
+            f"{len(silver_values)} numeric fields, "
+            f"{len((state.get('silver_context') or {}).get('lineage_anchors') or [])} lineage anchors."
+        ),
+        f"Narrative retrieval complete: {len(state.get('gold_context') or [])} semantic chunks.",
+    ]
+    for message in summary_messages:
+        yield {
+            "event": "stage_detail",
+            "node": "retrieval_master",
+            "message": message,
+            "state": copy.deepcopy(state),
+        }
+        await asyncio.sleep(0)
     yield {"event": "node_end", "node": "retrieval_master", "state": copy.deepcopy(state)}
 
     steps = 0
