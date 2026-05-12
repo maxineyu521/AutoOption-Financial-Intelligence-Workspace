@@ -1,6 +1,6 @@
 # Embedding, Chunking, and Retrieval Fusion Strategy
 
-*This document is the authoritative rationale for every model, chunking decision, and fusion parameter in the retrieval pipeline. For the operational model registry (WHAT is deployed WHERE), see `docs/modular_guide/ARCHITECTURE.md §5`. For GPU warmup and Ollama keep-alive, see `docs/modular_guide/LLM Pool Operations Guide.md`.*
+*This document is the authoritative rationale for every model, chunking decision, and fusion parameter in the retrieval pipeline. Model references below are aligned to the current project `.env` and the live retrieval code path, not just the sample configuration. For the operational model registry (WHAT is deployed WHERE), see `docs/modular_guide/ARCHITECTURE.md §5`. For GPU warmup and Ollama keep-alive, see `docs/modular_guide/LLM Pool Operations Guide.md`.*
 
 ---
 
@@ -143,7 +143,7 @@ The SEC pipeline intentionally applies **two different pre-vectorization strateg
   - convert HTML to Markdown to preserve table readability,
   - split by `Item X.XX` boundaries (semantic chunking) when present.
 - **Gold synthesis in `sec_processor.py`:**
-  - feed normalized 8-K content to ingestion-role LLM (`OLLAMA_INGESTION_MODEL`) in strict JSON mode,
+  - feed normalized 8-K content to ingestion-role LLM (`OLLAMA_INGESTION_MODEL`, currently `llama3:latest`) in strict JSON mode,
   - return compact fields: `summary`, `transaction_date`, `tone_score`, `topics`.
 - **Why this strategy:** chunking by legal event sections reduces token waste and hallucination risk while preserving retrieval precision for event-specific queries (e.g., `Item 2.02` vs `Item 8.01`).
 
@@ -407,9 +407,9 @@ The system is designed with a **strict hardware tier separation**: GPU is reserv
 │    • Embedded, zero-latency startup                            │
 │    • ~50–100ms per Parquet scan                                │
 │                                                                │
-│  QueryTransformer (OpenAI-compatible)                          │
-│    • `TRANSFORM_EXTRACTOR_MODEL` default `gpt-4o-mini`         │
-│    • `TRANSFORM_HYDE_MODEL` default `gpt-4o-mini`              │
+│  QueryTransformer (OpenAI-compatible, active path)             │
+│    • `TRANSFORM_EXTRACTOR_MODEL=gpt-4o-mini`                   │
+│    • `TRANSFORM_HYDE_MODEL=gpt-4o-mini`                        │
 │    • Invoked via `langchain_openai.ChatOpenAI`                 │
 └────────────────────────────────────────────────────────────────┘
 ```
@@ -430,33 +430,44 @@ The system is designed with a **strict hardware tier separation**: GPU is reserv
 ## VIII. Configuration Matrix (`.env`)
 
 
-| Variable                    | Default                      | Purpose                                                       | Tier                          |
+| Variable                    | Current `.env` Value         | Purpose                                                       | Tier                          |
 | --------------------------- | ---------------------------- | ------------------------------------------------------------- | ----------------------------- |
 | `EMBEDDING_MODEL_NAME`      | `BAAI/bge-base-en-v1.5`      | Dense encoder HuggingFace ID                                  | Retrieval (CPU)               |
 | `EMBEDDING_DEVICE`          | `cpu`                        | Dense encoder device (`cpu`, `cuda`, `mps`)                   | Retrieval (CPU)               |
-| `SPARSE_MODEL_NAME`         | `prithivida/Splade_PP_en_v1` | SPLADE model via fastembed                                    | Retrieval (CPU)               |
+| `SPARSE_MODEL_NAME`         | `prithivida/Splade_PP_en_v1` | Declared sparse model family in config                        | Retrieval (CPU)               |
 | `FASTEMBED_THREADS`         | `6`                          | ONNX SPLADE thread count                                      | Retrieval (CPU)               |
 | `RERANKER_MODEL_NAME`       | `BAAI/bge-reranker-v2-m3`    | CrossEncoder reranker                                         | Retrieval (CPU)               |
 | `RETRIEVER_DEVICE`          | `cpu`                        | CrossEncoder device                                           | Retrieval (CPU)               |
 | `QDRANT_HOST`               | required                     | Qdrant Cloud REST endpoint                                    | Infrastructure                |
 | `QDRANT_API_KEY`            | required                     | Qdrant authentication                                         | Infrastructure                |
-| `OLLAMA_CUSTOM_MODEL_NAME`  | `options-expert-v1:latest`   | 70B fine-tuned expert tier (analyst/checker/critic/finalizer) | LLM (GPU)                     |
-| `OLLAMA_ROUTER_MODEL`       | `llama3:latest`              | 8B router + ingestion helpers                                 | LLM (GPU)                     |
+| `ROUTER_PROVIDER`           | `openai`                     | Active provider for lightweight routing                       | Transform / Routing           |
+| `ROUTER_MODEL`              | `gpt-4o-mini`               | Active router model                                           | Transform / Routing           |
+| `OPENAI_INGESTION_MODEL`    | `gpt-4o-mini`                | OpenAI-compatible ingestion helper model when that path is used | Ingestion helper            |
+| `OLLAMA_INGESTION_MODEL`    | `llama3:latest`              | Active Ollama ingestion helper model used by SEC/news processing paths | Ingestion helper      |
+| `OLLAMA_CUSTOM_MODEL_NAME`  | `options-expert-v1:latest`   | Expert reasoning tier outside retrieval encoding              | LLM (GPU)                     |
+| `OLLAMA_ROUTER_MODEL`       | `llama3:latest`              | Ollama fallback / alternate lightweight routing model         | LLM (GPU)                     |
 | `TRANSFORM_EXTRACTOR_MODEL` | `gpt-4o-mini`                | Stage-1 metadata extraction model                             | Transform (OpenAI-compatible) |
 | `TRANSFORM_HYDE_MODEL`      | `gpt-4o-mini`                | Stage-2 HyDE generation model                                 | Transform (OpenAI-compatible) |
 | `OLLAMA_KEEP_ALIVE`         | `30m`                        | VRAM pin duration for 70B                                     | LLM (GPU)                     |
+
+Current deployment note:
+
+- Dense retrieval uses the `.env`-configured `BAAI/bge-base-en-v1.5`.
+- Sparse retrieval is currently aligned with `.env` and also hardcoded in `Scripts/vector_store/ingestion.py` as `prithivida/Splade_PP_en_v1`.
+- Query transformation currently runs on the OpenAI-compatible path with `gpt-4o-mini` for both extractor and HyDE generation.
+- Ingestion-time semantic helpers remain on the Ollama path with `llama3:latest`.
 
 
 ---
 
 ### Linked documentation
 
-- [Backend System Reference](./Backend_README.md)
-- [User Query Guide](./docs/User_Query_Guide.md)
-- [Observability](./docs/Observability.md)
-- [LLM Pool](./docs/LLM_Pool.md)
-- [Frontend Runtime Guide](./docs/frontend_readme.md)
-- [Orchestration Runtime Guide](./docs/Orchestration.md)
+- [Backend System Reference](../Backend_README.md)
+- [User Query Guide](../modular_guide/User_Query_Guide.md)
+- [Observability](../modular_guide/Observability.md)
+- [LLM Pool](../modular_guide/LLM_Pool_Operations_Guide.md)
+- [Frontend Runtime Guide](../modular_guide/Frontend_Runtime_Guide.md)
+- [Orchestration Runtime Guide](../modular_guide/Orchestration.md)
 - [Agent Architecture](./docs/agent/Agent_Architecture.md)
 - [Retrieval Architecture and Strategy](./docs/Query_retrieval_docs/Retrieval_Architecture_and_Strategy.md)
 - [Modular Guide](./docs/modular_guide/README.md)
@@ -469,4 +480,3 @@ The system is designed with a **strict hardware tier separation**: GPU is reserv
 - `Scripts/observability/`
 - `Frontend/`
 - `Data/`
-
