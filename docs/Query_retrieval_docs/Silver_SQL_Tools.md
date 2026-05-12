@@ -1,133 +1,185 @@
-# Silver SQL Tooling - Institutional Specification
+# Silver SQL Tools - Deterministic Numeric Retrieval Contract
 
-## 1. Goal and Control Objective
+## 1. Control Objective and Design Guarantees
 
-`Scripts/retrieval/sql_tools.py` is the deterministic numeric retrieval engine for the Silver layer.  
-Its control objective is to convert `MetadataExtraction` into auditable DuckDB outputs without LLM-side numeric fabrication risk.
+`Scripts/retrieval/sql_tools.py` is the deterministic numeric retrieval engine for the Silver layer.
+
+Its job is to convert `MetadataExtraction` into auditable DuckDB outputs without LLM-side numeric fabrication risk.
 
 Primary guarantees:
 
-- Metric routing is whitelist-constrained and ontology-aware.
-- Ticker matching is strict (no fuzzy ticker resolution).
-- Time windows are anchored to ingestion reality (not wall-clock assumptions).
-- Every SQL path emits lineage anchors and structured audit logs.
+- metric routing is whitelist-constrained and ontology-aware,
+- ticker matching is strict and never fuzzy,
+- time windows are anchored to ingestion reality rather than wall-clock assumptions,
+- percentage fields preserve source-native units,
+- every SQL path emits lineage anchors and structured audit logs,
+- schema drift is surfaced early through contract validation at startup.
 
-## 2. Architecture
+## 2. Execution Topology
 
-```text
-[MasterRetriever]
-  └── passes MetadataExtraction + optional per-source TimePredicate map
-      to SilverSQLTool.query_parquet_by_metadata()
-            ├── metric normalization + supported/unsupported partition
-            ├── ticker cap enforcement (SILVER_MAX_TICKERS)
-            ├── dispatcher route by canonical metric
-            │     ├── options handlers
-            │     ├── macro handlers
-            │     └── geopolitical (GPR) handler
-            ├── DuckDB parquet execution (parameterized where applicable)
-            ├── lineage anchor assembly
-            └── status payload + SQL audit logging
+```mermaid
+flowchart TD
+    A[MasterRetriever] --> B[SilverSQLTool.query_parquet_by_metadata]
+    B --> C[Publish time_predicates for handlers]
+    C --> D[Partition supported and unsupported metrics]
+    D --> E[Enforce ticker cap and strict ticker normalization]
+    E --> F[Dispatch to metric handler]
+    F --> G[DuckDB query over Silver Parquet]
+    G --> H[Assemble values + lineage anchors + status]
+    H --> I[Write SQL audit log]
 ```
 
-## 3. Code Strategy and Workflow
+## 3. Computation and Time Semantics
 
 ### 3.1 End-to-End Retrieval Workflow
 
-![Retrieval workflow](../../images/Retrieval_workflow.svg)
+```mermaid
+flowchart LR
+    A[MetadataExtraction] --> B[metric canonicalization]
+    B --> C[handler dispatch]
+    C --> D{handler family}
+    D -->|options| E[options SQL]
+    D -->|macro| F[macro SQL]
+    D -->|gpr| G[gpr SQL]
+    E --> H[values + anchors]
+    F --> H
+    G --> H
+    H --> I[status payload]
+```
 
-### 3.2 SQL Computation Logic (Detailed)
+### 3.2 Handler Computation Logic
 
-Core SQL computation logic is implemented in dedicated handlers:
+| Handler | Core Logic | Key Outputs |
+|---|---|---|
+| `put_call_ratio` | aggregates put/call `volume` and `open_interest` by `snapshot_date`, then returns the latest row inside the active window | `pcr_volume`, `pcr_open_interest`, `pcr_status` |
+| `options_analysis` | selects one ATM-like contract per day using `ABS(moneyness_pct)` then lower `spread_pct`, builds daily ATM IV series, computes `ROUND(100 * PERCENT_RANK() OVER (ORDER BY atm_iv), 2)` over the lookback window, returns the latest observation | `latest_atm_iv`, `latest_atm_iv_rank_pct`, `iv_rank_lookback_days`, `data_freshness` |
+| `liquidity_analysis` | latest-snapshot aggregate of `SUM(volume)`, `SUM(open_interest)`, `AVG(spread_pct)`, and liquid contract count | `<ticker>_daily_option_volume`, `<ticker>_open_interest`, `<ticker>_avg_spread_pct`, `<ticker>_liquid_contracts`, `<ticker>_market_impact_risk` |
+| `pricing_spread` | latest liquid DTE-bounded quote snapshot around the active option surface | `<ticker>_underlying_price`, `<ticker>_avg_bid`, `<ticker>_avg_ask`, `<ticker>_avg_spread_pct`, `<ticker>_avg_last_price` |
+| `macro_analysis` | latest macro-series row after optional ETF-to-index alias translation | `<ticker>_last_value`, `<ticker>_mom_change` or `<ticker>_daily_change` |
+| `geopolitical_analysis` | latest monthly GPR row with percentile and MoM trend classification | `gpr_index_level`, `gpr_percentile`, `gpr_trend` |
 
-- `put_call_ratio`: aggregates put/call `volume` and `open_interest` by `snapshot_date`, returns latest row in active window.
-- `options_analysis`: computes ATM IV and IV-rank percentile using window functions (`ROW_NUMBER`, `PERCENT_RANK`) over the lookback series.
-- `liquidity_analysis`: aggregates `SUM(volume)`, `SUM(open_interest)`, `AVG(spread_pct)`, and liquid contract count.
-- `pricing_spread`: computes bid/ask/last/spread snapshots for liquid contracts in DTE range.
-- `macro_analysis`: returns latest macro value and change field with ETF to macro alias translation.
-- `geopolitical_analysis`: returns latest GPR index, percentile, and MoM trend classification.
+### 3.3 Percentage and Percentile Contracts
 
-### 3.3 Filter and Time-Window Logic (Detailed)
+These unit contracts are critical and should not be reinterpreted downstream:
+
+| Field | Stored Unit | Retrieval Rule |
+|---|---|---|
+| `spread_pct` | percentage points, for example `2.5` means `2.5%` | never multiply by `100` again |
+| `daily_change_pct` | percentage points | render as-is |
+| `mom_change_pct` | percentage points | render as-is |
+| `gpr_percentile` | percentage points, for example `97.58` means `97.58%` | render as a display percentage string only |
+| `latest_atm_iv_rank_pct` | percentile score on a `0-100` scale | already multiplied by `100` inside SQL via `PERCENT_RANK()` |
+
+Additional notes:
+
+- `latest_atm_iv_rank_pct` is `NULL` when fewer than two daily ATM IV observations exist in the ranking window.
+- `moneyness_pct` is used only for ATM contract selection priority; it is not returned as a final display field here.
+
+### 3.4 Filter and Time-Window Logic
 
 #### A) Metric and ticker filters
 
-- Metric filter path:
-  - exact dispatcher match
-  - normalized exact match (punctuation/case-insensitive)
-  - ontology-backed fuzzy match (`difflib`, cutoff 0.75)
+- Metric resolution order:
+  - exact dispatcher key
+  - normalized exact match
+  - ontology-backed fuzzy match through `difflib`
 - Unsupported metrics are surfaced through:
   - `status.unsupported_metrics`
   - `status.unsupported_metrics_message`
-- Ticker logic:
-  - strict upper/strip only
+- Tickers remain strict:
+  - `.upper().strip()` only
   - capped by `SILVER_MAX_TICKERS`
-  - overflow is logged (`TICKER_CAP`)
+  - overflow is logged through `TICKER_CAP`
 
 #### B) Dynamic anchor strategy
 
-- Anchor source: `config/runtime/collect_data_state.json` (`last_run_keys`).
+- Anchor source: `config/runtime/collect_data_state.json`
 - Dataset-specific keys:
   - `options` -> `options_daily`
   - `macro` -> `macro_trading_daily`
   - `gpr` -> `gpr_monthly`
-- Fallback: `date.today()` if runtime state is missing/broken.
+- Fallback: `date.today()` when runtime state is unavailable
 
 #### C) Per-source predicate integration
 
-When `time_predicates` are supplied from `MasterRetriever`, handlers read compiled `TimePredicate` directly:
+When `MasterRetriever` supplies compiled `TimePredicate` objects:
 
-- `silver.options` supports weekend-safe widening for short windows.
-- `silver.gpr` supports monthly widening semantics.
-- If predicates are absent, handlers revert to local `time_window_to_days` policy.
+- `silver.options` uses the predicate's `start_date`, `end_date`, and `window_days` directly,
+- `silver.gpr` inherits monthly widening semantics from `time_adapter.py`,
+- handlers do not re-derive time widening locally.
+
+When predicates are absent:
+
+- local fallback behavior uses `schema.TIME_WINDOW_DAYS`,
+- `put_call_ratio` honors explicit short windows such as `today`, `yesterday`, and `past_week`,
+- the historical 5-day floor is applied only when the user did not provide a valid time signal.
 
 #### D) Handler-specific SQL filters
 
 - `put_call_ratio`
   - `WHERE symbol = ?`
-  - `CAST(snapshot_date AS DATE) BETWEEN start AND anchor`
-  - grouped by date; latest row only
+  - `snapshot_date BETWEEN start_date AND anchor`
+  - grouped by date, latest row only
 - `options_analysis`
   - `is_liquid = true`
   - `dte BETWEEN 7 AND 45`
-  - lookback bounded by `IV_RANK_LOOKBACK_DAYS`
+  - IV-rank lookback bounded by `IV_RANK_LOOKBACK_DAYS`
 - `liquidity_analysis`
-  - latest available date snapshot, no strict time WHERE
+  - latest available `snapshot_date`
+  - no strict date `WHERE` clause
 - `pricing_spread`
-  - `is_liquid = true AND dte BETWEEN 7 AND 45`
+  - `is_liquid = true`
+  - `dte BETWEEN 7 AND 45`
 - `macro_analysis`
-  - symbol aliasing (`SPY` -> `^GSPC`, `QQQ` -> `^IXIC`)
+  - optional ETF-to-index aliasing, for example `SPY -> ^GSPC`
   - latest row per symbol
 - `geopolitical_analysis`
   - latest monthly row from GPR parquet
 
-#### E) Data contract safeguards
+#### E) Startup contract validation
 
 On initialization, `_validate_parquet_contract()` verifies:
 
-- glob resolves to files (`NO_FILES` guard),
-- required columns exist (`MISSING_COLUMNS` guard),
-- parquet introspection is readable (`READ_FAILED` guard).
+- parquet globs resolve to files,
+- required columns exist,
+- parquet metadata is readable.
 
-This prevents silent drift between ingestion schemas and retrieval SQL assumptions.
+Statuses surfaced in the audit log:
 
-## 4. Output Data Schema and Paths
+- `OK`
+- `NO_FILES`
+- `MISSING_COLUMNS`
+- `READ_FAILED`
 
-### 4.1 Runtime Output Schema
+## 4. Output Data Schema and Audit Surface
+
+### 4.1 Runtime output schema
 
 | Field | Type | Description | Produced By | Path |
 |---|---|---|---|---|
-| `values` | `Dict[str, Any]` | Final numeric/string metrics consumed by Analyst/Checker | `query_parquet_by_metadata()` + handlers | `Scripts/retrieval/sql_tools.py` |
-| `lineage_anchors` | `List[str]` | Deterministic anchor IDs used for citation traceability | Handler return payloads | `Scripts/retrieval/sql_tools.py` |
-| `status.unsupported_metrics` | `List[str]` | Raw metrics that failed canonical mapping | `_partition_requested_metrics()` | `Scripts/retrieval/sql_tools.py` |
-| `status.unsupported_metrics_message` | `str` | User-facing explanation with supported examples | `_build_unsupported_metric_message()` | `Scripts/retrieval/sql_tools.py` |
-| `status.error` | `str \| None` | Structured fatal status (e.g., `NO_SUPPORTED_METRICS`) | `query_parquet_by_metadata()` | `Scripts/retrieval/sql_tools.py` |
+| `values` | `Dict[str, Any]` | final numeric and string outputs consumed by downstream agents | handler aggregation | `Scripts/retrieval/sql_tools.py` |
+| `lineage_anchors` | `List[str]` | deterministic anchor IDs such as `PCR_AGG_*`, `IVRANK_*`, `LIQ_*`, `PX_*`, `MACRO_*`, `GPR_*` | handler return payloads | `Scripts/retrieval/sql_tools.py` |
+| `status.unsupported_metrics` | `List[str]` | requested metrics that failed canonical mapping | `_partition_requested_metrics()` | `Scripts/retrieval/sql_tools.py` |
+| `status.unsupported_metrics_message` | `str` | user-facing explanation with supported examples | `_build_unsupported_metric_message()` | `Scripts/retrieval/sql_tools.py` |
+| `status.error` | `str \| None` | explicit fatal state such as `NO_SUPPORTED_METRICS` | `query_parquet_by_metadata()` | `Scripts/retrieval/sql_tools.py` |
 
-### 4.2 Audit Output Paths
+### 4.2 Audit output paths
 
 | Artifact | Description | Path Pattern |
 |---|---|---|
-| SQL handler audit log | SQL range mode, anchors, latency, schema checks | `logs/Parquet_Query/<YYYY-MM-DD>/sql_retrieval_audit.log` |
+| SQL retrieval audit log | schema checks, SQL range mode, anchors, latency, execution errors | `logs/Parquet_Query/<YYYY-MM-DD>/sql_retrieval_audit.log` |
 
-## 5. How to Test
+Important audit events written by this module:
+
+- `SCHEMA_CHECK`
+- `SQL_RANGE`
+- `START_QUERY`
+- `FUZZY_MATCH`
+- `UNSUPPORTED_METRICS`
+- `EXECUTION_ERROR`
+- `FINISH_QUERY`
+
+## 5. Validation and Test Procedure
 
 Recommended validation flow:
 
@@ -139,19 +191,22 @@ python -m Scripts query "Past week SPY put/call ratio and IV skew with liquidity
 
 What to validate:
 
-- unsupported metrics produce deterministic status instead of crashes,
-- ticker overflow is logged and bounded,
-- `lineage_anchors` are present for each successful handler,
-- SQL audit file includes `SQL_RANGE`, `START_QUERY`, `FINISH_QUERY`.
+- unsupported metrics produce deterministic status rather than crashes,
+- strict ticker handling never fuzzy-matches symbols,
+- percentage-point fields are not multiplied twice,
+- `put_call_ratio` and `options_analysis` follow the same explicit short-window semantics,
+- `lineage_anchors` are present for successful handler outputs,
+- SQL audit logs show the correct `SQL_RANGE` mode and effective window.
 
 ## 6. Dependency Files, Documentation Links, and One-Line Commands
 
 ### 6.1 Core dependency files
 
-- `Scripts/retrieval/master_retriever.py` (upstream orchestration and predicate injection)
-- `Scripts/retrieval/time_adapter.py` (compiled source-specific time semantics)
-- `Scripts/retrieval/schema.py` (shared enums, `MetadataExtraction`, time policy)
-- `Scripts/core/financial_ontology.py` (metric allowlist + metric-column mapping)
+- `Scripts/retrieval/sql_tools.py`
+- `Scripts/retrieval/master_retriever.py`
+- `Scripts/retrieval/time_adapter.py`
+- `Scripts/retrieval/schema.py`
+- `Scripts/core/financial_ontology.py`
 
 ### 6.2 Linked retrieval docs
 
@@ -159,6 +214,3 @@ What to validate:
 - [Query Intent and Transformation](./Query_intent_docs.md)
 - [Qdrant Retriever Docs](./Qdrant_retriever_docs.md)
 - [Time Adapter](./Time_Adapter.md)
-
-
-

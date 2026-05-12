@@ -130,7 +130,7 @@ One vector point — no further splitting
 
 **Metadata contract**
 
-SEC Gold points combine **embedding text** with **payload metadata**: `source_type`, `form_type`, `action_direction`, `tone_score`, `accession_no`, `transaction_date`, `unified_timestamp` (and related keys) for filters, time bounds, and traceability.
+SEC Gold points combine **embedding text** with **payload metadata**: `source_type`, `form_type`, `action_direction`, `tone_score`, `accession_no`, `transaction_date`, `unified_timestamp`, `filed_at_epoch_s`, `transaction_date_epoch_s`, and passthrough metadata keys for filters, time bounds, and traceability.
 
 #### News and GPR — LLM-distilled summary units
 
@@ -200,7 +200,12 @@ Normalisation: `encode_kwargs={"normalize_embeddings": True}` aligns with Qdrant
 
 - `init_collection_with_indexes()` always reconciles index schema (not only at initial collection creation).
 - `_REQUIRED_INDEXES` includes both `unified_timestamp` and `publish_timestamp` for Gold time-range filtering.
+- `_REQUIRED_INDEXES` also covers retrieval-facing payload keys beyond the original schema: `topic`, `topics`, `impacted_assets`, `entities`, `filed_at_epoch_s`, `transaction_date_epoch_s`, `tone_score`, and `llm_tone_score`.
 - SEC records use deterministic `uuid5(accession_no)` IDs; non-SEC records fall back to native ID or generated UUID.
+- Payload construction now applies a defensive merge strategy:
+  - canonical fields are populated first (`text`, `source_type`, `has_bronze_evidence`, `unified_timestamp`, `filed_at_epoch_s`, `transaction_date_epoch_s`, `ticker`, `form_type`, `action_direction`, `topics`, `entities`)
+  - then `**metadata` is merged so source-native keys remain drill-through visible in Qdrant.
+- `topics` is normalized with a fallback rule: use `metadata["topics"]` if present, otherwise wrap `metadata["topic"]` into a one-element list.
 - Batch upsert (`batch_size=100`) balances throughput and failure isolation.
 - `run_pipeline(full_refresh=False)` supports watermark-driven incremental ingestion via `collect_data_state.json`.
 
@@ -217,11 +222,17 @@ Normalisation: `encode_kwargs={"normalize_embeddings": True}` aligns with Qdrant
 | `payload.text`                | `str`          | Retrieval text body                                    | source record                           | `Scripts/vector_store/ingestion.py` |
 | `payload.source_type`         | `str`          | Gold source channel (`sec`, `news`, `gpr`)             | ingestion mapping                       | `Scripts/vector_store/ingestion.py` |
 | `payload.unified_timestamp`   | `int`          | Canonical numeric time key for filtering               | `_to_unix_timestamp()` + fallback logic | `Scripts/vector_store/ingestion.py` |
-| `payload.publish_timestamp`   | `int/str`      | Legacy or native publish key retained in metadata      | source record passthrough               | `Scripts/vector_store/ingestion.py` |
+| `payload.publish_timestamp`   | `int/str`      | Native publish key retained through metadata passthrough; indexed as integer when present for legacy time filtering | source record passthrough | `Scripts/vector_store/ingestion.py` |
 | `payload.ticker`              | `str`          | Ticker filter field (`NONE` fallback)                  | metadata normalization                  | `Scripts/vector_store/ingestion.py` |
 | `payload.form_type`           | `str`          | SEC form filter field                                  | metadata normalization                  | `Scripts/vector_store/ingestion.py` |
 | `payload.action_direction`    | `str`          | SEC action filter field                                | metadata normalization                  | `Scripts/vector_store/ingestion.py` |
-| `payload.topic/topics`        | `str/list`     | News topical filter fields                             | metadata normalization                  | `Scripts/vector_store/ingestion.py` |
+| `payload.topics`              | `List[str]`    | Canonical topical field; falls back to `[topic]` when only singular topic is present | metadata normalization | `Scripts/vector_store/ingestion.py` |
+| `payload.topic`               | `str`          | Optional source-native singular topic retained through metadata passthrough | source record passthrough | `Scripts/vector_store/ingestion.py` |
+| `payload.entities`            | `List[str]`    | Entity drill-through field used by downstream retrieval and audit consumers | metadata normalization | `Scripts/vector_store/ingestion.py` |
+| `payload.impacted_assets`     | `List[str]`    | Asset-level payload field preserved when present in Gold metadata | source record passthrough | `Scripts/vector_store/ingestion.py` |
+| `payload.filed_at_epoch_s`    | `int`          | Numeric companion timestamp derived from `filed_at` for SEC range filtering | `_to_unix_timestamp()` | `Scripts/vector_store/ingestion.py` |
+| `payload.transaction_date_epoch_s` | `int`     | Numeric companion timestamp derived from `transaction_date` for SEC range filtering | `_to_unix_timestamp()` | `Scripts/vector_store/ingestion.py` |
+| `payload.tone_score` / `payload.llm_tone_score` | `int` | Sentiment / tone range fields preserved for news filtering when present | source record passthrough | `Scripts/vector_store/ingestion.py` |
 | `payload.has_bronze_evidence` | `bool`         | Whether source has deterministic bronze anchor         | ingestion rule                          | `Scripts/vector_store/ingestion.py` |
 
 
