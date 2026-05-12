@@ -1,18 +1,18 @@
-# AutoOptions Recommendation Chatbot
+# AutoOptions Financial Intelligence Chatbot
 
 ## 1. Financial Logic and Problem Framing
 
 ### 1.1 The Information Gap
-Macro signals that move precious-metals markets are publicly visible — Fed rates, geopolitical risk indexes, dollar dynamics, CPI prints. But for most investors, the path from 'rates are rising' to defining the appropriate volatility posture and option strategy structure remains opaque.
+Macro signals that move precious-metals markets are publicly visible — Fed rates, geopolitical risk indexes, dollar dynamics, CPI prints. Corporate events, SEC filings, news narratives, and options-chain conditions are also available in separate places. But for most non-expert users, the path from raw market evidence to a coherent view of "what matters now" remains opaque.
 
 The raw information exists. The **translation layer** does not.
 
-AutoOptions is built to close that gap: a multi-agent financial RAG platform that converts fragmented, heterogeneous market evidence into clear, traceable, and actionable options research.
+AutoOptions is built to close that gap: a multi-agent financial RAG platform that converts fragmented, heterogeneous market evidence into clear, traceable, low-barrier financial intelligence. It is options-aware, but not limited to option-specific outputs: when the retrieved evidence is strong enough, it may surface reference-only option structures, strikes, expiries, or risk postures; when the evidence is incomplete, it still provides macro, news, SEC, and market-context analysis tailored to the user's query.
 
 ---
 
 ### 1.2 The Cross-Asset Financial Thesis
-Options mechanics are universal — strike, expiry, IV, Greeks, and liquidity apply equally to commodity ETFs and equities. But the **signal sources that drive those mechanics differ fundamentally by asset class**:
+Options mechanics are universal — strike, expiry, IV, Greeks, and liquidity apply equally to commodity ETFs and equities. But AutoOptions treats these mechanics as one possible lens inside a broader information layer. The **signal sources that shape market interpretation differ fundamentally by asset class**:
 
 | Asset Class | Core Signal Drivers | Primary Data Sources |
 |---|---|---|
@@ -21,7 +21,13 @@ Options mechanics are universal — strike, expiry, IV, Greeks, and liquidity ap
 
 This divergence means a single retrieval path or a single evidence type cannot cover both. **The cross-asset thesis is the reason this system requires separate signal tracks, not a design choice made in isolation.**
 
-Signal pathway: `macro and event signals → volatility regime view → options strategy structure`
+Signal pathway: `macro and event signals → market context and volatility regime view → optional reference structures when supported by evidence`
+
+Suggested starter questions:
+- `Today SPY put-call ratio and IV skew for hedge posture`
+- `Past week GLD GPR context and 10Y yields for setup to watch`
+- `Past month AAPL Form 4 insider selling and liquidity for signal impact`
+- `Past week QQQ VIX regime and news narrative for options read`
 
 ---
 
@@ -101,10 +107,10 @@ Every major architectural decision in AutoOptions is a direct consequence of the
 ---
 
 #### Pillar IV — Observability and Operational Quality
-*What it is:* a dual-surface audit contract that makes every run replayable and every recommendation traceable.
+*What it is:* a dual-surface audit contract that makes every run replayable and every generated insight traceable.
 
 - Append-only backend run logs and frontend query bundles share compatible audit semantics under `logs/`.
-- Each recommendation payload carries a full evidence chain: from final strategy back to raw source lineage.
+- Each final response carries a full evidence chain: from the synthesized market view or reference-only options context back to raw source lineage.
 - Time anchors and run IDs enable deterministic state replay without re-ingestion.
 
 → Reference: [Observability](./docs/modular_guide/Observability.md) · [Time Schema Audit](./docs/Data_source_docs/Time_Schema_Audit.md)
@@ -170,9 +176,9 @@ Every major architectural decision in AutoOptions is a direct consequence of the
 ![Multi-agent and frontend workflow](images/Muti-agent_Frontend_workflow.svg)
 
 ### 7.1 Agent Responsibilities
-- **Analyst:** drafts strategy from merged context with citation discipline.
+- **Analyst:** drafts an evidence-grounded market read from merged context with citation discipline; options-specific structures are included only when the available evidence supports them.
 - **Checker:** verifies factual integrity, numeric consistency, and anchor correctness.
-- **Critic:** challenges strategic logic, regime fit, and risk posture.
+- **Critic:** challenges interpretation logic, regime fit, and risk posture.
 - **Finalizer:** emits schema-constrained final report for downstream consumers.
 
 ### 7.2 Prompt and Governance Layer
@@ -235,10 +241,21 @@ python Scripts/tests/test_router_e2e.py
 streamlit run Frontend/app.py
 ```
 
+Frontend query UX reference: [User Query Playbook](./docs/modular_guide/User_Query_Guide.md).
+
+User-friendly frontend priorities:
+- Make the first screen explain the product in market-intelligence language, then keep the analysis workspace focused on the user's query.
+- Keep the Quick Take visible as the primary canvas highlight before deeper audit, routing, and evidence views.
+- Add a Query Builder with asset dropdown, time-window segmented control, signal chips, goal selection, and generated prompt preview.
+- Phrase query feedback as next-step guidance: asset, signal/event, time window, and goal.
+- Render lagging macro indicators as a compact, horizontally scrollable evidence strip so slow-cycle context stays visible without crowding the chat.
+- Prefer progressive disclosure for institutional detail: show summary first, then report, audit, and raw context when needed.
+
 ### 8.4 Validation and Test Protocol
 
 Validation checklist:
 - Query renders progressive sections before final report completion.
+- Header, lagging macro indicators, Query Guide, and Quick Take highlight render cleanly on desktop and mobile widths.
 - Backend run-scoped logs appear under `logs/runs/<today>/<run_id>/`.
 - Frontend bundle files appear under `logs/frontend_query/<today>/`.
 - `query_audit_trail.jsonl` includes resolvable paths to trace/final_state/summary artifacts.
@@ -247,12 +264,13 @@ Validation checklist:
 
 | Module Domain | High-Level Responsibility | Primary Code Surface | Key Operational Outputs | Detailed Documentation |
 | --- | --- | --- | --- | --- |
-| Agent graph runtime | Executes deterministic multi-agent control loop (`retrieval_master -> analyst -> checker -> critic -> finalizer`) with revision circuit-breakers and node telemetry | `Scripts/agents/` | `final_strategy`, `node_audit_log`, revision-aware state transitions | [`docs/agent/Agent_Architecture.md`](./docs/agent/Agent_Architecture.md) |
+| Agent graph runtime | Executes deterministic multi-agent control loop (`retrieval_master -> analyst -> checker -> critic -> finalizer`) with revision circuit-breakers and node telemetry | `Scripts/agents/` | `final_report`, `node_audit_log`, revision-aware state transitions | [`docs/agent/Agent_Architecture.md`](./docs/agent/Agent_Architecture.md) |
 | Retrieval and query transform | Performs intent routing, metadata extraction, HyDE anticipation, Gold/Silver hybrid retrieval, and time-window predicate compilation | `Scripts/retrieval/` | retrieval payloads (`metadata`, `gold_context`, `silver_context`, `time_range`, `hyde_anticipation`) | [`docs/Query_retrieval_docs/Retrieval_Architecture_and_Strategy.md`](./docs/Query_retrieval_docs/Retrieval_Architecture_and_Strategy.md) |
 | Data ingestion and processing | Runs cadence-driven ingestion DAG from external sources to Bronze/Silver/Gold datasets | `Scripts/data_collection/`, `Scripts/orchestration/` | medallion-layer datasets under `Data/1_Bronze_Raw`, `Data/2_Silver_Processed`, `Data/3_Gold_Semantic` | [`docs/Data_source_docs/Data_source_summary.md`](./docs/Data_source_docs/Data_source_summary.md) |
 | Vector store layer | Ingests Gold semantic artifacts and manages retrieval index connectivity | `Scripts/vector_store/` | Qdrant-ingested semantic collections and ingestion audit metadata | [`docs/Vector_store_docs/Vector_Ingestion.md`](./docs/Vector_store_docs/Vector_Ingestion.md) |
 | Orchestration CLI plane | Provides production entrypoints for `ingest`, `daemon`, `status`, `query`, and `warmup` with run-state persistence | `Scripts/orchestration/cli.py`, `Scripts/main.py`, `Scripts/__main__.py` | run-scoped state updates, stage execution summaries, operational command surface | [`docs/modular_guide/Orchestration.md`](./docs/modular_guide/Orchestration.md) |
-| Frontend execution plane | Streams node-by-node execution progress and renders final institutional strategy dashboard | `Frontend/` | frontend query bundles (`*_trace.jsonl`, `*_summary.json`, `*_final_state.json`) | [`docs/modular_guide/Frontend Runtime Guide.md`](./docs/modular_guide/Frontend_Runtime_Guide.md) |
+| Frontend execution plane | Streams node-by-node execution progress and renders a final evidence-grounded market intelligence dashboard | `Frontend/` | frontend query bundles (`*_trace.jsonl`, `*_summary.json`, `*_final_state.json`) | [`docs/modular_guide/Frontend Runtime Guide.md`](./docs/modular_guide/Frontend_Runtime_Guide.md) |
+| User query UX | Defines human-readable prompt patterns, supported query families, and current routing limitations | `docs/modular_guide/User_Query_Guide.md`, `Frontend/contracts.py` | query templates, query quality suggestions, route-aware user guidance | [`docs/modular_guide/User Query Guide.md`](./docs/modular_guide/User_Query_Guide.md) |
 | Observability and audit | Standardizes backend + frontend telemetry contracts for replayability and compliance traceability | `Scripts/observability/`, `Frontend/audit.py` | `logs/runs/<YYYY-MM-DD>/<run_id>/...` and `logs/frontend_query/<YYYY-MM-DD>/...` artifacts | [`docs/modular_guide/Observability.md`](./docs/modular_guide/Observability.md) |
 | LLM control plane | Centralizes role-level model selection, warmup policy, and fallback behavior | `Scripts/core/llm_pool.py`, `Scripts/core/financial_config.py` | warmup health status and role-aligned model runtime behavior | [`docs/modular_guide/LLM Pool Operations Guide.md`](./docs/modular_guide/LLM_Pool_Operations_Guide.md) |
 | Testing and guardrails | Validates end-to-end routing correctness, retrieval contract integrity, and safety rules | `Scripts/tests/` | regression evidence for routing, retrieval, and guardrail behavior | [`docs/modular_guide/Documentation Control Plane.md`](./docs/modular_guide/Documentation_Control_Plane.md) |
