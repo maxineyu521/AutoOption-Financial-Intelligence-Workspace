@@ -11,7 +11,7 @@ import os
 import json
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from tqdm import tqdm
@@ -34,7 +34,10 @@ if project_root not in sys.path:
 
 from Scripts.vector_store.connection import get_qdrant_client, get_embedding_model
 
-load_dotenv(override=True)
+# Load repo defaults only when the process env does not already provide them.
+# This keeps ingestion aligned with the same effective runtime target as
+# retrieval in Docker and other managed environments.
+load_dotenv(Path(project_root) / ".env", override=False)
 
 SYSTEM_NAMESPACE = uuid.UUID('6ba7b810-9dad-11d1-80b4-00c04fd430c8')
 
@@ -86,7 +89,8 @@ class QdrantHybridIngestor:
     def _to_unix_timestamp(self, date_str: str) -> int:
         if not date_str: return 0
         try:
-            return int(datetime.strptime(date_str[:10], "%Y-%m-%d").timestamp())
+            parsed = datetime.strptime(date_str[:10], "%Y-%m-%d")
+            return int(datetime(parsed.year, parsed.month, parsed.day, tzinfo=timezone.utc).timestamp())
         except Exception:
             return 0
 
@@ -210,7 +214,7 @@ class QdrantHybridIngestor:
                 text = data.get("text", "")
                 metadata = data.get("metadata", {})
                 
-                # 1. ID 处理
+                # 1. ID generation
                 acc_no = metadata.get("accession_no")
                 if source_type == "sec" and acc_no:
                     point_id = self._get_uuid_v5(acc_no)

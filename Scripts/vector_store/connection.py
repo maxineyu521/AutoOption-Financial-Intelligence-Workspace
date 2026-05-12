@@ -45,9 +45,11 @@ def setup_logger():
 
 logger = setup_logger()
 
-# Resolve project root and load .env
+# Resolve project root and load `.env` only as a fallback. In Docker and
+# other managed runtimes the process environment is already authoritative, so
+# we must not overwrite injected values like QDRANT_HOST.
 project_root = Path(__file__).resolve().parents[2]
-load_dotenv(project_root / ".env", override=True)
+load_dotenv(project_root / ".env", override=False)
 
 # ==========================================
 # 1. Factory: embedding model (device controlled via env)
