@@ -10,6 +10,7 @@ import uuid
 import re
 import hashlib
 
+from dotenv import load_dotenv
 from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 
@@ -18,6 +19,11 @@ warnings.filterwarnings('ignore')
 # ==========================================
 # 0. Dynamic Path & Directory Setup
 # ==========================================
+# Repo root: .../scrapers -> data_collection -> Scripts -> project root
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", ".."))
+load_dotenv(os.path.join(PROJECT_ROOT, ".env"), override=True)
+
 # Ingestion-time sentiment / cleaning model. Canonical tag is `llama3:latest`
 # (vanilla Meta Llama-3 8B). Respect `.env` overrides so ops can swap the
 # model without code changes — see docs/LLM_Pool.md §1 for the two-tier
@@ -27,7 +33,17 @@ _INGESTION_MODEL = os.getenv(
     os.getenv("OLLAMA_ROUTER_MODEL", "llama3:latest"),
 )
 _OPENAI_INGESTION_MODEL = os.getenv("OPENAI_INGESTION_MODEL", "gpt-4o-mini")
-_INGESTION_LLM_PROVIDER = os.getenv("INGESTION_LLM_PROVIDER", "openai").lower()
+_INGESTION_LLM_PROVIDER = os.getenv("INGESTION_LLM_PROVIDER", "openai").strip().lower()
+if _INGESTION_LLM_PROVIDER not in {"openai", "ollama"}:
+    _INGESTION_LLM_PROVIDER = "openai"
+
+_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+if _INGESTION_LLM_PROVIDER == "openai" and not _OPENAI_API_KEY:
+    print(
+        "OPENAI_API_KEY is missing for news ingestion; "
+        f"falling back to local Ollama model {_INGESTION_MODEL}."
+    )
+    _INGESTION_LLM_PROVIDER = "ollama"
 
 if _INGESTION_LLM_PROVIDER == "ollama":
     print(f"Initializing local {_INGESTION_MODEL} as the data cleaning engine...")
@@ -42,7 +58,7 @@ else:
     _openai_kwargs = {
         "model": _OPENAI_INGESTION_MODEL,
         "temperature": 0,
-        "api_key": os.getenv("OPENAI_API_KEY", ""),
+        "api_key": _OPENAI_API_KEY,
         "timeout": float(os.getenv("OPENAI_TIMEOUT_SECONDS", "60")),
     }
     _openai_base_url = os.getenv("OPENAI_BASE_URL", "").strip()
@@ -52,10 +68,6 @@ else:
 
 # 1. Get current system date (Format: YYYY-MM-DD)
 current_date = datetime.now().strftime("%Y-%m-%d")
-
-# 2. Repo root: .../scrapers -> data_collection -> Scripts -> project root
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", ".."))
 
 # 3. Inject date hierarchy for data: Project_Root/Data/news/YYYY-MM-DD/
 DATA_FOLDER = os.path.join(PROJECT_ROOT, "Data", "1_Bronze_Raw", "News_Scrapes", current_date)
