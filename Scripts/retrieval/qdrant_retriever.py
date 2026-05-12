@@ -12,7 +12,7 @@ import json
 import time
 import asyncio
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -94,6 +94,7 @@ class FinancialHybridRetriever:
         
         reranker_model_name = os.getenv("RERANKER_MODEL_NAME", "BAAI/bge-reranker-v2-m3")
         self.reranker = CrossEncoder(reranker_model_name, device=device)
+        self._last_sec_retrieval_contract: Dict[str, Any] = {}
         
         logger.info(f"✅ Models initialized. Reranker: {reranker_model_name}")
         self._is_initialized = True
@@ -106,10 +107,11 @@ class FinancialHybridRetriever:
         """Return the news `topic` values worth filtering on for this query.
 
         Resolution order (most-specific first):
-          1. `event_keyword` → category via EVENT_KEYWORDS_MAPPING.
-          2. The category itself, if the LLM wrote one that already matches
+          1. `canonical_news_topics` emitted by transform.
+          2. `event_keyword` → category via EVENT_KEYWORDS_MAPPING.
+          3. The category itself, if the LLM wrote one that already matches
              a canonical news topic (covers "macro_central_banks" etc.).
-          3. Empty list → no topic constraint.
+          4. Empty list → no topic constraint.
 
         The result is normalised to the news-scraper topic form via
         `normalize_news_topic` so queries carrying the short alias
@@ -117,6 +119,11 @@ class FinancialHybridRetriever:
         with the long form ("asset_precious_metals_spot").
         """
         candidates: List[str] = []
+        for topic in getattr(metadata, "expanded_news_topics", []) or []:
+            candidates.append(str(topic or "").strip().lower())
+        for topic in getattr(metadata, "canonical_news_topics", []) or []:
+            candidates.append(str(topic or "").strip().lower())
+
         ev = getattr(metadata, "event_keyword", "") or ""
         if ev:
             mapped = EVENT_KEYWORDS_MAPPING.get(ev.strip().lower(), "")
@@ -197,6 +204,7 @@ class FinancialHybridRetriever:
         fallback_days: Optional[int] = None,
         ticker_mode: str = "hard",   # one of: "hard", "soft", "drop"
         time_predicates: Optional[Dict["SourceTimeKey", "TimePredicate"]] = None,
+        sec_form_override: Optional[str] = None,
     ) -> Optional[models.Filter]:
         """Compose a Qdrant filter with configurable ticker strictness.
 
@@ -238,6 +246,19 @@ class FinancialHybridRetriever:
             logger.info(
                 f"🧹 [GoldFilter] Dropped Silver-only source_types {sorted(dropped_src)}; "
                 f"Gold kept={source_vals or 'ALL (no filter)'}"
+            )
+
+        primary_theme = str(getattr(metadata, "primary_theme", "") or "").strip().lower()
+        primary_surface = str(getattr(metadata, "primary_surface", "") or "").strip().lower()
+        if (
+            primary_theme == "geopolitics"
+            and primary_surface == "macro_news_surface"
+            and "news" in [str(s).lower() for s in source_vals]
+        ):
+            source_vals = ["news"]
+            logger.info(
+                "📰 [GoldFilter] Geopolitics narrative mode uses news-only Gold retrieval; "
+                "GPR stays in structured background."
             )
 
         # SEC-overconstraint guard:
@@ -294,8 +315,13 @@ class FinancialHybridRetriever:
             elif str(action_val).upper() != "NONE":
                 must_conditions.append(models.FieldCondition(key="action_direction", match=models.MatchValue(value=action_val)))
 
+            requested_sec_forms = self._requested_sec_forms(metadata)
             form_val = _val(metadata.form_type)
-            if str(form_val).upper() != "ALL":
+            if sec_form_override:
+                must_conditions.append(models.FieldCondition(key="form_type", match=models.MatchValue(value=str(sec_form_override).strip().upper())))
+            elif len(requested_sec_forms) == 1:
+                must_conditions.append(models.FieldCondition(key="form_type", match=models.MatchValue(value=requested_sec_forms[0])))
+            elif str(form_val).upper() != "ALL":
                 must_conditions.append(models.FieldCondition(key="form_type", match=models.MatchValue(value=form_val)))
 
         # --- News sentiment filter (hard) --------------------------------
@@ -407,6 +433,270 @@ class FinancialHybridRetriever:
             kwargs["should"] = should_conditions
         return models.Filter(**kwargs)
 
+    @staticmethod
+    def _requested_sec_forms(metadata: Any) -> List[str]:
+        """Return requested SEC forms as a list.
+
+        The structured list is the canonical representation for SEC queries
+        that may request multiple filing types at once. `form_type` is kept
+        only as a legacy single-value summary for older callers.
+        """
+        forms: List[str] = []
+        for raw in list(getattr(metadata, "requested_sec_forms", None) or []):
+            form = str(getattr(raw, "value", raw) or "").strip().upper()
+            if form in {"8-K", "4"} and form not in forms:
+                forms.append(form)
+        if forms:
+            return forms
+        form_type = str(getattr(metadata, "form_type", "") or "").strip().upper()
+        if form_type in {"8-K", "4"}:
+            return [form_type]
+        return []
+
+    def _reset_last_sec_retrieval_contract(self) -> None:
+        self._last_sec_retrieval_contract = {
+            "sec_payload_context_by_form": {},
+            "sec_ranked_context_by_form": {},
+            "sec_raw_hits_by_form": {},
+            "sec_raw_hits_total": 0,
+            "sec_rerank_kept_total": 0,
+            "sec_rerank_dropped_total": 0,
+            "sec_hit_stage": "not_applicable",
+        }
+
+    def get_last_sec_retrieval_contract(self) -> Dict[str, Any]:
+        return dict(self._last_sec_retrieval_contract or {})
+
+    @staticmethod
+    def _sec_point_identity(point: Any) -> str:
+        payload = dict(getattr(point, "payload", None) or {})
+        return (
+            str(payload.get("accession_no") or "").strip()
+            or str(payload.get("url") or "").strip()
+            or str(getattr(point, "id", "") or "").strip()
+        )
+
+    @staticmethod
+    def _sec_point_epoch(point: Any) -> int:
+        payload = dict(getattr(point, "payload", None) or {})
+        for key in ("transaction_date_epoch_s", "filed_at_epoch_s", "unified_timestamp"):
+            raw = payload.get(key)
+            if isinstance(raw, (int, float)):
+                return int(raw)
+        return 0
+
+    def _dedupe_and_sort_sec_points(self, points: List[Any]) -> List[Any]:
+        ordered = sorted(points or [], key=self._sec_point_epoch, reverse=True)
+        seen = set()
+        out: List[Any] = []
+        for point in ordered:
+            identity = self._sec_point_identity(point)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            out.append(point)
+        return out
+
+    async def _scroll_points(self, q_filter: Optional[models.Filter], limit: int) -> List[Any]:
+        records, _ = await asyncio.to_thread(
+            self.client.scroll,
+            collection_name=self.collection_name,
+            scroll_filter=q_filter,
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+        return list(records or [])
+
+    async def _retrieve_sec_payload_context_by_form(
+        self,
+        metadata: Any,
+        top_k: int,
+        time_predicates: Optional[Dict["SourceTimeKey", "TimePredicate"]],
+    ) -> Dict[str, List[Any]]:
+        requested_forms = self._requested_sec_forms(metadata)
+        if not requested_forms:
+            return {}
+
+        by_form: Dict[str, List[Any]] = {}
+        for form in requested_forms:
+            q_filter = self._build_smart_filter(
+                metadata,
+                ignore_time=False,
+                ticker_mode="hard",
+                time_predicates=time_predicates,
+                sec_form_override=form,
+            )
+            raw_points = await self._scroll_points(q_filter, max(top_k * 3, 10))
+            deduped = self._dedupe_and_sort_sec_points(raw_points)
+            if deduped:
+                by_form[form] = deduped[: max(top_k, 3)]
+        return by_form
+
+    @staticmethod
+    def _flatten_sec_points_by_form(
+        sec_points_by_form: Dict[str, List[Any]],
+        requested_forms: List[str],
+    ) -> List[Any]:
+        flattened: List[Any] = []
+        seen = set()
+        ordered_forms = requested_forms or list(sec_points_by_form.keys())
+        max_len = max((len(sec_points_by_form.get(form, []) or []) for form in ordered_forms), default=0)
+        for idx in range(max_len):
+            for form in ordered_forms:
+                points = sec_points_by_form.get(form, []) or []
+                if idx >= len(points):
+                    continue
+                point = points[idx]
+                identity = str(getattr(point, "id", "") or "")
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                flattened.append(point)
+        return flattened
+
+    @staticmethod
+    def _date_in_window(raw_value: Any, start_date: date, end_date: date) -> bool:
+        text = str(raw_value or "").strip()
+        if not text:
+            return False
+        try:
+            parsed = datetime.fromisoformat(text[:10]).date()
+        except Exception:
+            return False
+        return start_date <= parsed <= end_date
+
+    def _sec_iso_window_filter(
+        self,
+        points: List[Any],
+        metadata: Any,
+        time_predicates: Optional[Dict["SourceTimeKey", "TimePredicate"]],
+    ) -> List[Any]:
+        """Fallback SEC time filtering using ISO filing dates from payloads."""
+        sec_pred = (time_predicates or {}).get(SourceTimeKey.GOLD_SEC)
+        if sec_pred is None:
+            return points
+        requested_forms = set(self._requested_sec_forms(metadata))
+        filtered: List[Any] = []
+        for point in points:
+            payload = point.payload or {}
+            if str(payload.get("source_type", "")).lower() != "sec":
+                continue
+            if requested_forms:
+                payload_form = str(payload.get("form_type", "") or "").strip().upper()
+                if payload_form and payload_form not in requested_forms:
+                    continue
+            if self._date_in_window(payload.get("filed_at"), sec_pred.start_date, sec_pred.end_date) or self._date_in_window(
+                payload.get("transaction_date"), sec_pred.start_date, sec_pred.end_date
+            ):
+                filtered.append(point)
+        return filtered
+
+    async def retrieve_supplemental_news_async(
+        self,
+        original_query: str,
+        transform_result: FullTransformationResult,
+        top_k: int = 5,
+        time_predicates: Optional[Dict["SourceTimeKey", "TimePredicate"]] = None,
+    ) -> List[RetrievedChunk]:
+        """Retrieve supplemental macro news across the full news corpus.
+
+        This lane is intentionally decoupled from strict narrative evidence.
+        It keeps the existing dense+sparse+rereank stack, but removes topic
+        and ticker gating so macro/geopolitics narrative reads can always try
+        to surface top-ranked news for frontend Evidence and supplemental
+        narrative summarization.
+        """
+        start_time = time.time()
+        clean_search_query = getattr(transform_result.hyde, "rerank_query", original_query)
+        qdrant_filter = None
+        try:
+            metadata = transform_result.metadata.model_copy(deep=True)
+            metadata.source_types = [SourceType.NEWS]
+            metadata.tickers = []
+            metadata.canonical_news_topics = []
+            metadata.primary_news_topic = ""
+            metadata.expanded_news_topics = []
+            metadata.event_keyword = ""
+            supplemental_transform = transform_result.model_copy(deep=True)
+            supplemental_transform.metadata = metadata
+
+            dense_query_task = asyncio.to_thread(
+                lambda: self.dense_model.embed_query(supplemental_transform.hyde.hyde_paragraph)
+            )
+            sparse_query_task = asyncio.to_thread(
+                lambda: list(self.sparse_model.query_embed(clean_search_query))[0]
+            )
+            dense_vec, sparse_vec = await asyncio.gather(dense_query_task, sparse_query_task)
+
+            qdrant_filter = self._build_smart_filter(
+                metadata,
+                ignore_time=False,
+                ticker_mode="drop",
+                time_predicates=time_predicates,
+            )
+            prefetch = [
+                models.Prefetch(query=dense_vec, using="dense", limit=top_k * 3, filter=qdrant_filter),
+                models.Prefetch(
+                    query=models.SparseVector(indices=sparse_vec.indices.tolist(), values=sparse_vec.values.tolist()),
+                    using="sparse",
+                    limit=top_k * 3,
+                    filter=qdrant_filter,
+                ),
+            ]
+
+            search_results = await asyncio.to_thread(
+                self.client.query_points,
+                collection_name=self.collection_name,
+                prefetch=prefetch,
+                query=models.FusionQuery(fusion=models.Fusion.RRF),
+                limit=top_k * 2,
+            )
+            points = list(search_results.points or [])
+            if not points:
+                self._log_audit(
+                    original_query,
+                    clean_search_query,
+                    qdrant_filter,
+                    [],
+                    time.time() - start_time,
+                    False,
+                    fallback_tier="supplemental_news_empty",
+                )
+                return []
+
+            pairs = [[clean_search_query, p.payload.get("text", "")] for p in points]
+            rerank_scores = await asyncio.to_thread(self.reranker.predict, pairs)
+            for idx, p in enumerate(points):
+                p.score = float(rerank_scores[idx])
+            points.sort(key=lambda x: x.score, reverse=True)
+
+            valid_points = [p for p in points if p.score > 0.01 and str((p.payload or {}).get("source_type", "")).lower() == "news"]
+            formatted_results = self._format_results(valid_points[:top_k], False)
+            self._log_audit(
+                original_query,
+                clean_search_query,
+                qdrant_filter,
+                formatted_results,
+                time.time() - start_time,
+                False,
+                fallback_tier="supplemental_news",
+            )
+            return formatted_results
+        except Exception as e:
+            logger.exception(f"❌ Supplemental news retrieval failed: {e}")
+            self._log_audit(
+                original_query,
+                clean_search_query,
+                qdrant_filter,
+                [],
+                time.time() - start_time,
+                False,
+                fallback_tier="supplemental_news_error",
+                error=str(e),
+            )
+            return []
+
     async def retrieve_async(
         self,
         original_query: str,
@@ -430,12 +720,68 @@ class FinancialHybridRetriever:
         """
         start_time = time.time()
         clean_search_query = getattr(transform_result.hyde, "rerank_query", original_query)
+        self._reset_last_sec_retrieval_contract()
         
         logger.info(f"🔍 Original Query: {original_query[:40]}...")
         logger.info(f"🎯 Denoised Rerank Query: {clean_search_query}")
         
         qdrant_filter = None
         try:
+            requested_gold_sources = {
+                str(getattr(s, "value", s) or "").strip().lower()
+                for s in (getattr(transform_result.metadata, "source_types", None) or [])
+            }
+            requested_sec_forms = self._requested_sec_forms(transform_result.metadata)
+            if "sec" in requested_gold_sources and requested_sec_forms:
+                sec_points_by_form = await self._retrieve_sec_payload_context_by_form(
+                    transform_result.metadata,
+                    top_k=top_k,
+                    time_predicates=time_predicates,
+                )
+                if sec_points_by_form:
+                    sec_payload_context_by_form = {
+                        form: self._format_results(points, False)
+                        for form, points in sec_points_by_form.items()
+                    }
+                    flattened_points = self._flatten_sec_points_by_form(sec_points_by_form, requested_sec_forms)
+                    formatted_results = self._format_results(flattened_points[:top_k], False)
+                    raw_hits_by_form = {
+                        form: len(points or [])
+                        for form, points in sec_points_by_form.items()
+                    }
+                    self._last_sec_retrieval_contract = {
+                        "sec_payload_context_by_form": sec_payload_context_by_form,
+                        "sec_ranked_context_by_form": dict(sec_payload_context_by_form),
+                        "sec_raw_hits_by_form": raw_hits_by_form,
+                        "sec_raw_hits_total": sum(raw_hits_by_form.values()),
+                        "sec_rerank_kept_total": len(formatted_results),
+                        "sec_rerank_dropped_total": max(0, sum(raw_hits_by_form.values()) - len(formatted_results)),
+                        "sec_hit_stage": "payload_only",
+                    }
+                    self._log_audit(
+                        original_query,
+                        clean_search_query,
+                        None,
+                        formatted_results,
+                        time.time() - start_time,
+                        False,
+                        fallback_tier="sec_payload_existence",
+                        extra={
+                            "sec_retrieval_mode": "payload_first",
+                            "sec_payload_hits_by_form": raw_hits_by_form,
+                        },
+                    )
+                    return formatted_results
+                self._last_sec_retrieval_contract = {
+                    "sec_payload_context_by_form": {},
+                    "sec_ranked_context_by_form": {},
+                    "sec_raw_hits_by_form": {},
+                    "sec_raw_hits_total": 0,
+                    "sec_rerank_kept_total": 0,
+                    "sec_rerank_dropped_total": 0,
+                    "sec_hit_stage": "no_payload_hits",
+                }
+
             # Keep compatibility with LangChain embedding invocation API.
             dense_query_task = asyncio.to_thread(
                 lambda: self.dense_model.embed_query(transform_result.hyde.hyde_paragraph)
@@ -518,6 +864,21 @@ class FinancialHybridRetriever:
                 points = search_results.points
                 fallback_tier = "drop_ticker_180d"
 
+            if not points and "sec" in requested_gold_sources:
+                logger.warning("⚠️ Tier3 returned 0 for SEC query. Escalating to SEC ISO-date fallback without Gold time filter.")
+                qdrant_filter = self._build_smart_filter(
+                    transform_result.metadata,
+                    ignore_time=True,
+                    ticker_mode="hard",
+                    time_predicates=time_predicates,
+                )
+                search_results = await _execute_search(qdrant_filter)
+                sec_points = self._sec_iso_window_filter(list(search_results.points or []), transform_result.metadata, time_predicates)
+                if sec_points:
+                    points = sec_points
+                    fallback_used = True
+                    fallback_tier = "sec_iso_date_postfilter"
+
             if not points:
                 self._log_audit(
                     original_query, clean_search_query, qdrant_filter, [],
@@ -565,6 +926,12 @@ class FinancialHybridRetriever:
                     record_date = datetime.fromtimestamp(payload["unified_timestamp"]).strftime('%Y-%m-%d')
                 except Exception:
                     pass
+            if record_date == "Unknown":
+                for key in ("filed_at", "transaction_date", "publish_date"):
+                    raw = str(payload.get(key, "") or "").strip()
+                    if raw:
+                        record_date = raw[:10]
+                        break
 
             excluded_keys = {"text", "document_sparse_embedding"}
             refined_metadata = {k: v for k, v in payload.items() if k not in excluded_keys}
@@ -576,7 +943,7 @@ class FinancialHybridRetriever:
             chunk = RetrievedChunk(
                 content=payload.get("text", ""),
                 source_type=payload.get("source_type", SourceType.NEWS),
-                score=hit.score, 
+                score=float(getattr(hit, "score", 1.0) or 1.0),
                 metadata=refined_metadata,
                 bronze_ref=bronze_anchor
             )
@@ -594,6 +961,7 @@ class FinancialHybridRetriever:
         fallback_used: bool,
         fallback_tier: str = "strict",
         error: str = None,
+        extra: Optional[Dict[str, Any]] = None,
     ):
         audit_payload = {
             "timestamp": datetime.now().isoformat(),
@@ -612,6 +980,8 @@ class FinancialHybridRetriever:
             "status": "ERROR" if error else "SUCCESS",
             "error_msg": error
         }
+        if extra:
+            audit_payload.update(dict(extra))
         
         logger.info(f"[AUDIT_RAG_RETRIEVAL] {json.dumps(audit_payload)}")
         if callable(record_retrieval_fallback_kpi):
