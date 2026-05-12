@@ -31,7 +31,7 @@ from langgraph.graph import StateGraph, END
 from Scripts.agents.state import AgentState
 from Scripts.retrieval import MasterRetriever
 from Scripts.retrieval.sql_tools import SilverSQLTool
-from Scripts.agents.analyst import AnalystAgent
+from Scripts.agents.analyst import AnalystAgent, build_finalizer_input_card
 from Scripts.agents.checker import CheckerAgent
 from Scripts.agents.critic import CriticAgent
 from Scripts.agents.finalizer import FinalizerAgent
@@ -201,7 +201,10 @@ async def master_retrieval_node(state: AgentState) -> Dict[str, Any]:
     t0 = time.monotonic()
     logger.info("🔄 [Node:retrieval_master] Entering Master Retrieval + Macro preamble...")
 
-    retrieval_results = await _MASTER_RETRIEVER.retrieve(state["original_query"])
+    retrieval_results = await _MASTER_RETRIEVER.retrieve(
+        state["original_query"],
+        query_builder_contract=state.get("query_builder_contract"),
+    )
     is_fallback = retrieval_results.get("status") != "success"
     if is_fallback:
         logger.warning("⚠️ [Node:retrieval_master] Retrieval partial_failure. Activating fallback state.")
@@ -218,6 +221,9 @@ async def master_retrieval_node(state: AgentState) -> Dict[str, Any]:
         "metadata": retrieval_results.get("metadata"),
         "gold_context": retrieval_results.get("gold_context", []),
         "silver_context": retrieval_results.get("silver_context", {}),
+        "silver_context_frozen": retrieval_results.get("silver_context_frozen"),
+        "scope_contract": retrieval_results.get("scope_contract"),
+        "retrieval_outcome": retrieval_results.get("retrieval_outcome"),
         # 🌟 Audit channels produced by MasterRetriever.retrieve() — now
         # guaranteed non-None and fully-shaped even in degraded modes:
         #   - time_range         : (anchor, start, end, window_days, label,
@@ -235,7 +241,14 @@ async def master_retrieval_node(state: AgentState) -> Dict[str, Any]:
         # Reset verdicts on every new graph entry (safe for re-runs via checkpointer).
         "checker_verdict": None,
         "critic_verdict": None,
+        "recommendation_mode": None,
+        "actionability_mode": None,
+        "structure_visibility_mode": None,
+        "revision_constraints": None,
+        "checker_edit_suggestions": None,
+        "critic_edit_suggestions": None,
         "analyst_fallback_used": None,
+        "finalizer_input_card": None,
         # Reset the pinned IV regime: the first Analyst pass of this new
         # graph entry must recompute from the freshly-retrieved Silver,
         # not inherit a regime from the previous run under a checkpointer.
@@ -274,6 +287,8 @@ async def analyst_node(state: AgentState) -> Dict[str, Any]:
     logger.info(f"✍️ [Node:analyst] Drafting (revision={revision_n + 1})...")
 
     result = await _ANALYST_AGENT.generate_report(state)
+    contract_audit = dict(getattr(result, "contract_audit", {}) or {})
+    contract_violations = list(contract_audit.get("violations") or [])
 
     # Pin the IV regime on the very first draft. On re-entry the analyst has
     # already read it back from state, so the pinned value round-trips
@@ -284,12 +299,15 @@ async def analyst_node(state: AgentState) -> Dict[str, Any]:
         "revision_count": revision_n + 1,
         "checker_verdict": None,
         "critic_verdict": None,
+        "checker_edit_suggestions": None,
+        "critic_edit_suggestions": None,
+        "analyst_contract_audit": contract_audit,
         "node_audit_log": _emit_node_audit(
             node="analyst",
             revision_n=revision_n + 1,
             t0=t0,
             verdict=None,
-            findings_n=0,
+            findings_n=len(contract_violations),
             key_in={
                 "revision_n": revision_n,
                 "feedback_n": len(state.get("critic_feedback") or []),
@@ -299,11 +317,19 @@ async def analyst_node(state: AgentState) -> Dict[str, Any]:
                 "iv_regime": (result.iv_regime or {}).get("iv_regime"),
                 "fallback_used": bool(getattr(result, "used_fallback", False)),
                 "model_used": getattr(result, "model_used", ""),
+                "contract_violations": contract_violations,
             },
         ),
     }
     if state.get("iv_regime_pinned") is None and isinstance(result.iv_regime, dict):
         delta["iv_regime_pinned"] = result.iv_regime
+    card_state = dict(state)
+    card_state.update(delta)
+    delta["finalizer_input_card"] = build_finalizer_input_card(
+        card_state,
+        draft=result.draft,
+        iv_regime=result.iv_regime,
+    )
     return delta
 
 
@@ -319,7 +345,7 @@ async def checker_node(state: AgentState) -> Dict[str, Any]:
     result = await _CHECKER_AGENT.audit(state)
     # audit() returns {"critic_feedback": [...], "checker_verdict": ..., optional silver_context}
     verdict = result.get("checker_verdict", "pass")
-    findings_n = len(result.get("critic_feedback") or [])
+    findings_n = len(result.get("critic_feedback") or []) + len(result.get("checker_edit_suggestions") or [])
 
     # Log structured rejection reasons for Fatal findings (aids Analyst revision).
     if verdict == "fatal":
@@ -353,7 +379,7 @@ async def critic_node(state: AgentState) -> Dict[str, Any]:
     logger.info(f"🛡️ [Node:critic] Challenging strategy logic / regime fit / insider signal (revision={revision_n})...")
     result = await _CRITIC_AGENT.audit(state)
     verdict = result.get("critic_verdict", "pass")
-    findings_n = len(result.get("critic_feedback") or [])
+    findings_n = len(result.get("critic_feedback") or []) + len(result.get("critic_edit_suggestions") or [])
 
     # Log structured rejection reasons for Fatal findings.
     if verdict == "fatal":
@@ -373,6 +399,15 @@ async def critic_node(state: AgentState) -> Dict[str, Any]:
         key_in={"revision_n": revision_n},
         key_out={"verdict": verdict, "findings_n": findings_n},
     )
+    card = dict(state.get("finalizer_input_card") or {})
+    card["recommendation_mode"] = result.get("recommendation_mode")
+    card["actionability_mode"] = result.get("actionability_mode")
+    card["structure_visibility_mode"] = result.get("structure_visibility_mode")
+    card["revision_constraints"] = dict(result.get("revision_constraints") or {})
+    checker_edits = list(state.get("checker_edit_suggestions") or [])
+    critic_edits = list(result.get("critic_edit_suggestions") or [])
+    card["minor_edits"] = checker_edits + critic_edits
+    result["finalizer_input_card"] = card
     return result
 
 
@@ -402,6 +437,21 @@ async def finalizer_node(state: AgentState) -> Dict[str, Any]:
             },
         ),
     }
+
+
+# ==========================================
+# 6a. Conditional edge — retrieval scope gate
+# ==========================================
+
+def route_after_retrieval(state: AgentState) -> str:
+    """Out-of-scope requests bypass Analyst/Checker/Critic and go straight to Finalizer."""
+    scope_contract = state.get("scope_contract") or {}
+    scope_status = str((scope_contract or {}).get("scope_status") or "in_scope").strip().lower()
+    if scope_status == "out_of_scope":
+        logger.info("⛔ [Route:after_retrieval] scope_status=out_of_scope — short-circuiting to Finalizer.")
+        return "finalizer"
+    logger.info("➡️ [Route:after_retrieval] scope_status=in_scope — forwarding to Analyst.")
+    return "analyst"
 
 
 # ==========================================
@@ -494,9 +544,16 @@ def build_financial_rag_graph():
     workflow.add_node("critic", critic_node)
     workflow.add_node("finalizer", finalizer_node)
 
-    # 2. Linear edges
+    # 2. Entry routing
     workflow.set_entry_point("retrieval_master")
-    workflow.add_edge("retrieval_master", "analyst")
+    workflow.add_conditional_edges(
+        "retrieval_master",
+        route_after_retrieval,
+        {
+            "analyst": "analyst",
+            "finalizer": "finalizer",
+        },
+    )
     workflow.add_edge("analyst", "checker")
 
     # 3. Conditional edges: Checker -> {analyst | critic | finalizer(circuit-break)}
@@ -524,8 +581,8 @@ def build_financial_rag_graph():
     workflow.add_edge("finalizer", END)
 
     logger.info(
-        "🛠️ Financial RAG Graph compiled. Topology: retrieval_master → analyst → "
-        "checker → {analyst|critic|finalizer} ; critic → {analyst|finalizer}."
+        "🛠️ Financial RAG Graph compiled. Topology: retrieval_master → {analyst|finalizer}; "
+        "analyst → checker → {analyst|critic|finalizer}; critic → {analyst|finalizer}."
     )
     return workflow.compile()
 
@@ -544,6 +601,7 @@ __all__ = [
     "checker_node",
     "critic_node",
     "finalizer_node",
+    "route_after_retrieval",
     "route_after_checker",
     "route_after_critic",
 ]
