@@ -26,6 +26,7 @@ if BASE_DIR not in sys.path:
 # ------------------------------------------------------------------
 from Scripts.core.yfinance_bootstrap import configure_yfinance_cache  # noqa: E402
 configure_yfinance_cache()
+from Scripts.core.liquidity_policy import executable_moneyness_band_ratio  # noqa: E402
 
 import yfinance as yf  # noqa: E402  (intentional post-bootstrap import)
 
@@ -214,32 +215,63 @@ class YFinanceClient:
             
         # 4. Convert to DataFrame for advanced vectorized calculations
         df = pd.DataFrame(all_options_data)
+        executable_moneyness_band = executable_moneyness_band_ratio(symbol) or 0.10
         
         # [Architecture Update 2]: Calculate Derived Metrics for LLM Reasoning
         # A. Moneyness Percentage: How far is the strike from the current price?
-        df['moneyness_pct'] = (abs(df['strike'] - df['underlying_price']) / df['underlying_price']) * 100
+        # Unit contract: stored as percentage points, so 5.0 means 5.0%, not 0.05.
+        df['moneyness_ratio'] = np.nan
+        valid_underlying_mask = df['underlying_price'] > 0
+        df.loc[valid_underlying_mask, 'moneyness_ratio'] = (
+            abs(df.loc[valid_underlying_mask, 'strike'] / df.loc[valid_underlying_mask, 'underlying_price'] - 1.0)
+        )
+        df['moneyness_pct'] = df['moneyness_ratio'] * 100
         
-        # B. Bid-Ask Spread Percentage: Measure of liquidity cost (safely avoid division by zero)
-        df['spread_pct'] = 0.0
-        mask_ask_gt_zero = df['ask'] > 0
-        df.loc[mask_ask_gt_zero, 'spread_pct'] = ((df.loc[mask_ask_gt_zero, 'ask'] - df.loc[mask_ask_gt_zero, 'bid']) / df.loc[mask_ask_gt_zero, 'ask']) * 100
+        # B. Bid-Ask Spread Ratio / Percentage: execution-cost measure based on quoted mid.
+        # Unit contracts:
+        #   - spread_ratio uses decimal ratio (0.15 means 15%)
+        #   - spread_pct stores percentage points for downstream compatibility (15.0 means 15%)
+        df['spread_ratio'] = np.nan
+        valid_quote_mask = (df['ask'] > 0) & (df['bid'] >= 0) & (df['ask'] >= df['bid'])
+        mid = (df['ask'] + df['bid']) / 2.0
+        valid_mid_mask = valid_quote_mask & (mid > 0)
+        df.loc[valid_mid_mask, 'spread_ratio'] = (
+            (df.loc[valid_mid_mask, 'ask'] - df.loc[valid_mid_mask, 'bid']) / mid.loc[valid_mid_mask]
+        )
+        df['spread_pct'] = df['spread_ratio'] * 100
         
-        # C. Liquidity Flag: True if it has decent volume, open interest, and valid bid
-        df['is_liquid'] = (df['volume'] >= 50) & (df['open_interest'] >= 100) & (df['bid'] > 0)
+        # C. Broad liquidity vs executable liquidity.
+        df['is_liquid_basic'] = (df['volume'] >= 50) & (df['open_interest'] >= 100) & (df['bid'] > 0)
+        df['is_executable_liquid'] = (
+            df['is_liquid_basic']
+            & (df['ask'] >= 0.50)
+            & df['spread_ratio'].notna()
+            & (df['spread_ratio'] <= 0.15)
+            & df['moneyness_ratio'].notna()
+            & (df['moneyness_ratio'] <= executable_moneyness_band)
+            & df['dte'].between(7, 60, inclusive='both')
+        )
+        # Legacy compatibility alias for downstream readers not yet migrated.
+        df['is_liquid'] = df['is_liquid_basic']
         
         # Reorder columns to group related metrics together
         cols = ['snapshot_date', 'symbol', 'underlying_price', 'contract_symbol', 'option_type', 
-                'strike', 'expiration', 'dte', 'moneyness_pct', 
-                'last_price', 'bid', 'ask', 'spread_pct', 
-                'volume', 'open_interest', 'implied_volatility', 'in_the_money', 'is_liquid']
+                'strike', 'expiration', 'dte', 'moneyness_ratio', 'moneyness_pct',
+                'last_price', 'bid', 'ask', 'spread_ratio', 'spread_pct',
+                'volume', 'open_interest', 'implied_volatility', 'in_the_money',
+                'is_liquid_basic', 'is_executable_liquid', 'is_liquid']
         df = df[[c for c in cols if c in df.columns]]
 
         # Save into the daily subfolder (path already resolved above via UniversePaths).
         df.to_parquet(file_path, index=False)
         
-        # Log how many contracts are actually highly liquid
-        liquid_count = df['is_liquid'].sum()
-        logger.info(f"✅ Archived {symbol} -> Total: {len(df)} | Liquid: {liquid_count} | Path: {file_path}")
+        # Log broad vs executable counts separately so tail contracts are visible but not over-weighted.
+        liquid_basic_count = int(df['is_liquid_basic'].sum())
+        executable_count = int(df['is_executable_liquid'].sum())
+        logger.info(
+            f"✅ Archived {symbol} -> Total: {len(df)} | LiquidBasic: {liquid_basic_count} | "
+            f"Executable: {executable_count} | Path: {file_path}"
+        )
         return True
 
 if __name__ == "__main__":

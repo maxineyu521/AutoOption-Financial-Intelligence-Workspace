@@ -20,6 +20,7 @@ TARGET_DATE = args.date
 BASE_DIR = os.path.abspath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
 )
+load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 RAW_FOLDER = os.path.join(BASE_DIR, "Data", "1_Bronze_Raw", "SEC_Parsed_JSON", TARGET_DATE)
 QDRANT_INPUT_FOLDER = os.path.join(BASE_DIR, "Data", "3_Gold_Semantic",  "SEC_Insider_Trades", TARGET_DATE)
 LOG_DIR = os.path.join(BASE_DIR, "logs", TARGET_DATE, "SEC_Ingestion")
@@ -120,7 +121,16 @@ _INGESTION_MODEL = os.getenv(
     os.getenv("OLLAMA_ROUTER_MODEL", "llama3:latest"),
 )
 _OPENAI_INGESTION_MODEL = os.getenv("OPENAI_INGESTION_MODEL", "gpt-4o-mini")
-_INGESTION_LLM_PROVIDER = os.getenv("INGESTION_LLM_PROVIDER", "openai").lower()
+_INGESTION_LLM_PROVIDER = os.getenv("INGESTION_LLM_PROVIDER", "openai").strip().lower()
+if _INGESTION_LLM_PROVIDER not in {"openai", "ollama"}:
+    _INGESTION_LLM_PROVIDER = "openai"
+_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+if _INGESTION_LLM_PROVIDER == "openai" and not _OPENAI_API_KEY:
+    logger.warning(
+        "OPENAI_API_KEY is missing for SEC ingestion; falling back to local Ollama model %s.",
+        _INGESTION_MODEL,
+    )
+    _INGESTION_LLM_PROVIDER = "ollama"
 try:
     if _INGESTION_LLM_PROVIDER == "ollama":
         llm = ChatOllama(
@@ -134,7 +144,7 @@ try:
         _openai_kwargs = {
             "model": _OPENAI_INGESTION_MODEL,
             "temperature": 0,
-            "api_key": os.getenv("OPENAI_API_KEY", ""),
+            "api_key": _OPENAI_API_KEY,
             "timeout": float(os.getenv("OPENAI_TIMEOUT_SECONDS", "60")),
             "model_kwargs": {"response_format": {"type": "json_object"}},
         }
