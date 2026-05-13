@@ -214,23 +214,12 @@ class MetadataExtraction(BaseModel):
         default_factory=list,
         description="Macro driver words used by news sources for this narrative, e.g. real yields, dollar, Fed."
     )
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-    news_semantic_profile: Dict[str, Any] = Field(
-        default_factory=dict,
-=======
-=======
->>>>>>> Stashed changes
     dense_context_terms: List[str] = Field(
         default_factory=list,
         description="Dense-only semantic expansion terms. These must not be passed to sparse keyword retrieval."
     )
     news_semantic_profile: NewsSemanticProfilePayload = Field(
         default_factory=NewsSemanticProfilePayload,
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
         description="Serializable NewsSemanticProfile from financial_narrative_contract."
     )
     analysis_surfaces: List[str] = Field(
@@ -293,16 +282,8 @@ class HyDEGeneration(BaseModel):
         )
         )
 
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
     model_config = ConfigDict(extra="forbid")
 
->>>>>>> Stashed changes
-=======
-    model_config = ConfigDict(extra="forbid")
-
->>>>>>> Stashed changes
 class BuilderQueryContract(BaseModel):
     """Structured frontend-builder contract carried alongside the free-text query."""
 
@@ -441,14 +422,7 @@ class ScopeContract(BaseModel):
     news_search_terms: List[str] = Field(default_factory=list)
     news_asset_terms: List[str] = Field(default_factory=list)
     news_driver_terms: List[str] = Field(default_factory=list)
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
     dense_context_terms: List[str] = Field(default_factory=list)
->>>>>>> Stashed changes
-=======
-    dense_context_terms: List[str] = Field(default_factory=list)
->>>>>>> Stashed changes
     news_semantic_profile: Dict[str, Any] = Field(default_factory=dict)
     analysis_surfaces: List[str] = Field(default_factory=list)
     comparison_targets: List[str] = Field(default_factory=list)

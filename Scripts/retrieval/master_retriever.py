@@ -30,14 +30,7 @@ Core capabilities (this version):
 
 import asyncio
 import copy
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
 import hashlib
->>>>>>> Stashed changes
-=======
-import hashlib
->>>>>>> Stashed changes
 import json
 import logging
 import os
@@ -94,21 +87,12 @@ from Scripts.core.financial_ontology import (
 )
 from Scripts.core.financial_reasoning_contract import build_data_capability_profile
 from Scripts.core.evidence_contracts import build_slot_evidence_contracts, canonical_query_family, evaluate_retrieval_slot_support
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
-=======
->>>>>>> Stashed changes
 from Scripts.core.financial_narrative_contract import (
     dense_news_semantic_query,
     dense_news_terms,
     news_contract_from_chunks,
     sparse_news_keyword_query,
 )
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
 from Scripts.core.liquidity_policy import resolve_primary_ticker
 from Scripts.core.sec_analysis import compose_sec_analysis_bundle
 from Scripts.observability.audit import append_audit_jsonl
@@ -867,16 +851,8 @@ class MasterRetriever:
         fallback_tier: str,
         latency: float,
         stage: str,
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-    ) -> None:
-=======
         compensation_targets: Optional[List[str]] = None,
     ) -> None:
-=======
-        compensation_targets: Optional[List[str]] = None,
-    ) -> None:
->>>>>>> Stashed changes
         metadata = getattr(transform_result, "metadata", None)
         requested_gold_sources = {
             str(getattr(s, "value", s) or "").strip().lower()
@@ -911,10 +887,6 @@ class MasterRetriever:
                 "sparse_terms": str(sparse_query or "").split(),
                 "sparse_terms_count": len(str(sparse_query or "").split()),
             })
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
         payload = {
             "timestamp": datetime.now().isoformat(),
             "original_query": query,
@@ -928,14 +900,7 @@ class MasterRetriever:
             "status": "TIMEOUT",
             "error_msg": f"{stage} timeout before retriever audit emission",
             "retrieval_stage": stage,
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
             **audit_extra,
->>>>>>> Stashed changes
-=======
-            **audit_extra,
->>>>>>> Stashed changes
         }
         try:
             append_audit_jsonl(
@@ -1202,14 +1167,7 @@ class MasterRetriever:
         in_scope_tickers: Optional[List[str]] = None,
         out_of_scope_tickers: Optional[List[str]] = None,
         refusal_reason: str = "",
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
         compensation_values: Optional[Dict[str, Any]] = None,
->>>>>>> Stashed changes
-=======
-        compensation_values: Optional[Dict[str, Any]] = None,
->>>>>>> Stashed changes
     ) -> tuple[Dict[str, Any], Dict[str, Any]]:
         query_family = canonical_query_family(self._infer_query_family(metadata, user_query))
         primary_theme = self._resolved_primary_theme(metadata)
@@ -1366,21 +1324,12 @@ class MasterRetriever:
             query_slots=query_slots,
             capability_profile=data_capability_profile,
         )
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
-=======
->>>>>>> Stashed changes
         # Merge compensation values (IV/skew/liquidity per ticker) into the
         # silver_values dict so _candidate_keys_for_token can satisfy slots like
         # iv_skew_signal (needs latest_iv_skew) and liquidity_signal (needs
         # GLD_liquid_contracts / GLD_avg_spread_pct etc.) via suffix matching.
         # evidence_contracts.py is unchanged — only the input dict is enriched.
         merged_silver_values = {**truth_values, **(compensation_values or {})}
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
         retrieval_slot_support = evaluate_retrieval_slot_support(
             slot_contracts=slot_evidence_contracts,
             retrieval_outcome={
@@ -1391,15 +1340,7 @@ class MasterRetriever:
                 "supplemental_news_status": supplemental_news_status,
                 "supplemental_news_count": supplemental_news_count,
             },
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-            silver_values=truth_values,
-=======
             silver_values=merged_silver_values,
->>>>>>> Stashed changes
-=======
-            silver_values=merged_silver_values,
->>>>>>> Stashed changes
             gold_ctx=gold_context or [],
         )
         hard_data_sufficient_for_answer = bool(
@@ -1657,52 +1598,22 @@ class MasterRetriever:
         transform_result: FullTransformationResult,
         top_k: int = 5,
         precomputed_vecs: Optional[Any] = None,
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-    ) -> List[Any]:
-        """Gold wrapper with independent timeout + exception isolation.
-
-        Forwards the live `time_predicates` dict (compiled once upstream in
-        `_compute_time_range`) so Qdrant can build source-specific time
-        filters rather than rederiving the window on every call.
-=======
         compensation_targets: Optional[List[str]] = None,
     ) -> List[Any]:
         """Gold wrapper with independent timeout + exception isolation.
 
-=======
-        compensation_targets: Optional[List[str]] = None,
-    ) -> List[Any]:
-        """Gold wrapper with independent timeout + exception isolation.
-
->>>>>>> Stashed changes
         For news-only queries, embeddings are precomputed HERE, before the
         asyncio.wait_for budget starts.  This decouples CPU-bound SPLADE/
         sentence-transformers compute (50-100 s on constrained CPU) from the
         Qdrant search + CrossEncoder reranking budget (~5-8 s), so GOLD_TIMEOUT
         only needs to cover the latter.  The LRU cache in _precompute_query_vectors
         makes repeated queries within a session effectively free.
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
 
         Parameters
         ----------
         precomputed_vecs
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-            (dense_vec, sparse_vec) pre-computed upstream when both Gold and
-            SupplementalNews run for the same query.  Forwarded to
-            `retrieve_async` to skip redundant embedding work.
-=======
             Optional caller-supplied (dense_vec, sparse_vec).  If None and the
             query is news-only, this method precomputes via _precompute_query_vectors.
->>>>>>> Stashed changes
-=======
-            Optional caller-supplied (dense_vec, sparse_vec).  If None and the
-            query is news-only, this method precomputes via _precompute_query_vectors.
->>>>>>> Stashed changes
         """
         gold_src = {
             str(getattr(s, "value", s))
@@ -1737,14 +1648,7 @@ class MasterRetriever:
                 fallback_tier="gold_timeout",
                 latency=time.time() - t0,
                 stage="gold",
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
                 compensation_targets=compensation_targets,
->>>>>>> Stashed changes
-=======
-                compensation_targets=compensation_targets,
->>>>>>> Stashed changes
             )
             return []
         except Exception as e:
@@ -2424,14 +2328,7 @@ class MasterRetriever:
                 is_fallback=(final_context["status"] != "success"),
                 in_scope_tickers=list(transform_res.in_scope_tickers or []),
                 out_of_scope_tickers=list(transform_res.out_of_scope_tickers or []),
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
                 compensation_values=_comp_vals,
->>>>>>> Stashed changes
-=======
-                compensation_values=_comp_vals,
->>>>>>> Stashed changes
             )
             final_context["scope_contract"] = scope_contract
             final_context["retrieval_outcome"] = retrieval_outcome
