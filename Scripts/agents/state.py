@@ -33,7 +33,7 @@ class AgentFeedback(BaseModel):
     missing_lineage_id: Optional[List[str]] = Field(None, description="the missing or incorrect evidence ID")
     revision_index: Optional[int] = Field(
         default=None,
-        description="the revision index of the feedback (used for audit replay; locate the新增 in the append-only list)")
+        description="the revision index of the feedback (used for audit replay; locate the in the append-only list)")
 
 
 class FinalizerEdit(TypedDict, total=False):
@@ -68,7 +68,7 @@ class FinalizerEdit(TypedDict, total=False):
 class QueryMetadata(BaseModel):
     """
     Structured intent extracted by Transform.
-    For backend Python code to directly perform parameterized SQL拼接。
+    For backend Python code to directly perform parameterized SQL。
     """
     tickers: List[str] = Field(default_factory=list)
     metrics: List[str] = Field(default_factory=list, description="IV, Skew, Vol, Insider_Flow etc.")
