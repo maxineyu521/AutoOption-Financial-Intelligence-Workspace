@@ -1609,7 +1609,11 @@ def _render_market_read_only_reply(
     family = _narrative_family(state)
     if family in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
         posture = "Backdrop read: treat this as an informational macro/geopolitical context read rather than a live trade escalation."
+=======
+        posture = ""
+>>>>>>> Stashed changes
 =======
         posture = ""
 >>>>>>> Stashed changes
@@ -1618,7 +1622,11 @@ def _render_market_read_only_reply(
     else:
         posture = "Market posture: use this as a read-only options setup anchored to the current regime, IV, and liquidity read."
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     body = f"{evidence_sentence} {posture}"
+=======
+    body = f"{evidence_sentence} {posture}".strip()
+>>>>>>> Stashed changes
 =======
     body = f"{evidence_sentence} {posture}".strip()
 >>>>>>> Stashed changes
@@ -1700,7 +1708,11 @@ def _build_query_first_reply(
                 state=state,
                 evidence_sentence=evidence_sentence,
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
                 risk_sentence=risk_sentence or "Main risk: stay disciplined about execution and wait for fresh confirmation before escalating this posture.",
+=======
+                risk_sentence=risk_sentence or "Main risk: define the invalidation level before upgrading the posture.",
+>>>>>>> Stashed changes
 =======
                 risk_sentence=risk_sentence or "Main risk: define the invalidation level before upgrading the posture.",
 >>>>>>> Stashed changes

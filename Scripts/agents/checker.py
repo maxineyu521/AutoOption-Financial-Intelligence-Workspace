@@ -28,9 +28,17 @@ from Scripts.agents.state import AgentFeedback, FinalizerEdit
 from Scripts.agents.prompts import get_checker_prompt
 from Scripts.core.evidence_contracts import (
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     build_silver_citation_registry,
     normalize_silver_citation_contract,
     parse_silver_inline_payload,
+=======
+    build_gold_citation_registry,
+    build_silver_citation_registry,
+    normalize_silver_citation_contract,
+    parse_silver_inline_payload,
+    resolve_gold_anchor_ref,
+>>>>>>> Stashed changes
 =======
     build_gold_citation_registry,
     build_silver_citation_registry,
@@ -887,8 +895,11 @@ def _deterministic_audit(draft: str, silver_context: Dict[str, Any], gold_contex
                 continue
         elif kind == "Gold":
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
             if anchor not in known_gold_refs:
 =======
+=======
+>>>>>>> Stashed changes
             resolved_gold_ref = resolve_gold_anchor_ref(anchor, gold_registry)
             if resolved_gold_ref.get("resolution_status") == "alias":
                 feedbacks.append(AgentFeedback(
@@ -910,6 +921,9 @@ def _deterministic_audit(draft: str, silver_context: Dict[str, Any], gold_contex
                     missing_lineage_id=[anchor],
                 ))
             elif resolved_gold_ref.get("resolution_status") != "canonical":
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
                 feedbacks.append(AgentFeedback(
                     sender="Checker", error_type="Fatal",
