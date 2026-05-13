@@ -158,6 +158,12 @@ MACRO_GENERATED_RE: re.Pattern = re.compile(
     re.IGNORECASE,
 )
 
+_STRUCTURED_MACRO_LINE_CODES: Dict[str, str] = {
+    "(FEDFUNDS)": "FEDFUNDS",
+    "(CPIAUCSL)": "CPIAUCSL",
+    "(UNRATE)": "UNRATE",
+}
+
 
 def _safe_symbol(symbol: str) -> str:
     if not symbol:
@@ -188,6 +194,77 @@ def _to_float(v: Any) -> Optional[float]:
         except ValueError:
             return None
     return None
+
+
+def _extract_inline_number(text: str) -> Optional[float]:
+    if text is None:
+        return None
+    cleaned = str(text).replace("**", "").replace(",", "").strip()
+    if not cleaned:
+        return None
+
+    token_chars: List[str] = []
+    started = False
+    for ch in cleaned:
+        if ch in "+-0123456789.":
+            token_chars.append(ch)
+            started = True
+            continue
+        if started:
+            break
+    if not token_chars:
+        return None
+    try:
+        return float("".join(token_chars))
+    except ValueError:
+        return None
+
+
+def _parse_structured_macro_lines(markdown: str) -> Dict[str, float]:
+    values: Dict[str, float] = {}
+    for raw_line in str(markdown or "").splitlines():
+        line = raw_line.strip()
+        if not line or "|" not in line:
+            continue
+
+        code = next((mapped for marker, mapped in _STRUCTURED_MACRO_LINE_CODES.items() if marker in line), None)
+        if not code:
+            continue
+
+        normalized = line.replace("**", "")
+        segments = [seg.strip() for seg in normalized.split("|") if seg.strip()]
+        if not segments:
+            continue
+
+        head = segments[0]
+        if ":" not in head:
+            continue
+        value = _extract_inline_number(head.split(":", 1)[1])
+        if value is not None:
+            values[f"{code}_value"] = value
+
+        for segment in segments[1:]:
+            lower = segment.lower()
+            if ":" not in segment:
+                continue
+            rhs = segment.split(":", 1)[1]
+            parsed = _extract_inline_number(rhs)
+            if parsed is None:
+                continue
+            if lower.startswith("mom:"):
+                values[f"{code}_mom_change_pct"] = parsed
+            elif lower.startswith("yoy:"):
+                values[f"{code}_yoy_change_pct"] = parsed
+
+        compat_change = (
+            values.get(f"{code}_mom_change_pct")
+            if f"{code}_mom_change_pct" in values
+            else values.get(f"{code}_yoy_change_pct")
+        )
+        if compat_change is not None:
+            values[f"{code}_change_pct"] = compat_change
+
+    return values
 
 
 def _build_macro_patch_from_parquet(anchor_date: date) -> Dict[str, Any]:
@@ -349,6 +426,12 @@ def parse_macro_snapshot(
                     values[f"{key}_change_pct"] = float(pct_raw)
             except (ValueError, IndexError):
                 pass
+
+    # Lagging macro rows carry MoM / YoY semantics that the legacy regex table
+    # does not fully promote into the Silver contract. Parse those lines once
+    # into explicit structured fields so Checker/Analyst can cite them without
+    # relying on markdown-only visibility.
+    values.update(_parse_structured_macro_lines(markdown))
 
     return values, snapshot_date
 

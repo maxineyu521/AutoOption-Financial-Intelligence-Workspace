@@ -187,6 +187,22 @@ class MetadataExtraction(BaseModel):
         default_factory=list,
         description="Expanded canonical topic scope used for Gold news retrieval when adjacent ontology buckets are relevant."
     )
+    news_search_terms: List[str] = Field(
+        default_factory=list,
+        description="Deterministic news-language terms used to retrieve asset-relevant articles without requiring ticker payloads."
+    )
+    news_asset_terms: List[str] = Field(
+        default_factory=list,
+        description="Asset words commonly used by news sources for the requested tickers, e.g. gold/bullion for GLD."
+    )
+    news_driver_terms: List[str] = Field(
+        default_factory=list,
+        description="Macro driver words used by news sources for this narrative, e.g. real yields, dollar, Fed."
+    )
+    news_semantic_profile: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Serializable NewsSemanticProfile from financial_narrative_contract."
+    )
     analysis_surfaces: List[str] = Field(
         default_factory=list,
         description="Structured analytical layers to cover, such as insider_signal, options_surface, macro_context, geopolitical_context, benchmark_context."
@@ -377,6 +393,10 @@ class ScopeContract(BaseModel):
     canonical_news_topics: List[str] = Field(default_factory=list)
     primary_news_topic: str = Field(default="")
     expanded_news_topics: List[str] = Field(default_factory=list)
+    news_search_terms: List[str] = Field(default_factory=list)
+    news_asset_terms: List[str] = Field(default_factory=list)
+    news_driver_terms: List[str] = Field(default_factory=list)
+    news_semantic_profile: Dict[str, Any] = Field(default_factory=dict)
     analysis_surfaces: List[str] = Field(default_factory=list)
     comparison_targets: List[str] = Field(default_factory=list)
     compensation_targets: List[str] = Field(default_factory=list)

@@ -35,7 +35,7 @@ import logging
 import os
 import re
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -88,6 +88,7 @@ from Scripts.core.financial_reasoning_contract import build_data_capability_prof
 from Scripts.core.evidence_contracts import build_slot_evidence_contracts, canonical_query_family, evaluate_retrieval_slot_support
 from Scripts.core.liquidity_policy import resolve_primary_ticker
 from Scripts.core.sec_analysis import compose_sec_analysis_bundle
+from Scripts.observability.audit import append_audit_jsonl
 
 # Public re-export surface — keeps `__all__` explicit for static analysers.
 __all__ = ["MasterRetriever", "TIME_WINDOW_DAYS", "time_window_to_days"]
@@ -244,7 +245,7 @@ class MasterRetriever:
             )
 
         # --- 3. Runtime knobs (env-tunable without code change) ---
-        self.gold_timeout = float(os.getenv("GOLD_TIMEOUT", 10.0))
+        self.gold_timeout = float(os.getenv("GOLD_TIMEOUT", 15.0))
         self.silver_timeout = float(os.getenv("SILVER_TIMEOUT", 10.0))
 
         logger.info(
@@ -369,12 +370,17 @@ class MasterRetriever:
         strict_sources: List[str],
         silver_context: Dict[str, Any],
         gold_context: List[Any],
+        supplemental_news_context: Optional[List[Any]] = None,
         sec_forms_retrieved: Optional[List[str]] = None,
     ) -> List[str]:
         values = dict((silver_context or {}).get("values") or {})
         gold_sources = {
             cls._chunk_source_type(chunk)
             for chunk in gold_context or []
+        }
+        supplemental_news_sources = {
+            cls._chunk_source_type(chunk)
+            for chunk in supplemental_news_context or []
         }
         hits: List[str] = []
         if "options" in strict_sources and values:
@@ -394,7 +400,7 @@ class MasterRetriever:
         resolved_sec_forms = list(sec_forms_retrieved or cls._sec_forms_retrieved(metadata, gold_context))
         if "sec" in strict_sources and (resolved_sec_forms or "sec" in gold_sources):
             hits.append("sec")
-        if "news" in strict_sources and "news" in gold_sources:
+        if "news" in strict_sources and ("news" in gold_sources or "news" in supplemental_news_sources):
             hits.append("news")
         return hits
 
@@ -456,15 +462,35 @@ class MasterRetriever:
 
     @classmethod
     def _resolved_primary_theme(cls, metadata: MetadataExtraction | None) -> str:
-        candidate = str(getattr(metadata, "primary_theme", "") or "").strip().lower()
-        if candidate in {"insider", "geopolitics", "cross_asset", "options"}:
-            return candidate
         metrics = {metric.lower() for metric in cls._metric_values(metadata)}
         source_types = set(cls._metadata_source_values(metadata))
         topics = set(cls._canonical_news_topics(metadata))
+        signals = {
+            str(signal or "").strip().lower()
+            for signal in (getattr(metadata, "signals", None) or [])
+            if str(signal or "").strip()
+        }
+        explicit_gpr_intent = (
+            "gpr index" in metrics
+            or "gpr context" in signals
+        )
+        explicit_macro_news_narrative = (
+            "news" in source_types
+            and "macro_history" in source_types
+            and "gpr" not in source_types
+            and "macro regime narrative" in signals
+            and "news narrative" in signals
+        )
+        if ("options" in source_types or any(is_options_native_metric(metric) for metric in metrics)) and not explicit_gpr_intent:
+            return "options"
+        candidate = str(getattr(metadata, "primary_theme", "") or "").strip().lower()
+        if explicit_macro_news_narrative:
+            return "cross_asset"
+        if candidate in {"insider", "geopolitics", "cross_asset", "options"}:
+            return candidate
         if "sec" in source_types:
             return "insider"
-        if "gpr" in source_types or "gpr index" in metrics or "macro_geopolitics_risk" in topics:
+        if explicit_gpr_intent or "macro_geopolitics_risk" in topics:
             return "geopolitics"
         if "macro_history" in source_types:
             return "cross_asset"
@@ -472,13 +498,13 @@ class MasterRetriever:
 
     @classmethod
     def _resolved_primary_surface(cls, metadata: MetadataExtraction | None) -> str:
-        candidate = str(getattr(metadata, "primary_surface", "") or "").strip().lower()
-        if candidate in {"options_surface", "macro_news_surface"}:
-            return candidate
         source_types = set(cls._metadata_source_values(metadata))
         metrics = cls._metric_values(metadata)
         if "options" in source_types or any(is_options_native_metric(metric) for metric in metrics):
             return "options_surface"
+        candidate = str(getattr(metadata, "primary_surface", "") or "").strip().lower()
+        if candidate in {"options_surface", "macro_news_surface"}:
+            return candidate
         return "macro_news_surface"
 
     @classmethod
@@ -548,7 +574,22 @@ class MasterRetriever:
             if str(surface or "").strip()
         ]
         valid = {"insider_signal", "options_surface", "macro_context", "geopolitical_context", "benchmark_context"}
-        surfaces: List[str] = [surface for surface in requested if surface in valid]
+        source_types = set(cls._metadata_source_values(metadata))
+        metrics = {metric.lower() for metric in cls._metric_values(metadata)}
+        signals = {
+            str(signal or "").strip().lower()
+            for signal in (getattr(metadata, "signals", None) or [])
+            if str(signal or "").strip()
+        }
+        explicit_gpr_intent = (
+            "gpr" in source_types
+            or "gpr index" in metrics
+            or "gpr context" in signals
+        )
+        surfaces: List[str] = [
+            surface for surface in requested
+            if surface in valid and (surface != "geopolitical_context" or explicit_gpr_intent or cls._resolved_primary_theme(metadata) == "geopolitics")
+        ]
         theme = cls._resolved_primary_theme(metadata)
         surface = cls._resolved_primary_surface(metadata)
         comparison_targets = [
@@ -786,8 +827,37 @@ class MasterRetriever:
         return count
 
     @staticmethod
-    def _supports_supplemental_news(query_family: str) -> bool:
-        return canonical_query_family(query_family) in {"cross_asset_regime", "geopolitical_macro_read"}
+    def _emit_retrieval_timeout_audit(
+        *,
+        query: str,
+        transform_result: FullTransformationResult,
+        fallback_tier: str,
+        latency: float,
+        stage: str,
+    ) -> None:
+        payload = {
+            "timestamp": datetime.now().isoformat(),
+            "original_query": query,
+            "rerank_query_used": str(getattr(transform_result.hyde, "rerank_query", "") or query),
+            "filter_applied": None,
+            "fallback_triggered": False,
+            "fallback_tier": fallback_tier,
+            "results_count": 0,
+            "top_k_scores": [],
+            "latency_sec": round(float(latency), 3),
+            "status": "TIMEOUT",
+            "error_msg": f"{stage} timeout before retriever audit emission",
+            "retrieval_stage": stage,
+        }
+        try:
+            append_audit_jsonl(
+                module="retrieval",
+                payload=payload,
+                filename="retriever_audit_trail.jsonl",
+                scoped_by_run=False,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to write retrieval timeout audit ({stage}): {e}")
 
     @staticmethod
     def _has_impact_basket_context(truth_values: Dict[str, Any]) -> bool:
@@ -1114,20 +1184,28 @@ class MasterRetriever:
         news_coverage_status = "not_applicable"
         background_only_read = False
         supplemental_news_status = "not_applicable"
-        if query_family == "geopolitical_macro_read":
+        # cross_asset_regime (e.g. "GLD news narrative") requests news as a strict
+        # source alongside macro_history. When Gold retrieval times out or returns
+        # nothing, the finalizer must know news is missing so it can surface the
+        # correct disclosure ("No news retrieved in window") instead of treating
+        # news as not-applicable to this query family.
+        # background_only_read stays geopolitical_macro_read-only: that flag
+        # signals the GPR-structured-background fallback path, which depends on
+        # gpr_index_level presence and is not applicable to cross_asset.
+        if query_family in {"geopolitical_macro_read", "cross_asset_regime"}:
             news_coverage_status = "fresh_news_found" if retrieved_news_count > 0 else "no_fresh_news_retrieved"
             background_only_read = (
-                retrieved_news_count == 0
+                query_family == "geopolitical_macro_read"
+                and retrieved_news_count == 0
                 and truth_values.get("gpr_index_level") is not None
                 and self._has_impact_basket_context(truth_values)
             )
-        if self._supports_supplemental_news(query_family):
-            supplemental_news_status = "supplemental_news_found" if supplemental_news_count > 0 else "supplemental_news_missing"
         strict_sources_hit = self._strict_source_hits(
             metadata=metadata,
             strict_sources=strict_sources,
             silver_context=truth_ctx or {},
             gold_context=gold_context,
+            supplemental_news_context=supplemental_news_context,
             sec_forms_retrieved=sec_forms_retrieved,
         )
         gold_sources_hit = {
@@ -1411,12 +1489,20 @@ class MasterRetriever:
         query: str,
         transform_result: FullTransformationResult,
         top_k: int = 5,
+        precomputed_vecs: Optional[Any] = None,
     ) -> List[Any]:
         """Gold wrapper with independent timeout + exception isolation.
 
         Forwards the live `time_predicates` dict (compiled once upstream in
         `_compute_time_range`) so Qdrant can build source-specific time
         filters rather than rederiving the window on every call.
+
+        Parameters
+        ----------
+        precomputed_vecs
+            (dense_vec, sparse_vec) pre-computed upstream when both Gold and
+            SupplementalNews run for the same query.  Forwarded to
+            `retrieve_async` to skip redundant embedding work.
         """
         t0 = time.time()
         predicates = getattr(self, "_current_predicate_set", None)
@@ -1427,6 +1513,7 @@ class MasterRetriever:
                     transform_result=transform_result,
                     top_k=top_k,
                     time_predicates=predicates,
+                    precomputed_vecs=precomputed_vecs,
                 ),
                 timeout=self.gold_timeout,
             )
@@ -1434,6 +1521,13 @@ class MasterRetriever:
             return res
         except asyncio.TimeoutError:
             logger.warning(f"⚠️ [Gold Timeout] Exceeded {self.gold_timeout}s. Returning empty context.")
+            self._emit_retrieval_timeout_audit(
+                query=query,
+                transform_result=transform_result,
+                fallback_tier="gold_timeout",
+                latency=time.time() - t0,
+                stage="gold",
+            )
             return []
         except Exception as e:
             logger.error(f"❌ [Gold Failure] {repr(e)}")
@@ -1444,8 +1538,17 @@ class MasterRetriever:
         query: str,
         transform_result: FullTransformationResult,
         top_k: int = 5,
+        precomputed_vecs: Optional[Any] = None,
     ) -> List[Any]:
-        """Supplemental macro-news lane for narrative families."""
+        """Supplemental macro-news lane for narrative families.
+
+        Parameters
+        ----------
+        precomputed_vecs
+            (dense_vec, sparse_vec) pre-computed upstream when both Gold and
+            SupplementalNews run for the same query.  Forwarded to
+            `retrieve_supplemental_news_async` to skip redundant embedding.
+        """
         t0 = time.time()
         predicates = getattr(self, "_current_predicate_set", None)
         try:
@@ -1455,8 +1558,9 @@ class MasterRetriever:
                     transform_result=transform_result,
                     top_k=top_k,
                     time_predicates=predicates,
+                    precomputed_vecs=precomputed_vecs,
                 ),
-                timeout=self.gold_timeout,
+                timeout=self.supplemental_news_timeout,
             )
             logger.debug(
                 f"📊 [Telemetry] Supplemental news engine finished in {time.time() - t0:.3f}s (top_k={top_k})"
@@ -1464,7 +1568,14 @@ class MasterRetriever:
             return res
         except asyncio.TimeoutError:
             logger.warning(
-                f"⚠️ [Supplemental News Timeout] Exceeded {self.gold_timeout}s. Returning empty supplemental context."
+                f"⚠️ [Supplemental News Timeout] Exceeded {self.supplemental_news_timeout}s. Returning empty supplemental context."
+            )
+            self._emit_retrieval_timeout_audit(
+                query=query,
+                transform_result=transform_result,
+                fallback_tier="supplemental_news_timeout",
+                latency=time.time() - t0,
+                stage="supplemental_news",
             )
             return []
         except Exception as e:
@@ -1795,13 +1906,6 @@ class MasterRetriever:
         silver_task = None
         compensation_task = None
         supplemental_news_task = None
-        narrative_family = canonical_query_family(self._resolved_query_family(metadata))
-        if self._supports_supplemental_news(narrative_family):
-            supplemental_news_task = self._fetch_supplemental_news_with_telemetry(
-                user_query,
-                transform_res,
-                top_k=5,
-            )
 
         if route == "hybrid_both":
             gold_task = self._fetch_gold_with_telemetry(user_query, transform_res, top_k=5)

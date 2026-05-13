@@ -408,7 +408,7 @@ def get_critic_prompt() -> ChatPromptTemplate:
 def get_finalizer_prompt() -> ChatPromptTemplate:
     """Finalizer: convert the Markdown draft that has passed fact-check and logic-approval into FinalReport.
 
-    Variables: original_query, draft, evidence_block, macro_context,
+    Variables: original_query, draft, evidence_block, macro_context, narrative_brief_block,
                scope_contract_block, data_capability_block, time_range_block,
                minor_suggestions_block, revision_guardrails_block, pipeline_flags
     Pairs with Pydantic `FinalReport` via with_structured_output.
@@ -438,6 +438,9 @@ def get_finalizer_prompt() -> ChatPromptTemplate:
         "6. MACRO BACKGROUND: Use [MACRO CONTEXT] to enrich macro_summary only.\n"
         "   Numbers from macro_context are pre-validated; quote them without Silver citation.\n"
         "   Keep macro_summary concise enough to fit a 150-word report section.\n"
+        "6b. NARRATIVE BRIEF: If [NARRATIVE BRIEF] is present, use it as the primary prose contract\n"
+        "    for cross-asset, geopolitical, and macro-news families. Synthesize from its fields instead\n"
+        "    of re-listing every GLD/SLV/VIX/DXY metric. Keep numeric facts as support, not as the report spine.\n"
         "7. CONSTRAINED EDIT MODE: Treat the Analyst draft as the source of truth.\n"
         "   Only adjust content that is explicitly covered by [FINALIZER REVISION BOUNDARY]\n"
         "   and [CRITIC MINOR SUGGESTIONS]. Do not freely rewrite unaffected sections.\n"
@@ -514,6 +517,8 @@ def get_finalizer_prompt() -> ChatPromptTemplate:
         "=== TIME RANGE CONTRACT ===\n{time_range_block}\n\n"
         "=== MACRO CONTEXT (pre-validated background — use for macro_summary enrichment) ===\n"
         "{macro_context}\n\n"
+        "=== NARRATIVE BRIEF (public upstream prose contract; use before raw metric lists) ===\n"
+        "{narrative_brief_block}\n\n"
         "=== ANALYST DRAFT (already fact-checked + logic-approved) ===\n{draft}\n\n"
         "=== EVIDENCE POOL (use these exact IDs for supporting_evidence) ===\n{evidence_block}\n\n"
         "=== FINALIZER REVISION BOUNDARY (allowed edits only) ===\n{revision_guardrails_block}\n\n"

@@ -61,6 +61,10 @@ from Scripts.core.financial_ontology import (
     describe_sec_action_direction,
     query_slots_for_family,
 )
+from Scripts.core.financial_narrative_contract import (
+    build_narrative_brief,
+    render_narrative_brief_block,
+)
 from Scripts.core.sec_contract import SECAnalysisBundle
 
 logger = logging.getLogger(__name__)
@@ -439,21 +443,30 @@ def _derive_query_family(metadata: Any, original_query: str, silver_values: Dict
         return "cross_asset_regime"
     metrics = [str(m).lower() for m in (_obj_get(metadata, "metrics", []) or [])]
     source_types = [str(s).lower() for s in (_obj_get(metadata, "source_types", []) or [])]
+    signals = {str(s).strip().lower() for s in (_obj_get(metadata, "signals", []) or []) if str(s).strip()}
     query_l = (original_query or "").lower()
 
     has_sec = "sec" in source_types or any(_source_type_value(c) == "sec" for c in gold_ctx or [])
-    has_gpr = (
+    explicit_gpr_intent = (
         "gpr" in source_types
         or "gpr index" in " ".join(metrics)
-        or "macro_geopolitics_risk" in [str(topic).strip().lower() for topic in (_obj_get(metadata, "canonical_news_topics", []) or [])]
-        or "gpr_index_level" in silver_values
+        or "gpr context" in signals
+    )
+    explicit_macro_news_narrative = (
+        "news" in source_types
+        and "macro_history" in source_types
+        and "gpr" not in source_types
+        and "macro regime narrative" in signals
+        and "news narrative" in signals
     )
     has_macro = "macro_history" in source_types or any(m in metrics for m in ("macro trend", "price change (%)")) or any(
         k in silver_values for k in ("VIX_value", "DXY_value", "GSPC_value", "IXIC_value")
     )
     if has_sec:
         return "insider_flow_driven"
-    if has_gpr:
+    if explicit_macro_news_narrative:
+        return "cross_asset_regime"
+    if explicit_gpr_intent:
         if "options" in source_types or any(m in metrics for m in ("implied volatility (iv)", "iv skew", "put/call ratio", "options liquidity")):
             return "geopolitical_options_read"
         return "geopolitical_macro_read"
@@ -821,12 +834,49 @@ def _geopolitical_background_lines(
     return deduped
 
 
+def _cross_asset_backdrop_lines(
+    *,
+    silver_values: Dict[str, Any],
+    metadata: Any = None,
+) -> List[str]:
+    lines: List[str] = []
+    primary_context = _primary_ticker_market_context_line(metadata=metadata, silver_values=silver_values)
+    if primary_context:
+        lines.append(primary_context)
+
+    ordered_metrics = [
+        ("SLV price", "SLV_value", "SLV_change_pct"),
+        ("VIX level", "VIX_value", "VIX_change_pct"),
+        ("DXY level", "DXY_value", "DXY_change_pct"),
+        ("S&P 500", "GSPC_value", "GSPC_change_pct"),
+    ]
+    for label, value_key, change_key in ordered_metrics:
+        value = silver_values.get(value_key)
+        change = silver_values.get(change_key) if change_key else None
+        if value is None and change is None:
+            continue
+        parts: List[str] = []
+        if value is not None:
+            parts.append(f"{label}: {value}")
+        if change is not None:
+            parts.append(f"move: {change}%")
+        lines.append(" | ".join(parts))
+
+    deduped: List[str] = []
+    for line in lines:
+        clean = " ".join(str(line).split()).strip()
+        if clean and clean not in deduped:
+            deduped.append(clean)
+    return deduped
+
+
 def _build_analyst_evidence_lines(
     query_family: str,
     silver_values: Dict[str, Any],
     gold_ctx: List[Any],
     iv_regime: Dict[str, Any],
     *,
+    supplemental_news_ctx: Optional[List[Any]] = None,
     metadata: Any = None,
     original_query: str = "",
     retrieval_outcome: Optional[Dict[str, Any]] = None,
@@ -851,6 +901,7 @@ def _build_analyst_evidence_lines(
         liquidity_summary = _format_liquidity_summary(ticker=options_ticker, bundle=options_bundle)
         if liquidity_summary:
             lines.append(liquidity_summary)
+        lines.extend(_news_summary_lines(supplemental_news_ctx or gold_ctx, limit=2))
     elif query_family == "insider_flow_driven":
         sec_summaries = [_sec_feature_line(feature) for feature in _sec_analysis_features(retrieval_outcome)[:3]]
         if not sec_summaries:
@@ -872,18 +923,8 @@ def _build_analyst_evidence_lines(
         if liquidity_summary:
             lines.append(liquidity_summary)
     elif query_family == "cross_asset_regime":
-        if silver_values.get("latest_atm_iv") is not None:
-            lines.append(
-                f"{_ticker_metric_label(options_ticker)}ATM IV: {silver_values.get('latest_atm_iv')} | IV Rank Percentile: {silver_values.get('latest_atm_iv_rank_pct')}"
-            )
-        if silver_values.get("VIX_value") is not None:
-            lines.append(
-                f"VIX Value: {silver_values.get('VIX_value')} | VIX Change: {silver_values.get('VIX_change_pct')}%"
-            )
-        if silver_values.get("DXY_value") is not None:
-            lines.append(
-                f"US Dollar Index (DXY): {silver_values.get('DXY_value')} | Change: {silver_values.get('DXY_change_pct')}%"
-            )
+        lines.extend(_cross_asset_backdrop_lines(silver_values=silver_values, metadata=metadata))
+        lines.extend(_news_summary_lines(supplemental_news_ctx or gold_ctx, limit=2))
     elif query_family in {"geopolitical_macro_read", "geopolitical_options_read"}:
         lines.extend(_geopolitical_background_lines(silver_values=silver_values, metadata=metadata))
         if (
@@ -939,8 +980,11 @@ def _build_analyst_conclusion(
             options_ticker=options_ticker,
             options_bundle=options_bundle,
         )
+        news_summaries = _news_summary_lines(supplemental_news_ctx or gold_ctx, limit=2)
         if summary:
-            return f"For {topic}, {summary}"
+            if news_summaries:
+                return f"For {topic}, {summary} Supplemental news: " + " | ".join(news_summaries) + "."
+            return f"For {topic}, {summary} No supplemental news was retrieved in-window, so the read stays anchored to the structured options evidence."
         return f"For {topic}, the current read is anchored to the checked options evidence available in this run."
     if query_family == "insider_flow_driven":
         sec_bundle = _sec_analysis_bundle(retrieval_outcome)
@@ -982,10 +1026,7 @@ def _build_analyst_conclusion(
     if query_family == "cross_asset_regime":
         regime = iv_regime.get("iv_regime", "UNKNOWN")
         fragments: List[str] = []
-        primary_context = _primary_ticker_market_context_line(metadata=metadata, silver_values=silver_values)
-        if primary_context:
-            fragments.append(primary_context.replace(" | ", "; "))
-        for line in _geopolitical_background_lines(silver_values=silver_values, metadata=metadata)[:5]:
+        for line in _cross_asset_backdrop_lines(silver_values=silver_values, metadata=metadata)[:5]:
             if line.replace(" | ", "; ") not in fragments:
                 fragments.append(line.replace(" | ", "; "))
         news_summaries = _news_summary_lines(supplemental_news_ctx or gold_ctx, limit=2)
@@ -998,7 +1039,7 @@ def _build_analyst_conclusion(
                 + "."
             )
         if fragments:
-            return f"For {topic}, " + "; ".join(fragments[:5]) + f"; the pinned regime reads {regime}."
+            return f"For {topic}, " + "; ".join(fragments[:5]) + f". No supplemental macro news was retrieved in-window, so this read stays anchored to the structured macro backdrop; the pinned regime reads {regime}."
         return f"For {topic}, the pinned regime reads {regime} based on the checked macro and cross-asset evidence in this run."
     if query_family in {"geopolitical_macro_read", "geopolitical_options_read"}:
         outcome = retrieval_outcome if isinstance(retrieval_outcome, dict) else {}
@@ -1069,6 +1110,7 @@ def build_finalizer_input_card(
         silver_values,
         gold_ctx,
         iv_regime,
+        supplemental_news_ctx=supplemental_news_ctx,
         metadata=metadata,
         original_query=state.get("original_query", ""),
         retrieval_outcome=retrieval_outcome,
@@ -1084,6 +1126,17 @@ def build_finalizer_input_card(
         metadata=metadata,
         posture_contract=posture_contract,
     )
+    narrative_brief = build_narrative_brief(
+        query_family=query_family,
+        original_query=state.get("original_query", ""),
+        silver_values=silver_values,
+        gold_context=gold_ctx,
+        supplemental_news_context=supplemental_news_ctx,
+        metadata=metadata,
+        posture_contract=posture_contract,
+        retrieval_outcome=retrieval_outcome,
+    )
+    narrative_brief_payload = narrative_brief.model_dump()
     sec_signal_summary = _sec_direct_read(sec_bundle)
     sec_missing_note = _sec_missing_note(sec_bundle)
 
@@ -1099,6 +1152,12 @@ def build_finalizer_input_card(
         return clean
 
     def _render_safe_macro_summary_seed(values: Dict[str, Any]) -> str:
+        if query_family in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
+            parts = [
+                narrative_brief.news_driver,
+                narrative_brief.macro_transmission,
+            ]
+            return " ".join(part for part in parts if part).strip()
         macro_bits: List[str] = []
         if bool((retrieval_outcome or {}).get("background_only_read")):
             for line in _geopolitical_background_lines(silver_values=values, metadata=metadata)[:6]:
@@ -1107,24 +1166,20 @@ def build_finalizer_input_card(
             if news_bits:
                 macro_bits.append("supplemental macro news: " + " | ".join(news_bits))
         else:
-            primary_context = _primary_ticker_market_context_line(metadata=metadata, silver_values=values)
-            if primary_context:
-                macro_bits.append(primary_context.replace(" | ", "; "))
-            if values.get("VIX_value") is not None:
-                macro_bits.append(f"VIX is {values.get('VIX_value')}")
-            if values.get("DXY_value") is not None:
-                macro_bits.append(f"DXY is {values.get('DXY_value')}")
-            if values.get("gpr_index_level") is not None:
-                macro_bits.append(f"GPR is {values.get('gpr_index_level')}")
-            if values.get("GSPC_change_pct") is not None:
-                macro_bits.append(f"S&P 500 move is {values.get('GSPC_change_pct')}%")
-            if values.get("IXIC_change_pct") is not None:
-                macro_bits.append(f"Nasdaq move is {values.get('IXIC_change_pct')}%")
+            backdrop_lines = (
+                _cross_asset_backdrop_lines(silver_values=values, metadata=metadata)
+                if query_family == "cross_asset_regime"
+                else _geopolitical_background_lines(silver_values=values, metadata=metadata)
+            )
+            for line in backdrop_lines[:5]:
+                macro_bits.append(line.replace(" | ", "; "))
         if not macro_bits:
             return ""
         return "Broader market backdrop: " + "; ".join(macro_bits[:4]) + "."
 
     def _render_safe_asset_read_seed() -> str:
+        if query_family in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
+            return narrative_brief.asset_reaction
         fragments: List[str] = []
         posture_rationale = _compact_sentence(posture_contract.get("posture_rationale", ""))
         base_regime_read = _compact_sentence(posture_contract.get("base_regime_read", ""))
@@ -1165,11 +1220,28 @@ def build_finalizer_input_card(
                     options_bundle=options_bundle,
                 )
             )
+        if query_family in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
+            return _compact_sentence(narrative_brief.asset_reaction)
         return _render_safe_asset_read_seed()
 
-    direct_answer_seed = _compact_sentence(analyst_conclusion)
+    if query_family in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
+        direct_answer_seed = _compact_sentence(
+            " ".join(
+                part for part in (
+                    narrative_brief.headline_read,
+                    narrative_brief.risk_read,
+                )
+                if part
+            )
+        )
+    else:
+        direct_answer_seed = _compact_sentence(analyst_conclusion)
     posture_takeaway = _compact_sentence(posture_contract.get("posture_takeaway", ""))
-    if posture_takeaway and direct_answer_seed:
+    if (
+        posture_takeaway
+        and direct_answer_seed
+        and query_family not in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}
+    ):
         direct_answer_seed = f"{posture_takeaway} {_topic_stripped(direct_answer_seed)}".strip()
     elif posture_takeaway:
         direct_answer_seed = posture_takeaway
@@ -1182,7 +1254,11 @@ def build_finalizer_input_card(
         macro_summary_seed=_render_safe_macro_summary_seed(silver_values),
         asset_read_narrative_seed=_render_safe_asset_read_narrative_seed(),
         asset_read_seed=_render_safe_asset_read_seed(),
-        risk_seed=_compact_sentence(posture_contract.get("escalation_risk_read", "")),
+        risk_seed=_compact_sentence(
+            narrative_brief.what_would_change
+            if query_family in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}
+            else posture_contract.get("escalation_risk_read", "")
+        ),
         summary_caveat_seed="",
         recommendation_mode_seed=str(
             state.get("recommendation_mode") or actionability_mode or "directional_watchlist"
@@ -1205,6 +1281,8 @@ def build_finalizer_input_card(
         "asset_options_evidence_lines": analyst_evidence_lines,
         "analyst_evidence_lines": analyst_evidence_lines,
         "analyst_conclusion": analyst_conclusion,
+        "narrative_brief": narrative_brief_payload,
+        "narrative_brief_block": render_narrative_brief_block(narrative_brief),
         "recommendation_mode": state.get("recommendation_mode"),
         "actionability_mode": actionability_mode,
         "structure_visibility_mode": structure_visibility_mode,

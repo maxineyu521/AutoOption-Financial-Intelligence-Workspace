@@ -13,12 +13,16 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, List
+from typing import Any, List, Set
 from dotenv import load_dotenv
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import AIMessage, HumanMessage
 from Scripts.core import llm_pool
+from Scripts.core.financial_narrative_contract import (
+    build_news_semantic_profile,
+    expanded_news_rerank_query,
+)
 
 
 # --- 1. Path and environment bootstrap ---
@@ -34,7 +38,7 @@ try:
     # Prefer package-relative imports when used as part of Scripts.retrieval.
     from ..core.financial_ontology import (
         ALLOWED_METRICS, ALLOWED_SOURCES, ALLOWED_CATEGORIES, EVENT_KEYWORDS_MAPPING,
-        METRIC_TO_COLUMN_MAPPING, NEWS_TOPICS, NEWS_TOPIC_EXPANSIONS, TOPIC_TO_TICKERS, is_options_native_metric,
+        METRIC_TO_COLUMN_MAPPING, NEWS_TOPICS, NEWS_TOPIC_EXPANSIONS, NEWS_TOPIC_KEYWORD_HINTS, TOPIC_TO_TICKERS, is_options_native_metric,
         normalize_news_topic,
     )
     # Import local retrieval schemas.
@@ -49,7 +53,7 @@ except ImportError as e:
         # Fallback to absolute imports when running this file directly.
         from Scripts.core.financial_ontology import (
             ALLOWED_METRICS, ALLOWED_SOURCES, ALLOWED_CATEGORIES, EVENT_KEYWORDS_MAPPING,
-            METRIC_TO_COLUMN_MAPPING, NEWS_TOPICS, NEWS_TOPIC_EXPANSIONS, TOPIC_TO_TICKERS, is_options_native_metric,
+            METRIC_TO_COLUMN_MAPPING, NEWS_TOPICS, NEWS_TOPIC_EXPANSIONS, NEWS_TOPIC_KEYWORD_HINTS, TOPIC_TO_TICKERS, is_options_native_metric,
             normalize_news_topic,
         )
         from Scripts.retrieval.schema import (
@@ -197,6 +201,30 @@ class QueryTransformer:
 
         source_types = {str(s).lower() for s in (getattr(metadata, "source_types", []) or [])}
         metrics = {str(m).strip().lower() for m in (getattr(metadata, "metrics", []) or [])}
+        signals = [str(s).strip().lower() for s in (getattr(metadata, "signals", []) or []) if str(s).strip()]
+        tickers = [str(t).upper().strip() for t in (getattr(metadata, "tickers", None) or []) if str(t).strip()]
+        logical_reasoning = str(getattr(metadata, "logical_reasoning", "") or "").strip().lower()
+        hint_parts = [
+            logical_reasoning,
+            " ".join(signals),
+            " ".join(metrics),
+            " ".join(tickers),
+        ]
+        hint_text = " ".join(part for part in hint_parts if part).strip().lower()
+
+        if not topics and any(ticker in {"GLD", "SLV"} for ticker in tickers):
+            topics.append("asset_precious_metals_spot")
+
+        def _hint_matches(topic_name: str) -> bool:
+            return any(token in hint_text for token in NEWS_TOPIC_KEYWORD_HINTS.get(topic_name, []))
+
+        if _hint_matches("macro_yields_dollar"):
+            topics.append("macro_yields_dollar")
+        if _hint_matches("macro_central_banks"):
+            topics.append("macro_central_banks")
+        if _hint_matches("asset_metals_derivatives"):
+            topics.append("asset_metals_derivatives")
+
         if not topics and ("gpr" in source_types or "gpr index" in metrics):
             topics.append("macro_geopolitics_risk")
 
@@ -206,37 +234,101 @@ class QueryTransformer:
         canonical_topics = self._normalize_canonical_news_topics(metadata)
         if not canonical_topics:
             return []
-
-        primary_theme = str(getattr(metadata, "primary_theme", "") or "").strip().lower()
-        source_types = {str(s).lower() for s in (getattr(metadata, "source_types", []) or [])}
-        tickers = [str(ticker).upper().strip() for ticker in (getattr(metadata, "tickers", None) or []) if str(ticker).strip()]
-        expanded: List[str] = []
-
+        expanded_tail: List[str] = []
+        canonical_set: Set[str] = set(canonical_topics)
         for topic in canonical_topics:
             for candidate in NEWS_TOPIC_EXPANSIONS.get(topic, [topic]):
                 normalized = normalize_news_topic(candidate)
-                if normalized in NEWS_TOPICS and normalized not in expanded:
-                    expanded.append(normalized)
+                if normalized in NEWS_TOPICS and normalized not in canonical_set and normalized not in expanded_tail:
+                    expanded_tail.append(normalized)
+        return [*canonical_topics, *expanded_tail]
 
-        if primary_theme != "geopolitics" and "gpr" not in source_types and "macro_geopolitics_risk" not in canonical_topics:
-            return expanded
-        if not tickers:
-            return expanded
+    def _apply_news_semantic_profile(self, metadata: MetadataExtraction) -> MetadataExtraction:
+        profile = build_news_semantic_profile(
+            tickers=[str(t).upper().strip() for t in (getattr(metadata, "tickers", []) or []) if str(t).strip()],
+            canonical_topics=list(getattr(metadata, "canonical_news_topics", []) or []),
+            expanded_topics=list(getattr(metadata, "expanded_news_topics", []) or []),
+        )
+        payload = profile.model_dump()
+        metadata.news_semantic_profile = payload
+        metadata.news_search_terms = list(payload.get("news_search_terms") or [])
+        metadata.news_asset_terms = list(payload.get("news_asset_terms") or [])
+        metadata.news_driver_terms = list(payload.get("news_driver_terms") or [])
+        if not getattr(metadata, "canonical_news_topics", None):
+            metadata.canonical_news_topics = list(payload.get("canonical_topics") or [])
+            metadata.primary_news_topic = metadata.canonical_news_topics[0] if metadata.canonical_news_topics else ""
+        if not getattr(metadata, "expanded_news_topics", None):
+            metadata.expanded_news_topics = list(payload.get("expanded_topics") or [])
+        return metadata
 
-        precious_metals = {"GLD", "SLV"}
-        filtered: List[str] = []
-        for topic in expanded:
-            candidate_tickers = {str(t).upper().strip() for t in TOPIC_TO_TICKERS.get(topic, []) if str(t).strip()}
-            if topic in canonical_topics:
-                filtered.append(topic)
-                continue
-            if candidate_tickers.intersection(tickers):
-                filtered.append(topic)
-                continue
-            if topic == "macro_yields_dollar" and any(t in precious_metals for t in tickers):
-                filtered.append(topic)
-                continue
-        return self._dedupe_keep_order(filtered or canonical_topics)
+    @staticmethod
+    def _has_explicit_gpr_intent(metadata: MetadataExtraction, query: str = "") -> bool:
+        metrics = {str(m).strip().lower() for m in (getattr(metadata, "metrics", []) or [])}
+        signals = {str(s).strip().lower() for s in (getattr(metadata, "signals", []) or []) if str(s).strip()}
+        query_l = str(query or "").strip().lower()
+        return (
+            "gpr index" in metrics
+            or "gpr context" in signals
+            or "gpr context" in query_l
+            or "gpr index" in query_l
+            or "geopolitics news" in query_l
+            or "geopolitical" in query_l
+        )
+
+    def _normalize_structural_contract(
+        self,
+        metadata: MetadataExtraction,
+        query: str,
+    ) -> MetadataExtraction:
+        source_types = self._dedupe_keep_order(
+            [str(s).strip().lower() for s in (getattr(metadata, "source_types", []) or []) if str(s).strip()]
+        )
+        metrics = {str(m).strip() for m in (getattr(metadata, "metrics", []) or []) if str(m).strip()}
+        metrics_l = {metric.lower() for metric in metrics}
+        signals = {
+            str(signal).strip().lower()
+            for signal in (getattr(metadata, "signals", []) or [])
+            if str(signal).strip()
+        }
+        canonical_topics = set(getattr(metadata, "canonical_news_topics", []) or [])
+        query_l = str(query or "").strip().lower()
+        explicit_gpr_intent = self._has_explicit_gpr_intent(metadata, query)
+
+        has_options_native_metric = any(is_options_native_metric(metric) for metric in metrics)
+        if "options" in source_types or has_options_native_metric:
+            normalized_sources: List[str] = ["options"]
+            if "news" in source_types:
+                normalized_sources.append("news")
+            if "macro_history" in source_types:
+                normalized_sources.append("macro_history")
+            metadata.source_types = normalized_sources
+            metadata.primary_surface = "options_surface"
+            metadata.primary_theme = "options"
+            metadata.analysis_surfaces = self._dedupe_keep_order(
+                [surface for surface in (getattr(metadata, "analysis_surfaces", []) or []) if str(surface).strip().lower() != "geopolitical_context"]
+            )
+            return metadata
+
+        cross_asset_macro_news = (
+            "news" in source_types
+            and not explicit_gpr_intent
+            and (
+                "macro regime narrative" in signals
+                or "macro regime" in query_l
+                or "macro_yields_dollar" in canonical_topics
+                or "macro_central_banks" in canonical_topics
+                or "asset_precious_metals_spot" in canonical_topics
+            )
+        )
+        if cross_asset_macro_news:
+            metadata.source_types = ["macro_history", "news"]
+            metadata.primary_theme = "cross_asset"
+            if str(getattr(metadata, "primary_surface", "") or "").strip().lower() != "options_surface":
+                metadata.primary_surface = "macro_news_surface"
+            metadata.analysis_surfaces = self._dedupe_keep_order(
+                [surface for surface in (getattr(metadata, "analysis_surfaces", []) or []) if str(surface).strip().lower() != "geopolitical_context"]
+            )
+        return metadata
 
     @staticmethod
     def _coerce_builder_contract(raw_contract: dict | None) -> BuilderQueryContract | None:
@@ -280,8 +372,9 @@ class QueryTransformer:
             merged_metrics = [*metadata.metrics, *[str(m).strip() for m in builder_contract.metrics if str(m).strip()]]
             metadata.metrics = self._dedupe_keep_order(merged_metrics)
         if builder_contract.source_types:
-            merged_sources = [*metadata.source_types, *[str(s).strip().lower() for s in builder_contract.source_types if str(s).strip()]]
-            metadata.source_types = self._dedupe_keep_order(merged_sources)
+            metadata.source_types = self._dedupe_keep_order(
+                [str(s).strip().lower() for s in builder_contract.source_types if str(s).strip()]
+            )
         if builder_contract.requested_sec_forms:
             metadata.requested_sec_forms = self._normalize_requested_sec_forms(
                 [*getattr(metadata, "requested_sec_forms", []), *builder_contract.requested_sec_forms]
@@ -301,25 +394,40 @@ class QueryTransformer:
         metrics = {str(m).strip().lower() for m in (getattr(metadata, "metrics", []) or [])}
         canonical_topics = set(self._normalize_canonical_news_topics(metadata))
         signals = {str(s).strip().lower() for s in (getattr(metadata, "signals", []) or []) if str(s).strip()}
+        explicit_gpr_intent = (
+            "gpr index" in metrics
+            or "gpr context" in signals
+        )
+        explicit_macro_news_narrative = (
+            "news" in source_types
+            and "macro_history" in source_types
+            and "gpr" not in source_types
+            and "macro regime narrative" in signals
+            and "news narrative" in signals
+        )
+        if ("options" in source_types or any(is_options_native_metric(metric) for metric in metrics)) and not explicit_gpr_intent:
+            return "options"
         candidate = str(getattr(metadata, "primary_theme", "") or "").strip().lower()
+        if explicit_macro_news_narrative:
+            return "cross_asset"
         if candidate in {"insider", "geopolitics", "cross_asset", "options"}:
             return candidate
         if "sec" in source_types or {"sec form 4 insider flow", "sec 8-k event risk"} & signals:
             return "insider"
-        if "gpr" in source_types or "gpr index" in metrics or "gpr context" in signals or "macro_geopolitics_risk" in canonical_topics:
+        if explicit_gpr_intent or "macro_geopolitics_risk" in canonical_topics:
             return "geopolitics"
         if "macro_history" in source_types or "macro regime narrative" in signals:
             return "cross_asset"
         return "options"
 
     def _resolve_primary_surface(self, metadata: MetadataExtraction) -> str:
-        candidate = str(getattr(metadata, "primary_surface", "") or "").strip().lower()
-        if candidate in {"options_surface", "macro_news_surface"}:
-            return candidate
         source_types = {str(s).lower() for s in (getattr(metadata, "source_types", []) or [])}
         metrics = [str(m) for m in (getattr(metadata, "metrics", []) or [])]
         if "options" in source_types or any(is_options_native_metric(metric) for metric in metrics):
             return "options_surface"
+        candidate = str(getattr(metadata, "primary_surface", "") or "").strip().lower()
+        if candidate in {"options_surface", "macro_news_surface"}:
+            return candidate
         return "macro_news_surface"
 
     def _resolve_asset_scope(
@@ -403,9 +511,18 @@ class QueryTransformer:
     ) -> List[str]:
         surfaces: List[str] = []
         requested = [str(s).strip().lower() for s in (getattr(metadata, "analysis_surfaces", []) or []) if str(s).strip()]
+        source_types = {str(s).lower() for s in (getattr(metadata, "source_types", []) or [])}
+        metrics = {str(m).strip().lower() for m in (getattr(metadata, "metrics", []) or [])}
+        signals = {str(s).strip().lower() for s in (getattr(metadata, "signals", []) or []) if str(s).strip()}
+        explicit_gpr_intent = (
+            "gpr" in source_types
+            or "gpr index" in metrics
+            or "gpr context" in signals
+        )
         valid_requested = [
             surface for surface in requested
-            if surface in {"insider_signal", "options_surface", "macro_context", "geopolitical_context", "benchmark_context"}
+            if surface in {"insider_signal", "options_surface", "macro_context", "benchmark_context"}
+            or (surface == "geopolitical_context" and (primary_theme == "geopolitics" or explicit_gpr_intent))
         ]
         surfaces.extend(valid_requested)
         if primary_theme == "insider":
@@ -597,6 +714,8 @@ class QueryTransformer:
             metadata.canonical_news_topics = self._normalize_canonical_news_topics(metadata)
             metadata.primary_news_topic = metadata.canonical_news_topics[0] if metadata.canonical_news_topics else ""
             metadata.expanded_news_topics = self._expanded_news_topics(metadata)
+            metadata = self._apply_news_semantic_profile(metadata)
+            metadata = self._normalize_structural_contract(metadata, query)
             metadata.primary_theme = self._resolve_primary_theme(metadata)
             metadata.primary_surface = self._resolve_primary_surface(metadata)
             metadata.comparison_targets = self._normalize_comparison_targets(
@@ -664,7 +783,30 @@ class QueryTransformer:
                     parts.extend(metadata.metrics)
                 if getattr(metadata, "event_keyword", None):
                     parts.append(metadata.event_keyword)
+                if getattr(metadata, "news_search_terms", None):
+                    parts.extend(list(metadata.news_search_terms)[:8])
                 hyde_rr = " ".join(parts) if parts else query
+            # [GUARDRAIL 5] News rerank-query override — conditional on LLM quality.
+            # expanded_news_rerank_query produces a keyword-bag (asset + driver terms)
+            # optimised for SPLADE sparse search. However, it yields ~12 tokens even
+            # after Fix 2b, which is still heavier than the ~5-token LLM output.
+            # When Stage 1 succeeded and produced a substantive hyde_rr (>= 3 words),
+            # trust it and skip the override: the LLM already wrote news-specific
+            # language ("GLD macro regime narrative news narrative") that SPLADE can
+            # use efficiently. Only fall back to the keyword expansion when:
+            #   a) Stage 1 failed (regex fallback — logical_reasoning carries the marker), OR
+            #   b) The LLM returned a trivially short or empty rerank query (< 3 words).
+            _is_stage1_fallback = "Fallback extraction" in (getattr(metadata, "logical_reasoning", "") or "")
+            _hyde_rr_is_trivial = len(str(hyde_rr or "").split()) < 3
+            if "news" in {str(s).lower() for s in (getattr(metadata, "source_types", []) or [])}:
+                if _is_stage1_fallback or _hyde_rr_is_trivial:
+                    profile_query = expanded_news_rerank_query(query, getattr(metadata, "news_semantic_profile", {}) or {})
+                    if profile_query:
+                        hyde_rr = profile_query
+                        hyde_para = (
+                            f"Recent financial news on {profile_query} frames the macro narrative, "
+                            "asset reaction, and risk transmission relevant to the requested market read."
+                        )
             requested_sec_forms = self._normalize_requested_sec_forms(getattr(metadata, "requested_sec_forms", []) or [])
             form_type = str(getattr(metadata, "form_type", "") or "").strip().upper()
             if set(requested_sec_forms) == {"8-K", "4"}:

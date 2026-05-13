@@ -39,6 +39,7 @@ from Scripts.agents.state import RenderSafetyContract
 from Scripts.core.evidence_contracts import canonical_query_family, evaluate_retrieval_slot_support
 from Scripts.core.financial_reasoning_contract import render_data_capability_profile
 from Scripts.core.financial_ontology import INSIDER_FLOW_QUERY_SLOTS, SEC_ACTION_TAXONOMY
+from Scripts.core.financial_narrative_contract import render_narrative_brief_block
 from Scripts.core.liquidity_policy import (
     resolve_first_available_ticker_bundle,
     resolve_primary_ticker,
@@ -646,6 +647,14 @@ def _summary_caveat_seed(state: Dict[str, Any]) -> str:
 
 def _status_note_seed(state: Dict[str, Any]) -> str:
     return _render_safety_contract(state).status_note.strip()
+
+
+def _narrative_brief_block(state: Dict[str, Any]) -> str:
+    card = _finalizer_card(state)
+    block = str(card.get("narrative_brief_block") or "").strip()
+    if block:
+        return block
+    return render_narrative_brief_block(card.get("narrative_brief") or {})
 
 
 def _scope_contract_for_rendering(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -1861,6 +1870,7 @@ class FinalizerAgent:
         user_query: str,
         draft: str,
         macro_context: str,
+        narrative_brief_block: str,
         evidence_block: str,
         scope_contract_block: str,
         data_capability_block: str,
@@ -1881,6 +1891,7 @@ class FinalizerAgent:
             "original_query": user_query,
             "draft": self._clip_text(draft, self.max_draft_chars),
             "macro_context": self._clip_text(macro_context, self.max_macro_chars),
+            "narrative_brief_block": self._clip_text(narrative_brief_block, 1800),
             "evidence_block": self._clip_text(evidence_block, self.max_evidence_chars),
             "scope_contract_block": self._clip_text(scope_contract_block, 2200),
             "data_capability_block": self._clip_text(data_capability_block, 2200),
@@ -1953,6 +1964,7 @@ class FinalizerAgent:
         ) or "(no evidence available — INSUFFICIENT DATA)"
 
         macro_ctx = _finalizer_card(state).get("macro_backdrop") or state.get("macro_context") or ""
+        narrative_brief_block = _narrative_brief_block(state)
         scope_contract_block = _render_scope_contract_for_finalizer(state)
         data_capability_block = _render_data_capability_for_finalizer(state)
         time_range_block = _render_time_contract_for_finalizer(state)
@@ -2052,6 +2064,7 @@ class FinalizerAgent:
                 user_query=user_query,
                 draft=draft,
                 macro_context=macro_ctx[:3000] if macro_ctx else "(not available)",
+                narrative_brief_block=narrative_brief_block,
                 evidence_block=evidence_block,
                 scope_contract_block=scope_contract_block,
                 data_capability_block=data_capability_block,
@@ -2135,6 +2148,7 @@ class FinalizerAgent:
                         user_query=user_query,
                         draft=draft,
                         macro_context=macro_ctx[:3000] if macro_ctx else "(not available)",
+                        narrative_brief_block=narrative_brief_block,
                         evidence_block=evidence_block,
                         scope_contract_block=scope_contract_block,
                         data_capability_block=data_capability_block,

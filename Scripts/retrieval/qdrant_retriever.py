@@ -11,7 +11,7 @@ import os
 import json
 import time
 import asyncio
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, timedelta, date
 from pathlib import Path
 from dotenv import load_dotenv
@@ -37,12 +37,19 @@ try:
     from ..core.financial_ontology import (
         EVENT_KEYWORDS_MAPPING, NEWS_TOPICS, normalize_news_topic,
     )
+    from ..core.financial_narrative_contract import (
+        dense_news_semantic_query,
+        expanded_news_rerank_query,
+        sparse_news_keyword_query,
+        structured_news_relevance_score,
+    )
     from .time_adapter import (
         SourceTimeKey,
         TimePredicate,
         union_epoch_range,
     )
     from ..observability.audit import record_retrieval_fallback_kpi
+    from ..observability.audit import append_audit_jsonl
 except ImportError as e:
     try:
         # Fallback to absolute imports when this file is executed directly.
@@ -54,14 +61,22 @@ except ImportError as e:
         from Scripts.core.financial_ontology import (
             EVENT_KEYWORDS_MAPPING, NEWS_TOPICS, normalize_news_topic,
         )
+        from Scripts.core.financial_narrative_contract import (
+            dense_news_semantic_query,
+            expanded_news_rerank_query,
+            sparse_news_keyword_query,
+            structured_news_relevance_score,
+        )
         from Scripts.retrieval.time_adapter import (
             SourceTimeKey,
             TimePredicate,
             union_epoch_range,
         )
         from Scripts.observability.audit import record_retrieval_fallback_kpi
+        from Scripts.observability.audit import append_audit_jsonl
     except ImportError:
         record_retrieval_fallback_kpi = None
+        append_audit_jsonl = None
         print(f"❌ Initialization Error: {e}")
         sys.exit(1)
 
@@ -98,6 +113,19 @@ class FinancialHybridRetriever:
         
         logger.info(f"✅ Models initialized. Reranker: {reranker_model_name}")
         self._is_initialized = True
+
+    # Source types physically stored in the Gold (Qdrant) vector layer.
+    # Every other value the LLM extractor emits ("macro", "options", etc.)
+    # represents a Silver (Parquet) domain; those are stripped before any
+    # Gold filter is built so the filter never guarantees zero results.
+    # Used by both _build_smart_filter and retrieve_async (single definition).
+    _GOLD_SOURCE_TYPES: frozenset = frozenset({"news", "sec", "gpr"})
+
+    # Tickers whose news coverage is topic-indexed, not ticker-indexed in Qdrant.
+    # For these tickers a hard `ticker` must-filter on the news collection is
+    # structurally guaranteed to return zero results; the fast-path in
+    # retrieve_async uses soft/drop mode instead.
+    _NEWS_TOPIC_INDEXED_TICKERS: frozenset = frozenset({"SPY", "QQQ", "IWM", "GLD", "SLV"})
 
     # ------------------------------------------------------------------
     # Topic derivation — bridges LLM metadata to news_scraper's `topic` field.
@@ -238,9 +266,8 @@ class FinancialHybridRetriever:
         # datasets live in Silver (Parquet). Keeping them in the filter
         # guarantees zero results, so we strip them HERE (single choke
         # point) and keep the rest of the pipeline untouched.
-        _GOLD_SOURCE_TYPES = {"news", "sec", "gpr"}
         raw_source_vals = [_val(s) for s in metadata.source_types] if metadata.source_types else []
-        source_vals = [s for s in raw_source_vals if str(s).lower() in _GOLD_SOURCE_TYPES]
+        source_vals = [s for s in raw_source_vals if str(s).lower() in self._GOLD_SOURCE_TYPES]
         dropped_src = set(raw_source_vals) - set(source_vals)
         if dropped_src:
             logger.info(
@@ -267,10 +294,9 @@ class FinancialHybridRetriever:
         # action/form filters and collapses Tier1 recall to zero. For ETF/index
         # tickers, SEC is not a meaningful source channel; drop it early.
         ticker_list = list(metadata.tickers) if metadata.tickers else []
-        _ETF_INDEX_TICKERS = {"SPY", "QQQ", "IWM", "GLD", "SLV"}
         if source_vals and "sec" in source_vals:
             upper_tickers = [str(t).upper() for t in ticker_list]
-            if upper_tickers and all(t in _ETF_INDEX_TICKERS or t.startswith("^") for t in upper_tickers):
+            if upper_tickers and all(t in self._NEWS_TOPIC_INDEXED_TICKERS or t.startswith("^") for t in upper_tickers):
                 source_vals = [s for s in source_vals if s != "sec"]
                 logger.info(
                     "🧹 [GoldFilter] Dropped SEC source_type for ETF/index macro query; "
@@ -598,36 +624,56 @@ class FinancialHybridRetriever:
         transform_result: FullTransformationResult,
         top_k: int = 5,
         time_predicates: Optional[Dict["SourceTimeKey", "TimePredicate"]] = None,
+        precomputed_vecs: Optional[Tuple[Any, Any]] = None,
     ) -> List[RetrievedChunk]:
         """Retrieve supplemental macro news across the full news corpus.
 
         This lane is intentionally decoupled from strict narrative evidence.
-        It keeps the existing dense+sparse+rereank stack, but removes topic
-        and ticker gating so macro/geopolitics narrative reads can always try
-        to surface top-ranked news for frontend Evidence and supplemental
-        narrative summarization.
+        It keeps the existing dense+sparse+rerank stack and drops ticker
+        gating for legacy news docs, but preserves ontology topic filters and
+        profile-expanded news language so "GLD narrative" searches for gold /
+        bullion / safe-haven news rather than the word "narrative".
+
+        Parameters
+        ----------
+        precomputed_vecs
+            (dense_vec, sparse_vec) pre-computed upstream by MasterRetriever
+            when both Gold and SupplementalNews lanes run for the same query.
+            When provided, skips local embedding to halve CPU thread-pool load.
         """
         start_time = time.time()
-        clean_search_query = getattr(transform_result.hyde, "rerank_query", original_query)
+        profile = getattr(transform_result.metadata, "news_semantic_profile", {}) or {}
+        dense_search_query = dense_news_semantic_query(
+            original_query,
+            profile,
+            semantic_context=getattr(transform_result.hyde, "hyde_paragraph", ""),
+        )
+        sparse_search_query = sparse_news_keyword_query(
+            profile,
+            fallback_query=getattr(transform_result.hyde, "rerank_query", original_query),
+        )
+        clean_search_query = expanded_news_rerank_query(
+            getattr(transform_result.hyde, "rerank_query", original_query),
+            profile,
+        )
         qdrant_filter = None
         try:
             metadata = transform_result.metadata.model_copy(deep=True)
             metadata.source_types = [SourceType.NEWS]
             metadata.tickers = []
-            metadata.canonical_news_topics = []
-            metadata.primary_news_topic = ""
-            metadata.expanded_news_topics = []
-            metadata.event_keyword = ""
             supplemental_transform = transform_result.model_copy(deep=True)
             supplemental_transform.metadata = metadata
 
-            dense_query_task = asyncio.to_thread(
-                lambda: self.dense_model.embed_query(supplemental_transform.hyde.hyde_paragraph)
-            )
-            sparse_query_task = asyncio.to_thread(
-                lambda: list(self.sparse_model.query_embed(clean_search_query))[0]
-            )
-            dense_vec, sparse_vec = await asyncio.gather(dense_query_task, sparse_query_task)
+            if precomputed_vecs is not None and dense_search_query == getattr(transform_result.hyde, "hyde_paragraph", ""):
+                dense_vec, sparse_vec = precomputed_vecs
+            else:
+                dense_query_task = asyncio.to_thread(
+                    lambda: self.dense_model.embed_query(dense_search_query)
+                )
+                sparse_query_task = asyncio.to_thread(
+                    lambda: list(self.sparse_model.query_embed(sparse_search_query))[0]
+                )
+                dense_vec, sparse_vec = await asyncio.gather(dense_query_task, sparse_query_task)
 
             qdrant_filter = self._build_smart_filter(
                 metadata,
@@ -662,16 +708,32 @@ class FinancialHybridRetriever:
                     time.time() - start_time,
                     False,
                     fallback_tier="supplemental_news_empty",
+                    extra={
+                        "dense_query_used": dense_search_query,
+                        "sparse_query_used": sparse_search_query,
+                        "sparse_query_terms": len(sparse_search_query.split()),
+                    },
                 )
                 return []
 
             pairs = [[clean_search_query, p.payload.get("text", "")] for p in points]
             rerank_scores = await asyncio.to_thread(self.reranker.predict, pairs)
             for idx, p in enumerate(points):
-                p.score = float(rerank_scores[idx])
+                p.score = structured_news_relevance_score(
+                    p.payload or {},
+                    profile,
+                    rerank_score=float(rerank_scores[idx]),
+                )
             points.sort(key=lambda x: x.score, reverse=True)
 
-            valid_points = [p for p in points if p.score > 0.01 and str((p.payload or {}).get("source_type", "")).lower() == "news"]
+            # Supplemental narrative news is a display-first lane for macro/news
+            # reads. Keep rerank for ordering, but do not hard-drop low-scoring
+            # news hits here; otherwise valid news can disappear before Analyst
+            # ever sees it.
+            valid_points = [
+                p for p in points
+                if str((p.payload or {}).get("source_type", "")).lower() == "news"
+            ]
             formatted_results = self._format_results(valid_points[:top_k], False)
             self._log_audit(
                 original_query,
@@ -681,6 +743,11 @@ class FinancialHybridRetriever:
                 time.time() - start_time,
                 False,
                 fallback_tier="supplemental_news",
+                extra={
+                    "dense_query_used": dense_search_query,
+                    "sparse_query_used": sparse_search_query,
+                    "sparse_query_terms": len(sparse_search_query.split()),
+                },
             )
             return formatted_results
         except Exception as e:
@@ -694,6 +761,11 @@ class FinancialHybridRetriever:
                 False,
                 fallback_tier="supplemental_news_error",
                 error=str(e),
+                extra={
+                    "dense_query_used": locals().get("dense_search_query", ""),
+                    "sparse_query_used": locals().get("sparse_search_query", ""),
+                    "sparse_query_terms": len(str(locals().get("sparse_search_query", "") or "").split()),
+                },
             )
             return []
 
@@ -703,6 +775,7 @@ class FinancialHybridRetriever:
         transform_result: FullTransformationResult,
         top_k: int = 5,
         time_predicates: Optional[Dict["SourceTimeKey", "TimePredicate"]] = None,
+        precomputed_vecs: Optional[Tuple[Any, Any]] = None,
     ) -> List[RetrievedChunk]:
         """Run the hybrid Gold retrieval cascade.
 
@@ -717,6 +790,10 @@ class FinancialHybridRetriever:
             window combined into a single Range, while `["gpr"]` widens to
             the full month. When None, the legacy inline day-count window
             is used (preserves standalone test behaviour).
+        precomputed_vecs
+            (dense_vec, sparse_vec) pre-computed upstream by MasterRetriever
+            when both Gold and SupplementalNews lanes run for the same query.
+            When provided, skips local embedding to halve CPU thread-pool load.
         """
         start_time = time.time()
         clean_search_query = getattr(transform_result.hyde, "rerank_query", original_query)
@@ -731,6 +808,26 @@ class FinancialHybridRetriever:
                 str(getattr(s, "value", s) or "").strip().lower()
                 for s in (getattr(transform_result.metadata, "source_types", None) or [])
             }
+            _gold_source_vals: frozenset = requested_gold_sources & self._GOLD_SOURCE_TYPES
+            _is_news_only = _gold_source_vals == {"news"}
+            dense_query_text = transform_result.hyde.hyde_paragraph
+            sparse_query_text = clean_search_query
+            rerank_query_text = clean_search_query
+            if _is_news_only:
+                profile = getattr(transform_result.metadata, "news_semantic_profile", {}) or {}
+                dense_query_text = dense_news_semantic_query(
+                    original_query,
+                    profile,
+                    semantic_context=getattr(transform_result.hyde, "hyde_paragraph", ""),
+                )
+                sparse_query_text = sparse_news_keyword_query(
+                    profile,
+                    fallback_query=getattr(transform_result.hyde, "rerank_query", original_query),
+                )
+                rerank_query_text = expanded_news_rerank_query(
+                    getattr(transform_result.hyde, "rerank_query", original_query),
+                    profile,
+                )
             requested_sec_forms = self._requested_sec_forms(transform_result.metadata)
             if "sec" in requested_gold_sources and requested_sec_forms:
                 sec_points_by_form = await self._retrieve_sec_payload_context_by_form(
@@ -783,13 +880,16 @@ class FinancialHybridRetriever:
                 }
 
             # Keep compatibility with LangChain embedding invocation API.
-            dense_query_task = asyncio.to_thread(
-                lambda: self.dense_model.embed_query(transform_result.hyde.hyde_paragraph)
-            )
-            sparse_query_task = asyncio.to_thread(
-                lambda: list(self.sparse_model.query_embed(clean_search_query))[0]
-            )
-            dense_vec, sparse_vec = await asyncio.gather(dense_query_task, sparse_query_task)
+            if precomputed_vecs is not None and not _is_news_only:
+                dense_vec, sparse_vec = precomputed_vecs
+            else:
+                dense_query_task = asyncio.to_thread(
+                    lambda: self.dense_model.embed_query(dense_query_text)
+                )
+                sparse_query_task = asyncio.to_thread(
+                    lambda: list(self.sparse_model.query_embed(sparse_query_text))[0]
+                )
+                dense_vec, sparse_vec = await asyncio.gather(dense_query_task, sparse_query_task)
 
             async def _execute_search(q_filter):
                 prefetch = [
@@ -808,86 +908,148 @@ class FinancialHybridRetriever:
                 )
 
             # ---------------------------------------------------------------
-            # Three-tier retrieval cascade (added 2026-04-22).
-            # Each tier progressively loosens constraints; the first tier
-            # that returns >=1 point wins. The tier that fired is logged in
-            # the audit trail so operators can see WHICH relaxation unlocked
-            # recall (this is the "fallback visibility" fix).
+            # Retrieval cascade — two branches based on source domain.
+            #
+            # BRANCH A — news-only queries:
+            #   News documents are indexed by `topic`, NOT by `ticker`.
+            #   A hard-ticker Tier 1 is structurally guaranteed to return
+            #   zero results for any commodity/ETF-backed news query
+            #   (e.g. GLD, SLV, SPY) because no `ticker` payload field is
+            #   present in the news collection.  Burning one Qdrant round-
+            #   trip on a certain-empty filter wastes ~⅓ of the Gold timeout
+            #   budget before the cascade can escalate.
+            #
+            #   Fix: skip hard-ticker entirely.  Start with soft-mode
+            #   (topic OR ticker in should) + the exact requested time
+            #   window from `time_predicates`.  If still empty, widen to
+            #   180d with ticker dropped.  Two tiers instead of three;
+            #   the tight window is preserved in Tier 1 so recent articles
+            #   surface first.
+            #
+            # BRANCH B — SEC / GPR / mixed queries (original behaviour):
+            #   Tier 1: strict ticker + time_predicates window.
+            #   Tier 2: soft ticker + 180d.
+            #   Tier 3: drop ticker + 180d.
+            #   Tier 4: SEC ISO-date post-filter (SEC-only last resort).
             # ---------------------------------------------------------------
             fallback_tier = "strict"        # telemetry label
             fallback_used = False           # legacy boolean, kept for payload compat
 
-            # Tier 1 — strict ticker, user's requested time window (aligned
-            # per-source via `time_predicates` when provided).
-            qdrant_filter = self._build_smart_filter(
-                transform_result.metadata,
-                ignore_time=False,
-                ticker_mode="hard",
-                time_predicates=time_predicates,
-            )
-            search_results = await _execute_search(qdrant_filter)
-            points = search_results.points
-
-            # Tier 2 — soft ticker (OR topic) + 180-day widened window.
-            #   Targets the "ticker-not-tagged on news payloads" failure mode:
-            #   old news docs without a `ticker` field still match via topic.
-            #   Tier 2/3 deliberately OVERRIDE per-source predicates via
-            #   `fallback_days` so the escalation stays deterministic.
-            if not points:
-                logger.warning("⚠️ Tier1 (strict) returned 0. Escalating to Tier2: soft-ticker + 180d.")
+            # Intersect the raw requested source types with the Gold-valid
+            # set to get the same "source_vals" view that _build_smart_filter
+            # uses internally — without sharing scope with that method.
+            if _is_news_only:
+                # --- Branch A: news-only fast path ---
+                # Tier 1: soft-ticker + tight requested time window.
                 qdrant_filter = self._build_smart_filter(
                     transform_result.metadata,
                     ignore_time=False,
-                    fallback_days=180,
                     ticker_mode="soft",
                     time_predicates=time_predicates,
                 )
                 search_results = await _execute_search(qdrant_filter)
                 points = search_results.points
-                fallback_used = True
-                fallback_tier = "soft_ticker_180d"
+                fallback_tier = "news_soft_tight"
 
-            # Tier 3 — drop ticker entirely. Keeps source_type + topic + time.
-            #   Intent: if neither ticker nor topic carried a match, surface
-            #   broadly-relevant macro context rather than stay silent. The
-            #   Analyst downstream can still honestly label these as weak.
-            if not points:
-                logger.warning("⚠️ Tier2 (soft) returned 0. Escalating to Tier3: drop-ticker + 180d.")
+                # Tier 2: drop ticker entirely, widen to 180d.
+                if not points:
+                    logger.warning(
+                        "⚠️ [News Tier1] soft-ticker+tight window returned 0. "
+                        "Escalating to drop-ticker+180d."
+                    )
+                    qdrant_filter = self._build_smart_filter(
+                        transform_result.metadata,
+                        ignore_time=False,
+                        fallback_days=180,
+                        ticker_mode="drop",
+                        time_predicates=time_predicates,
+                    )
+                    search_results = await _execute_search(qdrant_filter)
+                    points = search_results.points
+                    fallback_used = True
+                    fallback_tier = "news_drop_ticker_180d"
+
+            else:
+                # --- Branch B: SEC / GPR / mixed queries (original 3-tier cascade) ---
+                # Tier 1 — strict ticker, user's requested time window (aligned
+                # per-source via `time_predicates` when provided).
                 qdrant_filter = self._build_smart_filter(
                     transform_result.metadata,
                     ignore_time=False,
-                    fallback_days=180,
-                    ticker_mode="drop",
-                    time_predicates=time_predicates,
-                )
-                search_results = await _execute_search(qdrant_filter)
-                points = search_results.points
-                fallback_tier = "drop_ticker_180d"
-
-            if not points and "sec" in requested_gold_sources:
-                logger.warning("⚠️ Tier3 returned 0 for SEC query. Escalating to SEC ISO-date fallback without Gold time filter.")
-                qdrant_filter = self._build_smart_filter(
-                    transform_result.metadata,
-                    ignore_time=True,
                     ticker_mode="hard",
                     time_predicates=time_predicates,
                 )
                 search_results = await _execute_search(qdrant_filter)
-                sec_points = self._sec_iso_window_filter(list(search_results.points or []), transform_result.metadata, time_predicates)
-                if sec_points:
-                    points = sec_points
+                points = search_results.points
+
+                # Tier 2 — soft ticker (OR topic) + 180-day widened window.
+                #   Targets the "ticker-not-tagged on news payloads" failure mode:
+                #   old news docs without a `ticker` field still match via topic.
+                #   Tier 2/3 deliberately OVERRIDE per-source predicates via
+                #   `fallback_days` so the escalation stays deterministic.
+                if not points:
+                    logger.warning("⚠️ Tier1 (strict) returned 0. Escalating to Tier2: soft-ticker + 180d.")
+                    qdrant_filter = self._build_smart_filter(
+                        transform_result.metadata,
+                        ignore_time=False,
+                        fallback_days=180,
+                        ticker_mode="soft",
+                        time_predicates=time_predicates,
+                    )
+                    search_results = await _execute_search(qdrant_filter)
+                    points = search_results.points
                     fallback_used = True
-                    fallback_tier = "sec_iso_date_postfilter"
+                    fallback_tier = "soft_ticker_180d"
+
+                # Tier 3 — drop ticker entirely. Keeps source_type + topic + time.
+                #   Intent: if neither ticker nor topic carried a match, surface
+                #   broadly-relevant macro context rather than stay silent. The
+                #   Analyst downstream can still honestly label these as weak.
+                if not points:
+                    logger.warning("⚠️ Tier2 (soft) returned 0. Escalating to Tier3: drop-ticker + 180d.")
+                    qdrant_filter = self._build_smart_filter(
+                        transform_result.metadata,
+                        ignore_time=False,
+                        fallback_days=180,
+                        ticker_mode="drop",
+                        time_predicates=time_predicates,
+                    )
+                    search_results = await _execute_search(qdrant_filter)
+                    points = search_results.points
+                    fallback_tier = "drop_ticker_180d"
+
+                if not points and "sec" in requested_gold_sources:
+                    logger.warning("⚠️ Tier3 returned 0 for SEC query. Escalating to SEC ISO-date fallback without Gold time filter.")
+                    qdrant_filter = self._build_smart_filter(
+                        transform_result.metadata,
+                        ignore_time=True,
+                        ticker_mode="hard",
+                        time_predicates=time_predicates,
+                    )
+                    search_results = await _execute_search(qdrant_filter)
+                    sec_points = self._sec_iso_window_filter(list(search_results.points or []), transform_result.metadata, time_predicates)
+                    if sec_points:
+                        points = sec_points
+                        fallback_used = True
+                        fallback_tier = "sec_iso_date_postfilter"
 
             if not points:
+                audit_extra = None
+                if _is_news_only:
+                    audit_extra = {
+                        "dense_query_used": dense_query_text,
+                        "sparse_query_used": sparse_query_text,
+                        "sparse_query_terms": len(str(sparse_query_text or "").split()),
+                    }
                 self._log_audit(
-                    original_query, clean_search_query, qdrant_filter, [],
+                    original_query, rerank_query_text, qdrant_filter, [],
                     time.time() - start_time, fallback_used, fallback_tier=fallback_tier,
+                    extra=audit_extra,
                 )
                 return []
 
             # Apply precision reranking scores.
-            pairs = [[clean_search_query, p.payload.get("text", "")] for p in points]
+            pairs = [[rerank_query_text, p.payload.get("text", "")] for p in points]
 
             rerank_scores = await asyncio.to_thread(self.reranker.predict, pairs)
 
@@ -900,9 +1062,17 @@ class FinancialHybridRetriever:
             top_k_results = valid_points[:top_k]
 
             formatted_results = self._format_results(top_k_results, fallback_used)
+            audit_extra = None
+            if _is_news_only:
+                audit_extra = {
+                    "dense_query_used": dense_query_text,
+                    "sparse_query_used": sparse_query_text,
+                    "sparse_query_terms": len(str(sparse_query_text or "").split()),
+                }
             self._log_audit(
-                original_query, clean_search_query, qdrant_filter, formatted_results,
+                original_query, rerank_query_text, qdrant_filter, formatted_results,
                 time.time() - start_time, fallback_used, fallback_tier=fallback_tier,
+                extra=audit_extra,
             )
             return formatted_results
 
@@ -996,13 +1166,20 @@ class FinancialHybridRetriever:
                 logger.warning(f"Failed to write retrieval KPI summary: {kpi_e}")
         
         try:
-            date_str = datetime.now().strftime("%Y-%m-%d")
-            log_dir = Path(project_root) / "logs" / "retrieval" / date_str
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = log_dir / "retriever_audit_trail.jsonl"
-            
-            with open(log_file, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(audit_payload, ensure_ascii=False) + "\n")
+            if callable(append_audit_jsonl):
+                append_audit_jsonl(
+                    module="retrieval",
+                    payload=audit_payload,
+                    filename="retriever_audit_trail.jsonl",
+                    scoped_by_run=False,
+                )
+            else:
+                date_str = datetime.now().strftime("%Y-%m-%d")
+                log_dir = Path(project_root) / "logs" / "retrieval" / date_str
+                log_dir.mkdir(parents=True, exist_ok=True)
+                log_file = log_dir / "retriever_audit_trail.jsonl"
+                with open(log_file, 'a', encoding='utf-8') as f:
+                    f.write(json.dumps(audit_payload, ensure_ascii=False) + "\n")
         except Exception as log_e:
             logger.error(f"Failed to write audit log to file: {log_e}")
 
