@@ -20,6 +20,11 @@ EXTRACTOR_SYSTEM_PROMPT = """[ROLE]: Strictly Analytical Financial Routing Agent
 4. Source Types: Pick ONE OR MORE from this EXACT list: {allowed_sources}.
    * Business Guideline: Connect 'insider/executives' to SEC, 'market/sentiment' to News, and 'war/geopolitics' to GPR.
 5. Categories: Pick ONE OR MORE from this EXACT list: {allowed_categories}.
+6. Primary Theme: Choose exactly one of: insider, geopolitics, cross_asset, options.
+7. Primary Surface: Choose exactly one of: options_surface, macro_news_surface.
+8. Canonical News Topics: When source types include News or GPR, choose ZERO OR MORE canonical topics from this EXACT list: {allowed_news_topics}. Use an empty list when no canonical topic applies.
+9. Comparison Targets: Put secondary benchmark tickers or indices here when they provide supporting context but are not the primary analysis subject.
+10. Analysis Surfaces: Choose ZERO OR MORE from this exact list: insider_signal, options_surface, macro_context, geopolitical_context, benchmark_context.
 
 [ENUM EXTRACTION RULES]
 For the following fields, DO NOT invent values. Extract them strictly based on the allowed enum values provided in your output schema:

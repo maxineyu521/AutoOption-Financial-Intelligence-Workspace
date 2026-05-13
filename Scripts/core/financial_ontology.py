@@ -13,7 +13,8 @@ parquet schemas on disk** (verified 2026-04-22 via DuckDB DESCRIBE):
   - GPR      : Data/2_Silver_Processed/GPR_index/*.parquet
                (120 columns — raw Caldara–Iacoviello release plus enrichments)
   - SEC      : Qdrant payload (no Silver parquet); key fields:
-               ticker, form_type, action_direction, tone_score, transaction_date
+               ticker, form_type, action_direction, tone_score,
+               transaction_date, transaction_date_epoch_s, filed_at_epoch_s
 
 Rules of engagement
 -------------------
@@ -78,7 +79,8 @@ DATASET_PHYSICAL_SCHEMA: Dict[str, Set[str]] = {
     # Gold retriever can match against the real payload fields.
     "sec_qdrant_payload": {
         "ticker", "form_type", "filed_at", "accession_no",
-        "transaction_date", "action_direction", "tone_score", "url",
+        "transaction_date", "filed_at_epoch_s", "transaction_date_epoch_s",
+        "action_direction", "tone_score", "url",
     },
     # News docs in Qdrant do NOT carry a ticker field today (see Ingestion
     # backlog); they carry topic/entities/impacted_assets. Listed for
@@ -159,6 +161,141 @@ ALLOWED_METRICS: List[str] = [
     "Institutional Flows",        # Reserved — 13F / block-trade data not yet ingested.
 ]
 
+OPTIONS_NATIVE_METRICS: Set[str] = {
+    "implied volatility (iv)",
+    "iv skew",
+    "put/call ratio",
+    "open interest",
+    "options volume",
+    "options liquidity",
+    "moneyness / otm",
+    "time decay / dte",
+    "options pricing / spread",
+}
+
+# ---------------------------------------------------------------------------
+# 3b. SEC / insider-flow contract (shared across retrieval + agents)
+# ---------------------------------------------------------------------------
+# These definitions are intentionally explicit because "insider flow" queries
+# often mix SELL, BUY and compensation-related vesting in the same month.
+# The pipeline must not silently collapse those into one category.
+SEC_ACTION_TAXONOMY: Dict[str, str] = {
+    "SELL": "Open-market or planned disposition/selling activity by the insider.",
+    "BUY": "Open-market purchase or affirmative buying activity by the insider.",
+    "ACQUIRE/VEST": "Compensation-related vesting or award-linked acquisition; not equivalent to open-market buying or selling.",
+}
+
+INSIDER_FLOW_QUERY_SLOTS: Dict[str, str] = {
+    "sec_insider_signal": "Form-4 insider selling / buying / vesting signal",
+    "sec_event_signal": "SEC 8-K or event filing signal",
+    "options_liquidity_posture": "options liquidity posture",
+}
+
+OPTIONS_MICROSTRUCTURE_QUERY_SLOTS: Dict[str, str] = {
+    "pcr_signal": "put/call ratio signal",
+    "atm_iv_signal": "at-the-money implied volatility signal",
+    "iv_skew_signal": "IV skew signal",
+    "iv_or_skew_signal": "IV / skew signal",
+    "liquidity_signal": "options liquidity posture",
+}
+
+CROSS_ASSET_REGIME_QUERY_SLOTS: Dict[str, str] = {
+    "equity_vol_signal": "equity implied-volatility signal",
+    "macro_vol_signal": "macro volatility signal",
+    "supporting_context": "supporting macro or liquidity context",
+}
+
+GEOPOLITICAL_COMMODITY_QUERY_SLOTS: Dict[str, str] = {
+    "geopolitical_risk_signal": "geopolitical risk signal",
+    "options_vol_signal": "commodity options volatility posture",
+}
+
+GEOPOLITICAL_MACRO_READ_QUERY_SLOTS: Dict[str, str] = {
+    "latest_geopolitical_risk_anchor": "latest geopolitical risk anchor",
+    "geopolitical_news_signal": "geopolitical news signal",
+    "impact_basket_context": "primary asset or impact-basket context",
+}
+
+QUERY_FAMILY_SLOTS: Dict[str, Dict[str, str]] = {
+    "insider_flow_driven": INSIDER_FLOW_QUERY_SLOTS,
+    "options_microstructure": OPTIONS_MICROSTRUCTURE_QUERY_SLOTS,
+    "cross_asset_regime": CROSS_ASSET_REGIME_QUERY_SLOTS,
+    "geopolitical_macro_read": GEOPOLITICAL_MACRO_READ_QUERY_SLOTS,
+    "geopolitical_options_read": GEOPOLITICAL_COMMODITY_QUERY_SLOTS,
+}
+
+INSIDER_FLOW_SOURCE_TO_SLOT: Dict[str, str] = {
+    "sec": "sec_insider_signal",
+    "options": "options_liquidity_posture",
+}
+
+QUERY_FAMILY_SOURCE_TO_SLOTS: Dict[str, Dict[str, List[str]]] = {
+    "insider_flow_driven": {
+        "sec": ["sec_insider_signal", "sec_event_signal"],
+        "options": ["options_liquidity_posture"],
+    },
+    "options_microstructure": {
+        "options": ["pcr_signal", "atm_iv_signal", "iv_skew_signal", "iv_or_skew_signal", "liquidity_signal"],
+    },
+    "cross_asset_regime": {
+        "options": ["equity_vol_signal"],
+        "macro_history": ["macro_vol_signal", "supporting_context"],
+    },
+    "geopolitical_macro_read": {
+        "gpr": ["latest_geopolitical_risk_anchor"],
+        "news": ["geopolitical_news_signal"],
+        "macro_history": ["impact_basket_context"],
+    },
+    "geopolitical_options_read": {
+        "gpr": ["geopolitical_risk_signal"],
+        "options": ["options_vol_signal"],
+    },
+}
+
+
+QUERY_FAMILY_ALIASES: Dict[str, str] = {
+    "macro_regime": "cross_asset_regime",
+    "macro_geopolitics_risk": "geopolitical_macro_read",
+    "geopolitical_commodity": "geopolitical_options_read",
+}
+
+
+def describe_sec_action_direction(action: str) -> str:
+    return SEC_ACTION_TAXONOMY.get(str(action or "").upper(), "Unclassified insider action.")
+
+
+def query_slots_for_family(query_family: str) -> Dict[str, str]:
+    family = QUERY_FAMILY_ALIASES.get(str(query_family or "").lower(), str(query_family or "").lower())
+    return dict(QUERY_FAMILY_SLOTS.get(family, {}))
+
+
+def missing_slots_for_query_family(
+    query_family: str,
+    missing_sources: List[str],
+    active_query_slots: Dict[str, str] | List[str] | None = None,
+) -> List[str]:
+    ordered: List[str] = []
+    family = QUERY_FAMILY_ALIASES.get(str(query_family or "").lower(), str(query_family or "").lower())
+    source_to_slots = QUERY_FAMILY_SOURCE_TO_SLOTS.get(family, {})
+    active_slots: Set[str] | None = None
+    if isinstance(active_query_slots, dict):
+        active_slots = {str(slot).strip() for slot in active_query_slots.keys() if str(slot).strip()}
+    elif isinstance(active_query_slots, list):
+        active_slots = {str(slot).strip() for slot in active_query_slots if str(slot).strip()}
+    if not source_to_slots:
+        return ordered
+    for src in missing_sources or []:
+        for slot in source_to_slots.get(str(src or "").lower(), []):
+            if active_slots is not None and slot not in active_slots:
+                continue
+            if slot and slot not in ordered:
+                ordered.append(slot)
+    return ordered
+
+
+def is_options_native_metric(metric: str) -> bool:
+    return str(metric or "").strip().lower() in OPTIONS_NATIVE_METRICS
+
 # ---------------------------------------------------------------------------
 # 4. Metric → physical column mapping (single source of truth)
 # ---------------------------------------------------------------------------
@@ -232,6 +369,53 @@ METRIC_TO_COLUMN_MAPPING: Dict[str, List[str]] = {
 }
 
 # ---------------------------------------------------------------------------
+# 4d. Canonical metric comparison semantics
+# ---------------------------------------------------------------------------
+# These modes are consumed by Checker-side numeric validation so display-space
+# rendering (for example rounded percent values) can be validated without
+# loosening numeric audit globally.
+METRIC_COMPARISON_MODE: Dict[str, str] = {
+    "latest_atm_iv": "raw_decimal",
+    "latest_iv_skew": "signed_decimal",
+    "latest_otm_put_iv": "raw_decimal",
+    "latest_otm_call_iv": "raw_decimal",
+    "pcr_volume": "ratio_or_percent",
+    "pcr_open_interest": "ratio_or_percent",
+    "latest_atm_iv_rank_pct": "display_percent_ratio",
+    "gpr_percentile": "display_percent_ratio",
+    "VIX_change_pct": "display_percent_points",
+    "GSPC_change_pct": "display_percent_points",
+    "IXIC_change_pct": "display_percent_points",
+    "DXY_change_pct": "display_percent_points",
+    "GLD_change_pct": "display_percent_points",
+    "SLV_change_pct": "display_percent_points",
+    "GLD_SPOT_change_pct": "display_percent_points",
+    "SLV_SPOT_change_pct": "display_percent_points",
+    "DX_Y_NYB_change_pct": "display_percent_points",
+    "CPIAUCSL_change_pct": "display_percent_points",
+}
+
+
+def metric_comparison_mode(metric_key: str) -> str:
+    key = str(metric_key or "").strip()
+    if not key:
+        return "raw_decimal"
+    if key in METRIC_COMPARISON_MODE:
+        return METRIC_COMPARISON_MODE[key]
+    lower = key.lower()
+    if lower.endswith("_change_pct"):
+        return "display_percent_points"
+    if lower.endswith("_rank_pct") or "percentile" in lower:
+        return "display_percent_ratio"
+    if lower.endswith("_pct"):
+        return "display_percent_points"
+    if "skew" in lower:
+        return "signed_decimal"
+    if lower.startswith("pcr_"):
+        return "ratio_or_percent"
+    return "raw_decimal"
+
+# ---------------------------------------------------------------------------
 # 4b. ETF → underlying-index alias (Silver-Layer join aid)
 # ---------------------------------------------------------------------------
 # RATIONALE (read this before touching): our Macro_History parquet stores
@@ -291,12 +475,104 @@ NEWS_TOPIC_ALIAS: Dict[str, str] = {
 # docs so Gold ticker filters stop yielding 0 hits. Ticker universe limited to
 # what ACTUALLY exists in our Silver parquets — do not add aspirational symbols.
 TOPIC_TO_TICKERS: Dict[str, List[str]] = {
-    "macro_central_banks":        ["FEDFUNDS", "DX-Y.NYB", "^VIX", "^GSPC", "^IXIC"],
+    "macro_central_banks":        ["FEDFUNDS", "DX-Y.NYB", "GLD", "SLV", "^VIX", "^GSPC", "^IXIC"],
     "macro_inflation_employment": ["CPIAUCSL", "UNRATE", "^GSPC", "^VIX"],
-    "macro_yields_dollar":        ["DX-Y.NYB", "^VIX"],
+    "macro_yields_dollar":        ["DX-Y.NYB", "GLD", "SLV", "^VIX"],
     "macro_geopolitics_risk":     ["^VIX", "GLD", "^GSPC"],
     "asset_precious_metals_spot": ["GLD", "SLV"],
     "asset_metals_derivatives":   ["GLD", "SLV"],
+}
+
+TOPIC_IMPACT_BASKETS: Dict[str, List[str]] = {
+    "macro_geopolitics_risk": ["GLD", "SLV", "^VIX", "^GSPC", "DX-Y.NYB"],
+    "macro_central_banks": ["GLD", "SLV", "DX-Y.NYB", "^VIX", "^GSPC"],
+    "macro_yields_dollar": ["GLD", "SLV", "DX-Y.NYB", "^VIX"],
+    "asset_precious_metals_spot": ["GLD", "SLV", "DX-Y.NYB", "^VIX"],
+    "asset_metals_derivatives": ["GLD", "SLV", "DX-Y.NYB", "^VIX"],
+}
+
+NEWS_TOPIC_EXPANSIONS: Dict[str, List[str]] = {
+    "macro_central_banks": [
+        "macro_central_banks",
+        "macro_yields_dollar",
+        "asset_precious_metals_spot",
+        "asset_metals_derivatives",
+    ],
+    "macro_yields_dollar": [
+        "macro_yields_dollar",
+        "macro_central_banks",
+        "asset_precious_metals_spot",
+        "asset_metals_derivatives",
+    ],
+    "macro_geopolitics_risk": [
+        "macro_geopolitics_risk",
+        "macro_yields_dollar",
+        "asset_precious_metals_spot",
+        "asset_metals_derivatives",
+    ],
+    "asset_precious_metals_spot": [
+        "asset_precious_metals_spot",
+        "asset_metals_derivatives",
+        "macro_yields_dollar",
+        "macro_central_banks",
+    ],
+    "asset_metals_derivatives": [
+        "asset_metals_derivatives",
+        "asset_precious_metals_spot",
+        "macro_yields_dollar",
+        "macro_central_banks",
+    ],
+}
+
+NEWS_TOPIC_KEYWORD_HINTS: Dict[str, List[str]] = {
+    "asset_precious_metals_spot": [
+        "gld",
+        "slv",
+        "gold",
+        "silver",
+        "precious metal",
+        "precious metals",
+        "bullion",
+        "safe haven",
+    ],
+    "asset_metals_derivatives": [
+        "gold futures",
+        "silver futures",
+        "gold options",
+        "silver options",
+        "metals derivatives",
+        "comex",
+    ],
+    "macro_yields_dollar": [
+        "10y",
+        "10-year",
+        "10 year",
+        "treasury yield",
+        "treasury yields",
+        "treasuries",
+        "dxy",
+        "dollar index",
+        "us dollar",
+        "usd",
+        "bond market",
+        "real yield",
+        "real yields",
+    ],
+    "macro_central_banks": [
+        "fed",
+        "fomc",
+        "powell",
+        "ecb",
+        "boj",
+        "bank of japan",
+        "central bank",
+        "central banks",
+        "interest rate",
+        "interest rates",
+        "monetary policy",
+        "rate hike",
+        "rate cut",
+    ],
 }
 
 # The LLM in news_scraper emits free-text asset-class labels in

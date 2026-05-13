@@ -43,6 +43,8 @@ def _mode_phrase(final_state: Dict[str, Any]) -> str:
 def _structured_context_phrase(final_state: Dict[str, Any]) -> str:
     normalized = normalize_state(final_state)
     metadata = normalized.get("metadata") or {}
+    scope_contract = normalized.get("scope_contract") or {}
+    query_family = sanitize_text(scope_contract.get("query_family") or "").lower()
     source_types = {str(x).lower() for x in (metadata.get("source_types") or [])}
     form_type = str(metadata.get("form_type") or "").strip().upper()
     requested_sec_forms = {str(x or "").strip().upper() for x in (metadata.get("requested_sec_forms") or []) if str(x or "").strip()}
@@ -63,9 +65,16 @@ def _structured_context_phrase(final_state: Dict[str, Any]) -> str:
             return f"{base} and supporting news context"
         return base
 
-    if "news" in source_types and "gpr" in source_types:
+    if query_family == "cross_asset_regime":
+        if "news" in source_types and "macro_history" in source_types:
+            return "macro regime and news context"
+        if "macro_history" in source_types:
+            return "macro regime context"
+        if "news" in source_types:
+            return "news narrative"
+    if query_family.startswith("geopolitical_") and "news" in source_types and "gpr" in source_types:
         return "geopolitics news and GPR context"
-    if "gpr" in source_types:
+    if query_family.startswith("geopolitical_") and "gpr" in source_types:
         return "GPR context"
     if "news" in source_types:
         return "news narrative"
@@ -93,7 +102,7 @@ def _structured_goal_clause(final_state: Dict[str, Any]) -> str:
         return "about insider flow"
     if event_keyword == "event_risk":
         return "about event risk"
-    if query_family.startswith("geopolitical_") or "gpr" in source_types:
+    if query_family.startswith("geopolitical_"):
         return "about geopolitics risk"
     if query_family == "cross_asset_regime" or "macro_history" in source_types:
         return "about the current regime"
@@ -243,10 +252,10 @@ def _render_audit_diagnostics(final_state: Dict[str, Any], run_id: str, bundle_p
     col_crit.metric("Critic Verdict", str(final_state.get("critic_verdict", "N/A")))
     col_mode.metric("Final Answer Boundary", translated_mode.title())
     st.caption(f"Run ID: `{run_id}`")
-    st.caption("Builder signals and canonical goal control query framing. Final answer boundary is set later by deterministic financial guardrails.")
+    st.caption("Builder signals, tickers, and time window control query framing. The Goal selector stays in the UI as guidance only.")
     st.markdown(
         """
-Canonical builder goals map to backend families: options posture, SEC filing risk, geopolitics narrative, and macro regime.
+Canonical backend routing is derived from structural fields such as source types, requested SEC forms, metrics, tickers, and time window.
 Finalizer boundaries map as: `actionable_options` -> structure-supported, `directional_watchlist` -> directional watchlist, `informational_only` -> context only.
         """
     )

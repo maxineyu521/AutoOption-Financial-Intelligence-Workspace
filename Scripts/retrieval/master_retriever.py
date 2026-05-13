@@ -30,11 +30,21 @@ Core capabilities (this version):
 
 import asyncio
 import copy
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+import hashlib
+>>>>>>> Stashed changes
+=======
+import hashlib
+>>>>>>> Stashed changes
+import json
 import logging
 import os
 import re
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -72,15 +82,41 @@ from Scripts.retrieval.time_adapter import (
 from Scripts.core.financial_ontology import (
     ALLOWED_METRICS,
     ALLOWED_SOURCES,
-    INSIDER_FLOW_QUERY_SLOTS,
     METRIC_TO_COLUMN_MAPPING,
+    NEWS_TOPICS,
     SEC_ACTION_TAXONOMY,
+    TOPIC_IMPACT_BASKETS,
+    TOPIC_TO_TICKERS,
+    is_options_native_metric,
     missing_slots_for_query_family,
+    normalize_news_topic,
+    query_slots_for_family,
 )
 from Scripts.core.financial_reasoning_contract import build_data_capability_profile
+from Scripts.core.evidence_contracts import build_slot_evidence_contracts, canonical_query_family, evaluate_retrieval_slot_support
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+=======
+>>>>>>> Stashed changes
+from Scripts.core.financial_narrative_contract import (
+    dense_news_semantic_query,
+    dense_news_terms,
+    news_contract_from_chunks,
+    sparse_news_keyword_query,
+)
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
+from Scripts.core.liquidity_policy import resolve_primary_ticker
+from Scripts.core.sec_analysis import compose_sec_analysis_bundle
+from Scripts.observability.audit import append_audit_jsonl
 
 # Public re-export surface — keeps `__all__` explicit for static analysers.
 __all__ = ["MasterRetriever", "TIME_WINDOW_DAYS", "time_window_to_days"]
+
+_BRONZE_SEC_ROOT = Path(__file__).resolve().parents[2] / "Data" / "1_Bronze_Raw" / "SEC_Parsed_JSON"
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -94,6 +130,11 @@ logger = logging.getLogger(__name__)
 # always at least one news anchor. This does NOT change business routing.
 _SQL_ONLY_FALLBACK_TOPK = 2
 
+# Maximum number of (dense_vec, sparse_vec) pairs to keep in the per-process
+# query-vector cache.  Capped to avoid unbounded memory growth on long-running
+# server processes.  FIFO eviction (insertion-order dict).
+_EMBEDDING_CACHE_MAX = 32
+
 # Max number of novel tickers the HE back-injection can promote to a real
 # Silver compensation query. A hard cap protects the silver_timeout budget:
 # three tickers × ~8s each is already on the order of one-third of a browser's
@@ -105,8 +146,20 @@ _MACRO_ONLY_HINT_TERMS = (
     "dot plot", "policy rate",
 )
 _MACRO_ONLY_SAFE_TICKERS = {"SPY", "QQQ", "IWM", "GLD", "SLV"}
-
-
+_EXPLICIT_GOLD_CONTEXT_PHRASES = (
+    "headline",
+    "headlines",
+    "news impact",
+    "headline impact",
+    "event driver",
+    "event-driven",
+    "event driven",
+    "catalyst",
+    "catalysts",
+    "what changed",
+    "why today",
+    "news",
+)
 # ---------------------------------------------------------------------------
 # Ticker / macro parsing — delegated to `Scripts.retrieval.macro_parser`.
 #
@@ -128,6 +181,54 @@ from Scripts.retrieval.macro_parser import (  # noqa: E402 — kept near usage
     build_macro_silver_patch as _build_macro_silver_patch,
     parse_macro_snapshot as _parse_macro_snapshot,
 )
+
+
+def _merge_citation_contract(
+    base: Optional[Dict[str, Any]],
+    extra: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    merged = dict(base or {})
+    for metric_key, entry in (extra or {}).items():
+        merged[str(metric_key)] = dict(entry or {})
+    return merged
+
+
+def _deprecated_anchor_map_from_contract(
+    citation_contract: Optional[Dict[str, Any]],
+) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for metric_key, entry in (citation_contract or {}).items():
+        preferred = (entry or {}).get("preferred_anchor")
+        if preferred:
+            out[str(metric_key)] = str(preferred)
+    return out
+
+
+def _extend_silver_context_contract(
+    sql_tool: SilverSQLTool,
+    silver_ctx: Dict[str, Any],
+    *,
+    values: Dict[str, Any],
+    lineage_anchors: List[str],
+    observed_at: Optional[str],
+    source_channel: str,
+    explicit_contract: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Extend Silver context with canonical citation metadata for new values."""
+    contract = explicit_contract or sql_tool._build_citation_contract(
+        values,
+        lineage_anchors=lineage_anchors,
+        observed_at=observed_at,
+        source_channel=source_channel,
+    )
+    silver_ctx["citation_contract"] = _merge_citation_contract(
+        silver_ctx.get("citation_contract"),
+        contract,
+    )
+    silver_ctx["citation_anchor_map"] = {
+        **dict(silver_ctx.get("citation_anchor_map") or {}),
+        **_deprecated_anchor_map_from_contract(contract),
+    }
 
 
 class MasterRetriever:
@@ -172,8 +273,13 @@ class MasterRetriever:
             )
 
         # --- 3. Runtime knobs (env-tunable without code change) ---
-        self.gold_timeout = float(os.getenv("GOLD_TIMEOUT", 10.0))
+        self.gold_timeout = float(os.getenv("GOLD_TIMEOUT", 15.0))
         self.silver_timeout = float(os.getenv("SILVER_TIMEOUT", 10.0))
+
+        # --- 4. Per-process query-vector cache (FIFO, process-scoped) ---
+        # Keyed on sha256(dense_text + "\x00" + sparse_text) so identical
+        # semantic queries within a Streamlit session skip re-embedding.
+        self._embedding_cache: Dict[str, Any] = {}
 
         logger.info(
             f"🏛️ MasterRetriever ready | Gold_TO: {self.gold_timeout}s | "
@@ -289,24 +395,32 @@ class MasterRetriever:
                 ordered.append(item)
         return ordered
 
-    @staticmethod
+    @classmethod
     def _strict_source_hits(
+        cls,
         *,
+        metadata: MetadataExtraction | None,
         strict_sources: List[str],
         silver_context: Dict[str, Any],
         gold_context: List[Any],
+        supplemental_news_context: Optional[List[Any]] = None,
+        sec_forms_retrieved: Optional[List[str]] = None,
     ) -> List[str]:
         values = dict((silver_context or {}).get("values") or {})
         gold_sources = {
-            str(getattr(chunk, "source_type", None) or (chunk.get("source_type", "") if isinstance(chunk, dict) else "")).lower()
+            cls._chunk_source_type(chunk)
             for chunk in gold_context or []
+        }
+        supplemental_news_sources = {
+            cls._chunk_source_type(chunk)
+            for chunk in supplemental_news_context or []
         }
         hits: List[str] = []
         if "options" in strict_sources and values:
             option_keys = (
-                "latest_atm_iv", "pcr_volume", "pcr_open_interest",
-                "SPY_daily_option_volume", "AAPL_daily_option_volume", "QQQ_daily_option_volume",
-                "GLD_daily_option_volume", "SLV_daily_option_volume",
+                "latest_atm_iv", "latest_iv_skew", "pcr_volume", "pcr_open_interest",
+                "SPY_executable_option_volume", "AAPL_executable_option_volume", "QQQ_executable_option_volume",
+                "GLD_executable_option_volume", "SLV_executable_option_volume",
             )
             if any(key in values for key in option_keys):
                 hits.append("options")
@@ -316,61 +430,811 @@ class MasterRetriever:
                 hits.append("macro_history")
         if "gpr" in strict_sources and (("gpr" in gold_sources) or ("gpr_index_level" in values)):
             hits.append("gpr")
-        if "sec" in strict_sources and "sec" in gold_sources:
+        resolved_sec_forms = list(sec_forms_retrieved or cls._sec_forms_retrieved(metadata, gold_context))
+        if "sec" in strict_sources and (resolved_sec_forms or "sec" in gold_sources):
             hits.append("sec")
-        if "news" in strict_sources and "news" in gold_sources:
+        if "news" in strict_sources and ("news" in gold_sources or "news" in supplemental_news_sources):
             hits.append("news")
         return hits
 
     @staticmethod
     def _soft_context_sources(query_family: str) -> List[str]:
-        if query_family in {"cross_asset_regime", "geopolitical_commodity"}:
+        family = canonical_query_family(query_family)
+        if family in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
             return ["news"]
         return []
 
     @staticmethod
-    def _query_slots(query_family: str) -> Dict[str, str]:
-        if query_family == "insider_flow_driven":
-            return dict(INSIDER_FLOW_QUERY_SLOTS)
+    def _append_unique(target: List[str], value: str) -> None:
+        item = str(value or "").strip().lower()
+        if item and item not in target:
+            target.append(item)
+
+    @staticmethod
+    def _options_native_query_slots(query_slots: Dict[str, str]) -> bool:
+        slot_keys = {str(slot).strip() for slot in (query_slots or {}).keys() if str(slot).strip()}
+        if not slot_keys:
+            return False
+        native_slots = {
+            "pcr_signal",
+            "iv_skew_signal",
+            "atm_iv_signal",
+            "liquidity_signal",
+            "iv_or_skew_signal",
+            "options_liquidity_posture",
+            "options_vol_signal",
+            "equity_vol_signal",
+        }
+        return slot_keys.issubset(native_slots)
+
+    @staticmethod
+    def _canonical_news_topics(metadata: MetadataExtraction | None) -> List[str]:
+        topics: List[str] = []
+        for raw in list(getattr(metadata, "canonical_news_topics", None) or []):
+            topic = normalize_news_topic(str(raw or ""))
+            if topic and topic in NEWS_TOPICS and topic not in topics:
+                topics.append(topic)
+        return topics
+
+    @staticmethod
+    def _primary_news_topic(metadata: MetadataExtraction | None) -> str:
+        topic = normalize_news_topic(str(getattr(metadata, "primary_news_topic", "") or ""))
+        if topic in NEWS_TOPICS:
+            return topic
+        topics = MasterRetriever._canonical_news_topics(metadata)
+        return topics[0] if topics else ""
+
+    @staticmethod
+    def _expanded_news_topics(metadata: MetadataExtraction | None) -> List[str]:
+        topics: List[str] = []
+        for raw in list(getattr(metadata, "expanded_news_topics", None) or []):
+            topic = normalize_news_topic(str(raw or ""))
+            if topic and topic in NEWS_TOPICS and topic not in topics:
+                topics.append(topic)
+        return topics
+
+    @classmethod
+    def _resolved_primary_theme(cls, metadata: MetadataExtraction | None) -> str:
+        metrics = {metric.lower() for metric in cls._metric_values(metadata)}
+        source_types = set(cls._metadata_source_values(metadata))
+        topics = set(cls._canonical_news_topics(metadata))
+        signals = {
+            str(signal or "").strip().lower()
+            for signal in (getattr(metadata, "signals", None) or [])
+            if str(signal or "").strip()
+        }
+        explicit_gpr_intent = (
+            "gpr index" in metrics
+            or "gpr context" in signals
+        )
+        explicit_macro_news_narrative = (
+            "news" in source_types
+            and "macro_history" in source_types
+            and "gpr" not in source_types
+            and "macro regime narrative" in signals
+            and "news narrative" in signals
+        )
+        if ("options" in source_types or any(is_options_native_metric(metric) for metric in metrics)) and not explicit_gpr_intent:
+            return "options"
+        candidate = str(getattr(metadata, "primary_theme", "") or "").strip().lower()
+        if explicit_macro_news_narrative:
+            return "cross_asset"
+        if candidate in {"insider", "geopolitics", "cross_asset", "options"}:
+            return candidate
+        if "sec" in source_types:
+            return "insider"
+        if explicit_gpr_intent or "macro_geopolitics_risk" in topics:
+            return "geopolitics"
+        if "macro_history" in source_types:
+            return "cross_asset"
+        return "options"
+
+    @classmethod
+    def _resolved_primary_surface(cls, metadata: MetadataExtraction | None) -> str:
+        source_types = set(cls._metadata_source_values(metadata))
+        metrics = cls._metric_values(metadata)
+        if "options" in source_types or any(is_options_native_metric(metric) for metric in metrics):
+            return "options_surface"
+        candidate = str(getattr(metadata, "primary_surface", "") or "").strip().lower()
+        if candidate in {"options_surface", "macro_news_surface"}:
+            return candidate
+        return "macro_news_surface"
+
+    @classmethod
+    def _resolved_query_family(cls, metadata: MetadataExtraction | None) -> str:
+        theme = cls._resolved_primary_theme(metadata)
+        surface = cls._resolved_primary_surface(metadata)
+        if theme == "insider":
+            return "insider_flow_driven"
+        if theme == "geopolitics":
+            return "geopolitical_options_read" if surface == "options_surface" else "geopolitical_macro_read"
+        if theme == "cross_asset":
+            return "cross_asset_regime"
+        return "options_microstructure"
+
+    @staticmethod
+    def _resolved_asset_scope(metadata: MetadataExtraction | None) -> str:
+        candidate = str(getattr(metadata, "asset_scope", "") or "").strip().lower()
+        if candidate in {"single_name", "benchmark", "basket"}:
+            return candidate
+        comparison_targets = [str(t).strip() for t in (getattr(metadata, "comparison_targets", None) or []) if str(t).strip()]
+        tickers = [str(t).strip() for t in (getattr(metadata, "tickers", None) or []) if str(t).strip()]
+        if comparison_targets:
+            return "benchmark"
+        if len(tickers) == 1:
+            return "single_name"
+        if len(tickers) > 1:
+            return "basket"
+        return "unspecified"
+
+    @staticmethod
+    def _resolved_read_profile(metadata: MetadataExtraction | None) -> str:
+        metrics = {metric.lower() for metric in MasterRetriever._metric_values(metadata)}
+        posture_metrics = {
+            "put/call ratio",
+            "options liquidity",
+            "open interest",
+            "options volume",
+            "iv skew",
+            "implied volatility",
+            "implied volatility (iv)",
+        }
+        posture_metric_hits = {metric for metric in metrics if metric in posture_metrics}
+
+        def _structural_options_profile() -> str:
+            if MasterRetriever._resolved_primary_theme(metadata) == "insider":
+                return "event_risk"
+            if MasterRetriever._resolved_primary_surface(metadata) != "options_surface":
+                return "board_state"
+            if len(posture_metric_hits) >= 2:
+                return "posture_read"
+            if any(metric in posture_metric_hits for metric in {"put/call ratio", "options liquidity"}):
+                return "posture_read"
+            return "board_state"
+
+        candidate = str(getattr(metadata, "read_profile", "") or "").strip().lower()
+        if candidate in {"posture_read", "event_risk"}:
+            return candidate
+        if candidate == "structure_request":
+            return _structural_options_profile()
+        return _structural_options_profile()
+
+    @classmethod
+    def _analysis_surfaces(cls, metadata: MetadataExtraction | None) -> List[str]:
+        requested = [
+            str(surface or "").strip().lower()
+            for surface in (getattr(metadata, "analysis_surfaces", None) or [])
+            if str(surface or "").strip()
+        ]
+        valid = {"insider_signal", "options_surface", "macro_context", "geopolitical_context", "benchmark_context"}
+        source_types = set(cls._metadata_source_values(metadata))
+        metrics = {metric.lower() for metric in cls._metric_values(metadata)}
+        signals = {
+            str(signal or "").strip().lower()
+            for signal in (getattr(metadata, "signals", None) or [])
+            if str(signal or "").strip()
+        }
+        explicit_gpr_intent = (
+            "gpr" in source_types
+            or "gpr index" in metrics
+            or "gpr context" in signals
+        )
+        surfaces: List[str] = [
+            surface for surface in requested
+            if surface in valid and (surface != "geopolitical_context" or explicit_gpr_intent or cls._resolved_primary_theme(metadata) == "geopolitics")
+        ]
+        theme = cls._resolved_primary_theme(metadata)
+        surface = cls._resolved_primary_surface(metadata)
+        comparison_targets = [
+            str(ticker).upper().strip()
+            for ticker in (getattr(metadata, "comparison_targets", None) or [])
+            if str(ticker).strip()
+        ]
+        if theme == "insider" and "insider_signal" not in surfaces:
+            surfaces.append("insider_signal")
+        if surface == "options_surface" and "options_surface" not in surfaces:
+            surfaces.append("options_surface")
+        if theme == "cross_asset" and "macro_context" not in surfaces:
+            surfaces.append("macro_context")
+        if theme == "geopolitics" and "geopolitical_context" not in surfaces:
+            surfaces.append("geopolitical_context")
+        if comparison_targets and "benchmark_context" not in surfaces:
+            surfaces.append("benchmark_context")
+        return surfaces
+
+    @classmethod
+    def _comparison_targets(cls, metadata: MetadataExtraction | None) -> List[str]:
+        primary_ticker = str(((getattr(metadata, "tickers", None) or []) or [""])[0]).upper().strip() if (getattr(metadata, "tickers", None) or []) else ""
+        out: List[str] = []
+        for raw in list(getattr(metadata, "comparison_targets", None) or []):
+            ticker = str(raw or "").upper().strip()
+            if ticker and ticker != primary_ticker and ticker not in out:
+                out.append(ticker)
+        return out
+
+    @staticmethod
+    def _requested_sec_forms(metadata: MetadataExtraction | None) -> List[str]:
+        forms: List[str] = []
+        for raw in list(getattr(metadata, "requested_sec_forms", None) or []):
+            form = str(getattr(raw, "value", raw) or "").strip().upper()
+            if form in {"8-K", "4"} and form not in forms:
+                forms.append(form)
+        if forms:
+            return forms
+        form_type = str(getattr(metadata, "form_type", "") or "").strip().upper()
+        if form_type in {"8-K", "4"}:
+            return [form_type]
+        return []
+
+    @staticmethod
+    def _chunk_source_type(chunk: Any) -> str:
+        raw = getattr(chunk, "source_type", None)
+        if raw is None and isinstance(chunk, dict):
+            raw = chunk.get("source_type", "")
+        return str(getattr(raw, "value", raw) or "").strip().lower()
+
+    @staticmethod
+    def _chunk_metadata(chunk: Any) -> Dict[str, Any]:
+        if isinstance(chunk, dict):
+            md = chunk.get("metadata")
+            return dict(md or {})
+        return dict(getattr(chunk, "metadata", None) or {})
+
+    @classmethod
+    def _chunk_form_type(cls, chunk: Any) -> str:
+        md = cls._chunk_metadata(chunk)
+        raw = md.get("form_type", "")
+        return str(getattr(raw, "value", raw) or "").strip().upper()
+
+    @classmethod
+    def _sec_forms_retrieved(
+        cls,
+        metadata: MetadataExtraction | None,
+        gold_context: List[Any],
+    ) -> List[str]:
+        requested = cls._requested_sec_forms(metadata)
+        seen: List[str] = []
+        for chunk in gold_context or []:
+            if cls._chunk_source_type(chunk) != "sec":
+                continue
+            form = cls._chunk_form_type(chunk)
+            if not form:
+                continue
+            if requested and form not in requested:
+                continue
+            if form not in seen:
+                seen.append(form)
+        return seen
+
+    @staticmethod
+    def _sec_payload_context_by_form(sec_retrieval_contract: Optional[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+        contract = sec_retrieval_contract if isinstance(sec_retrieval_contract, dict) else {}
+        raw = contract.get("sec_payload_context_by_form") or {}
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for form, chunks in dict(raw).items():
+            form_key = str(form or "").strip().upper()
+            if form_key in {"4", "8-K"}:
+                out[form_key] = list(chunks or [])
+        return out
+
+    @classmethod
+    def _sec_payload_chunks(
+        cls,
+        metadata: MetadataExtraction | None,
+        sec_retrieval_contract: Optional[Dict[str, Any]],
+        gold_context: List[Any],
+    ) -> List[Any]:
+        payload_map = cls._sec_payload_context_by_form(sec_retrieval_contract)
+        if not payload_map:
+            return [chunk for chunk in (gold_context or []) if cls._chunk_source_type(chunk) == "sec"]
+        ordered_forms = cls._requested_sec_forms(metadata) or list(payload_map.keys())
+        chunks: List[Any] = []
+        for form in ordered_forms:
+            chunks.extend(list(payload_map.get(form, []) or []))
+        return chunks
+
+    @classmethod
+    def _sec_forms_retrieved_from_contract(
+        cls,
+        metadata: MetadataExtraction | None,
+        sec_retrieval_contract: Optional[Dict[str, Any]],
+        gold_context: List[Any],
+    ) -> List[str]:
+        payload_map = cls._sec_payload_context_by_form(sec_retrieval_contract)
+        if payload_map:
+            requested = cls._requested_sec_forms(metadata)
+            forms = [form for form in requested if payload_map.get(form)]
+            return forms or [form for form, chunks in payload_map.items() if chunks]
+        return cls._sec_forms_retrieved(metadata, gold_context)
+
+    @classmethod
+    def _sec_slot_hits(
+        cls,
+        metadata: MetadataExtraction | None,
+        gold_context: List[Any],
+    ) -> List[str]:
+        forms = set(cls._sec_forms_retrieved(metadata, gold_context))
+        hits: List[str] = []
+        if "8-K" in forms:
+            hits.append("sec_event_signal")
+        if "4" in forms:
+            hits.append("sec_insider_signal")
+        return hits
+
+    @classmethod
+    def _sec_slot_missing(
+        cls,
+        metadata: MetadataExtraction | None,
+        gold_context: List[Any],
+    ) -> List[str]:
+        requested_slots = cls._active_sec_slots(metadata)
+        slot_hits = set(cls._sec_slot_hits(metadata, gold_context))
+        return [slot for slot in requested_slots if slot not in slot_hits]
+
+    @staticmethod
+    @lru_cache(maxsize=256)
+    def _load_bronze_sec_rows(ticker: str) -> List[Dict[str, Any]]:
+        safe_ticker = str(ticker or "").upper().strip()
+        if not safe_ticker or not _BRONZE_SEC_ROOT.exists():
+            return []
+        rows: List[Dict[str, Any]] = []
+        for path in sorted(_BRONZE_SEC_ROOT.glob(f"*/{safe_ticker}.jsonl")):
+            try:
+                with path.open("r", encoding="utf-8") as handle:
+                    for line in handle:
+                        line_s = line.strip()
+                        if not line_s:
+                            continue
+                        try:
+                            rows.append(json.loads(line_s))
+                        except json.JSONDecodeError:
+                            continue
+            except OSError:
+                continue
+        return rows
+
+    @classmethod
+    def _bronze_sec_record(cls, ticker: str, accession_no: str) -> Dict[str, Any]:
+        safe_accession = str(accession_no or "").strip()
+        if not safe_accession:
+            return {}
+        for row in cls._load_bronze_sec_rows(ticker):
+            metadata = dict(row.get("metadata") or {})
+            if str(metadata.get("accession_no") or "").strip() == safe_accession:
+                return row
         return {}
+
+    def _sec_index_presence_mismatch(
+        self,
+        metadata: MetadataExtraction | None,
+        time_range: Dict[str, Any],
+        gold_context: List[Any],
+    ) -> bool:
+        if gold_context or "sec" not in self._metadata_source_values(metadata):
+            return False
+        ticker_set = {
+            str(ticker or "").upper().strip()
+            for ticker in (getattr(metadata, "tickers", None) or [])
+            if str(ticker or "").strip()
+        }
+        requested_forms = set(self._requested_sec_forms(metadata))
+        if not ticker_set or not requested_forms:
+            return False
+        start_date = str((time_range or {}).get("start_date") or "").strip()
+        end_date = str((time_range or {}).get("end_date") or "").strip()
+        if not start_date or not end_date:
+            return False
+        sec_root = Path(__file__).resolve().parents[2] / "Data" / "3_Gold_Semantic" / "SEC_Insider_Trades"
+        if not sec_root.exists():
+            return False
+        candidate_files = sorted(sec_root.glob("*/qdrant_ready.jsonl"), reverse=True)
+        for candidate in candidate_files:
+            try:
+                with candidate.open("r", encoding="utf-8") as handle:
+                    for raw_line in handle:
+                        raw_line = raw_line.strip()
+                        if not raw_line:
+                            continue
+                        row = json.loads(raw_line)
+                        row_md = dict(row.get("metadata") or {})
+                        ticker = str(row_md.get("ticker", "") or "").upper().strip()
+                        form = str(row_md.get("form_type", "") or "").strip().upper()
+                        filed_at = str(row_md.get("filed_at", "") or "").strip()[:10]
+                        transaction_date = str(row_md.get("transaction_date", "") or "").strip()[:10]
+                        row_date = filed_at or transaction_date
+                        if ticker not in ticker_set or form not in requested_forms or not row_date:
+                            continue
+                        if start_date <= row_date <= end_date:
+                            return True
+            except Exception:
+                continue
+        return False
+
+    @staticmethod
+    def _retrieved_news_count(gold_context: List[Any]) -> int:
+        count = 0
+        for chunk in gold_context or []:
+            source_type = getattr(getattr(chunk, "source_type", None), "value", getattr(chunk, "source_type", None))
+            if str(source_type or "").strip().lower() == "news":
+                count += 1
+        return count
+
+    @staticmethod
+    def _emit_retrieval_timeout_audit(
+        *,
+        query: str,
+        transform_result: FullTransformationResult,
+        fallback_tier: str,
+        latency: float,
+        stage: str,
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+    ) -> None:
+=======
+        compensation_targets: Optional[List[str]] = None,
+    ) -> None:
+=======
+        compensation_targets: Optional[List[str]] = None,
+    ) -> None:
+>>>>>>> Stashed changes
+        metadata = getattr(transform_result, "metadata", None)
+        requested_gold_sources = {
+            str(getattr(s, "value", s) or "").strip().lower()
+            for s in (getattr(metadata, "source_types", None) or [])
+        }
+        gold_source_types = sorted(requested_gold_sources & {"news", "sec", "gpr"})
+        audit_extra: Dict[str, Any] = {
+            "gold_source_types": gold_source_types,
+            "metadata_tickers": [
+                str(ticker).upper().strip()
+                for ticker in (getattr(metadata, "tickers", None) or [])
+                if str(ticker).strip()
+            ],
+            "compensation_targets": list(compensation_targets or []),
+        }
+        if gold_source_types == ["news"]:
+            profile = getattr(metadata, "news_semantic_profile", {}) or {}
+            dense_query = dense_news_semantic_query(
+                query,
+                profile,
+                semantic_context=getattr(transform_result.hyde, "hyde_paragraph", ""),
+            )
+            sparse_query = sparse_news_keyword_query(
+                profile,
+                fallback_query=getattr(transform_result.hyde, "rerank_query", query),
+            )
+            audit_extra.update({
+                "dense_query_used": dense_query,
+                "dense_terms": dense_news_terms(profile),
+                "dense_terms_count": len(dense_news_terms(profile)),
+                "sparse_query_used": sparse_query,
+                "sparse_terms": str(sparse_query or "").split(),
+                "sparse_terms_count": len(str(sparse_query or "").split()),
+            })
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
+        payload = {
+            "timestamp": datetime.now().isoformat(),
+            "original_query": query,
+            "rerank_query_used": str(getattr(transform_result.hyde, "rerank_query", "") or query),
+            "filter_applied": None,
+            "fallback_triggered": False,
+            "fallback_tier": fallback_tier,
+            "results_count": 0,
+            "top_k_scores": [],
+            "latency_sec": round(float(latency), 3),
+            "status": "TIMEOUT",
+            "error_msg": f"{stage} timeout before retriever audit emission",
+            "retrieval_stage": stage,
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+            **audit_extra,
+>>>>>>> Stashed changes
+=======
+            **audit_extra,
+>>>>>>> Stashed changes
+        }
+        try:
+            append_audit_jsonl(
+                module="retrieval",
+                payload=payload,
+                filename="retriever_audit_trail.jsonl",
+                scoped_by_run=False,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to write retrieval timeout audit ({stage}): {e}")
+
+    @staticmethod
+    def _has_impact_basket_context(truth_values: Dict[str, Any]) -> bool:
+        basket_keys = (
+            "GLD_value",
+            "GLD_change_pct",
+            "SLV_value",
+            "SLV_change_pct",
+            "VIX_value",
+            "DXY_value",
+            "GSPC_value",
+            "GSPC_change_pct",
+        )
+        return any(truth_values.get(key) is not None for key in basket_keys)
+
+    @classmethod
+    def _active_sec_slots(cls, metadata: MetadataExtraction | None) -> List[str]:
+        requested_forms = cls._requested_sec_forms(metadata)
+        if requested_forms:
+            slots: List[str] = []
+            if "8-K" in requested_forms:
+                slots.append("sec_event_signal")
+            if "4" in requested_forms:
+                slots.append("sec_insider_signal")
+            return slots
+        return [cls._active_sec_slot(metadata)]
+
+    @staticmethod
+    def _active_sec_slot(metadata: MetadataExtraction | None) -> str:
+        form_type = str(getattr(metadata, "form_type", "") or "").strip().upper()
+        event_keyword = str(getattr(metadata, "event_keyword", "") or "").strip().lower()
+        action_direction = str(getattr(metadata, "action_direction", "") or "").strip().upper()
+        if form_type == "8-K":
+            return "sec_event_signal"
+        if form_type == "4":
+            return "sec_insider_signal"
+        if event_keyword in {"event_risk", "event_driven", "event"}:
+            return "sec_event_signal"
+        if action_direction and action_direction != "NONE":
+            return "sec_insider_signal"
+        return "sec_insider_signal"
+
+    def _compensation_targets(self, metadata: MetadataExtraction | None, query_family: str) -> List[str]:
+        family = canonical_query_family(query_family)
+        covered_option_tickers = set(getattr(self.transformer, "covered_option_tickers", []) or [])
+        allowed_tickers = set(getattr(self.transformer, "allowed_tickers", []) or [])
+        primary_tickers = [
+            str(ticker).upper().strip()
+            for ticker in (getattr(metadata, "tickers", None) or [])
+            if str(ticker).strip()
+        ]
+        targets: List[str] = []
+        for topic in self._canonical_news_topics(metadata):
+            basket = list(TOPIC_IMPACT_BASKETS.get(topic, [])) or list(TOPIC_TO_TICKERS.get(topic, []))
+            ordered_candidates: List[str] = []
+            for ticker in primary_tickers:
+                if ticker in basket and ticker not in ordered_candidates:
+                    ordered_candidates.append(ticker)
+            for ticker in basket:
+                ticker_s = str(ticker).upper().strip()
+                if ticker_s and ticker_s not in ordered_candidates:
+                    ordered_candidates.append(ticker_s)
+            for ticker_s in ordered_candidates:
+                if not ticker_s or ticker_s in targets:
+                    continue
+                if family == "geopolitical_options_read":
+                    if ticker_s in covered_option_tickers:
+                        targets.append(ticker_s)
+                elif ticker_s in allowed_tickers:
+                    targets.append(ticker_s)
+        return targets
+
+    @staticmethod
+    def _requires_explicit_gold_context(user_query: str) -> bool:
+        query_l = (user_query or "").lower()
+        return any(phrase in query_l for phrase in _EXPLICIT_GOLD_CONTEXT_PHRASES)
+
+    @classmethod
+    def _normalize_source_requirements(
+        cls,
+        *,
+        route: str,
+        query_family: str,
+        metadata: MetadataExtraction | None,
+        user_query: str,
+        query_slots: Dict[str, str],
+        market_analysis_only: bool,
+    ) -> tuple[List[str], List[str], str]:
+        family = canonical_query_family(query_family)
+        metadata_sources = cls._metadata_source_values(metadata)
+        metadata_source_set = set(metadata_sources)
+        metrics_l = {metric.lower() for metric in cls._metric_values(metadata)}
+        canonical_topics = set(cls._canonical_news_topics(metadata))
+        strict_sources: List[str] = []
+        soft_sources: List[str] = list(cls._soft_context_sources(family))
+        options_native_slots = cls._options_native_query_slots(query_slots)
+        requires_explicit_gold_context = cls._requires_explicit_gold_context(user_query)
+        silver_primary_route = route == "sql_only"
+        primary_surface = cls._resolved_primary_surface(metadata)
+
+        if family in {"options_microstructure", "geopolitical_options_read"}:
+            cls._append_unique(strict_sources, "options")
+        elif family == "insider_flow_driven" and primary_surface == "options_surface":
+            cls._append_unique(strict_sources, "options")
+
+        if family in {"geopolitical_macro_read", "geopolitical_options_read"}:
+            if (
+                "gpr" in metadata_source_set
+                or "gpr index" in metrics_l
+                or "macro_geopolitics_risk" in canonical_topics
+            ):
+                cls._append_unique(strict_sources, "gpr")
+            if "news" in metadata_source_set:
+                if family == "geopolitical_macro_read":
+                    cls._append_unique(soft_sources, "news")
+                else:
+                    cls._append_unique(strict_sources, "news")
+            if family == "geopolitical_macro_read" and (
+                "macro_history" in metadata_source_set
+                or bool(getattr(metadata, "tickers", None))
+                or "macro_geopolitics_risk" in canonical_topics
+            ):
+                cls._append_unique(strict_sources, "macro_history")
+
+        if family == "cross_asset_regime" and "macro_history" in metadata_source_set:
+            cls._append_unique(strict_sources, "macro_history")
+        if family == "cross_asset_regime" and "news" in metadata_source_set:
+            cls._append_unique(soft_sources, "news")
+
+        if family == "options_microstructure":
+            if options_native_slots:
+                cls._append_unique(strict_sources, "options")
+            elif "options" in metadata_sources:
+                cls._append_unique(strict_sources, "options")
+
+            if options_native_slots and market_analysis_only and not requires_explicit_gold_context:
+                if "news" in metadata_sources:
+                    cls._append_unique(soft_sources, "news")
+                coverage_basis = "silver_only" if silver_primary_route else "silver_primary_with_soft_gold"
+                return strict_sources or ["options"], soft_sources, coverage_basis
+
+            for source in metadata_sources:
+                if source == "options":
+                    cls._append_unique(strict_sources, source)
+                    continue
+                if source == "news":
+                    if requires_explicit_gold_context or route == "vector_only":
+                        cls._append_unique(strict_sources, source)
+                    else:
+                        cls._append_unique(soft_sources, source)
+                    continue
+                if route == "vector_only" and requires_explicit_gold_context:
+                    cls._append_unique(strict_sources, source)
+                else:
+                    cls._append_unique(soft_sources, source)
+
+            if any(src in strict_sources for src in ("news", "gpr", "sec")):
+                coverage_basis = "hybrid_required"
+            else:
+                coverage_basis = "silver_only" if silver_primary_route else "silver_primary_with_soft_gold"
+            return strict_sources or ["options"], soft_sources, coverage_basis
+
+        for source in metadata_sources:
+            if source in strict_sources:
+                continue
+            cls._append_unique(strict_sources, source)
+        if any(src in strict_sources for src in ("news", "gpr", "sec")) or route == "vector_only":
+            coverage_basis = "hybrid_required"
+        elif route == "sql_only":
+            coverage_basis = "silver_only"
+        else:
+            coverage_basis = "silver_primary_with_soft_gold"
+        return strict_sources, soft_sources, coverage_basis
+
+    @staticmethod
+    def _query_slots(query_family: str) -> Dict[str, str]:
+        return query_slots_for_family(query_family)
+
+    @staticmethod
+    def _metric_values(metadata: MetadataExtraction | None) -> List[str]:
+        return [str(m or "") for m in (getattr(metadata, "metrics", None) or []) if str(m or "").strip()]
+
+    @classmethod
+    def _dynamic_query_slots(
+        cls,
+        query_family: str,
+        metadata: MetadataExtraction,
+        user_query: str,
+    ) -> Dict[str, str]:
+        family = canonical_query_family(query_family)
+        base_slots = cls._query_slots(family)
+        if family == "insider_flow_driven":
+            dynamic_slots: Dict[str, str] = {}
+            for sec_slot in cls._active_sec_slots(metadata):
+                if sec_slot in base_slots:
+                    dynamic_slots[sec_slot] = base_slots[sec_slot]
+            if cls._resolved_primary_surface(metadata) == "options_surface" and "options_liquidity_posture" in base_slots:
+                dynamic_slots["options_liquidity_posture"] = base_slots["options_liquidity_posture"]
+            return dynamic_slots or {"sec_insider_signal": base_slots.get("sec_insider_signal", "Form-4 insider selling / buying / vesting signal")}
+        if family != "options_microstructure":
+            return base_slots
+
+        metrics_l = {metric.lower() for metric in cls._metric_values(metadata)}
+        read_profile = cls._resolved_read_profile(metadata)
+
+        wants_pcr = "put/call ratio" in metrics_l
+        wants_skew = "iv skew" in metrics_l
+        wants_iv = any(metric in metrics_l for metric in {"implied volatility", "implied volatility (iv)"})
+        wants_liquidity = any(metric in metrics_l for metric in {"options liquidity", "open interest", "options volume", "options pricing / spread"})
+
+        dynamic_slots: Dict[str, str] = {}
+        if wants_pcr:
+            dynamic_slots["pcr_signal"] = base_slots.get("pcr_signal", "put/call ratio signal")
+        if wants_skew:
+            dynamic_slots["iv_skew_signal"] = "IV skew signal"
+        elif wants_iv:
+            dynamic_slots["atm_iv_signal"] = base_slots.get("atm_iv_signal", "at-the-money implied volatility signal")
+        elif read_profile == "board_state":
+            dynamic_slots["iv_or_skew_signal"] = base_slots.get("iv_or_skew_signal", "IV / skew signal")
+        if wants_liquidity or read_profile == "posture_read":
+            dynamic_slots["liquidity_signal"] = base_slots.get("liquidity_signal", "options liquidity posture")
+
+        return dynamic_slots or base_slots
+
+    @classmethod
+    def _detect_market_analysis_only(
+        cls,
+        *,
+        metadata: MetadataExtraction | None,
+        query_family: str,
+    ) -> bool:
+        read_profile = cls._resolved_read_profile(metadata)
+        if read_profile == "posture_read":
+            return True
+        return canonical_query_family(query_family) in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}
 
     @staticmethod
     def _infer_query_family(metadata: MetadataExtraction, user_query: str) -> str:
-        metrics = [str(m).lower() for m in (getattr(metadata, "metrics", None) or [])]
-        source_types = {str(getattr(s, "value", s)).lower() for s in (getattr(metadata, "source_types", None) or [])}
-        event_keyword = str(getattr(metadata, "event_keyword", "") or "").lower()
-        query_l = (user_query or "").lower()
-
-        if "sec" in source_types:
-            return "insider_flow_driven"
-        if (
-            "gpr" in source_types
-            or "gpr index" in metrics
-            or "geopolitical" in event_keyword
-        ) and any(token in query_l for token in ("gld", "slv", "gold", "silver", "precious")):
-            return "geopolitical_commodity"
-        if (
-            "macro_history" in source_types
-            or any(term in metrics for term in ("macro trend", "price change (%)"))
-        ) and any(token in query_l for token in ("vix", "dxy", "qqq", "spy", "hedge")):
-            return "cross_asset_regime"
-        return "options_microstructure"
+        return MasterRetriever._resolved_query_family(metadata)
 
     def _build_runtime_contracts(
         self,
         *,
         user_query: str,
+        route: str,
         metadata: MetadataExtraction,
         silver_context: Dict[str, Any],
         silver_context_frozen: Optional[Dict[str, Any]],
         gold_context: List[Any],
+        supplemental_news_context: List[Any],
+        sec_retrieval_contract: Optional[Dict[str, Any]],
         time_range: Dict[str, Any],
         is_fallback: bool,
+        in_scope_tickers: Optional[List[str]] = None,
+        out_of_scope_tickers: Optional[List[str]] = None,
+        refusal_reason: str = "",
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+        compensation_values: Optional[Dict[str, Any]] = None,
+>>>>>>> Stashed changes
+=======
+        compensation_values: Optional[Dict[str, Any]] = None,
+>>>>>>> Stashed changes
     ) -> tuple[Dict[str, Any], Dict[str, Any]]:
-        strict_sources = self._metadata_source_values(metadata)
-        query_family = self._infer_query_family(metadata, user_query)
-        soft_context_sources = self._soft_context_sources(query_family)
-        query_slots = self._query_slots(query_family)
+        query_family = canonical_query_family(self._infer_query_family(metadata, user_query))
+        primary_theme = self._resolved_primary_theme(metadata)
+        primary_surface = self._resolved_primary_surface(metadata)
+        asset_scope = self._resolved_asset_scope(metadata)
+        read_profile = self._resolved_read_profile(metadata)
+        canonical_news_topics = self._canonical_news_topics(metadata)
+        primary_news_topic = self._primary_news_topic(metadata)
+        expanded_news_topics = self._expanded_news_topics(metadata)
+        analysis_surfaces = self._analysis_surfaces(metadata)
+        comparison_targets = self._comparison_targets(metadata)
+        compensation_targets = self._compensation_targets(metadata, query_family)
+        query_slots = self._dynamic_query_slots(query_family, metadata, user_query)
+        market_analysis_only = self._detect_market_analysis_only(
+            metadata=metadata,
+            query_family=query_family,
+        )
+        strict_sources, soft_context_sources, coverage_basis = self._normalize_source_requirements(
+            route=route,
+            query_family=query_family,
+            metadata=metadata,
+            user_query=user_query,
+            query_slots=query_slots,
+            market_analysis_only=market_analysis_only,
+        )
         requested_window = str(getattr(getattr(metadata, "time_window", None), "value", getattr(metadata, "time_window", None)) or "past_six_months")
         requested_days = time_window_to_days(requested_window, default=180)
         effective_window = str((time_range or {}).get("time_window_label") or requested_window)
@@ -380,18 +1244,86 @@ class MasterRetriever:
 
         truth_ctx = silver_context_frozen if isinstance(silver_context_frozen, dict) and silver_context_frozen else silver_context
         truth_values = dict((truth_ctx or {}).get("values") or {})
+        sec_payload_context_by_form = self._sec_payload_context_by_form(sec_retrieval_contract)
+        sec_forms_requested = self._requested_sec_forms(metadata)
+        if not sec_payload_context_by_form:
+            sec_payload_context_by_form = {}
+            for chunk in gold_context or []:
+                if self._chunk_source_type(chunk) != "sec":
+                    continue
+                form = self._chunk_form_type(chunk)
+                if form not in {"4", "8-K"}:
+                    continue
+                if sec_forms_requested and form not in sec_forms_requested:
+                    continue
+                sec_payload_context_by_form.setdefault(form, []).append(
+                    chunk if isinstance(chunk, dict) else chunk.model_dump()
+                )
+        sec_analysis_bundle = compose_sec_analysis_bundle(
+            sec_forms_requested=sec_forms_requested,
+            sec_payload_context_by_form=sec_payload_context_by_form,
+            bronze_lookup=self._bronze_sec_record,
+        )
+        sec_existence = sec_analysis_bundle.existence
+        sec_forms_retrieved = list(sec_existence.sec_forms_retrieved or [])
+        sec_slot_hits = list(sec_existence.sec_slot_hits or [])
+        sec_slot_missing = list(sec_existence.sec_slot_missing or [])
+        sec_analysis_features = [
+            *[feature.model_dump() for feature in list(sec_analysis_bundle.form4_features or [])],
+            *[feature.model_dump() for feature in list(sec_analysis_bundle.form8k_features or [])],
+        ]
+        form4_analysis_result = sec_analysis_bundle.form4_analysis_result.model_dump()
+        form8k_analysis_result = sec_analysis_bundle.form8k_analysis_result.model_dump()
+        sec_payload_chunks = self._sec_payload_chunks(metadata, sec_retrieval_contract, gold_context)
+        retrieved_news_count = self._retrieved_news_count(gold_context)
+        supplemental_news_count = self._retrieved_news_count(supplemental_news_context)
+        news_coverage_status = "not_applicable"
+        background_only_read = False
+        supplemental_news_status = "not_applicable"
+        # cross_asset_regime (e.g. "GLD news narrative") requests news as a strict
+        # source alongside macro_history. When Gold retrieval times out or returns
+        # nothing, the finalizer must know news is missing so it can surface the
+        # correct disclosure ("No news retrieved in window") instead of treating
+        # news as not-applicable to this query family.
+        # background_only_read stays geopolitical_macro_read-only: that flag
+        # signals the GPR-structured-background fallback path, which depends on
+        # gpr_index_level presence and is not applicable to cross_asset.
+        if query_family in {"geopolitical_macro_read", "cross_asset_regime"}:
+            news_coverage_status = "fresh_news_found" if retrieved_news_count > 0 else "no_fresh_news_retrieved"
+            background_only_read = (
+                query_family == "geopolitical_macro_read"
+                and retrieved_news_count == 0
+                and truth_values.get("gpr_index_level") is not None
+                and self._has_impact_basket_context(truth_values)
+            )
         strict_sources_hit = self._strict_source_hits(
+            metadata=metadata,
             strict_sources=strict_sources,
             silver_context=truth_ctx or {},
             gold_context=gold_context,
+            supplemental_news_context=supplemental_news_context,
+            sec_forms_retrieved=sec_forms_retrieved,
         )
         gold_sources_hit = {
-            str(getattr(chunk, "source_type", None) or (chunk.get("source_type", "") if isinstance(chunk, dict) else "")).lower()
+            self._chunk_source_type(chunk)
             for chunk in gold_context or []
         }
         soft_sources_hit = [src for src in soft_context_sources if src in gold_sources_hit]
         missing_strict_sources = [src for src in strict_sources if src not in strict_sources_hit]
-        missing_query_slots = missing_slots_for_query_family(query_family, missing_strict_sources)
+        missing_query_slots = missing_slots_for_query_family(query_family, missing_strict_sources, query_slots)
+        if query_family == "geopolitical_macro_read" and background_only_read:
+            missing_strict_sources = [src for src in missing_strict_sources if src != "news"]
+            missing_query_slots = [slot for slot in missing_query_slots if slot != "geopolitical_news_signal"]
+        if query_family == "insider_flow_driven":
+            missing_query_slots = list(dict.fromkeys([
+                *[slot for slot in missing_query_slots if slot not in {"sec_insider_signal", "sec_event_signal"}],
+                *sec_slot_missing,
+            ]))
+        sec_index_presence_mismatch = self._sec_index_presence_mismatch(
+            metadata=metadata,
+            time_range=time_range,
+            gold_context=sec_payload_chunks or gold_context,
+        )
 
         data_capability_profile = build_data_capability_profile(metadata, truth_ctx or {}, gold_context or [], time_range or {})
         if data_capability_profile.get("can_support_concrete_option_structure"):
@@ -417,6 +1349,83 @@ class MasterRetriever:
             if not allowed_tickers or ticker_u in allowed_tickers or ticker_u.startswith("^"):
                 if ticker_u not in supported_tickers:
                     supported_tickers.append(ticker_u)
+        if in_scope_tickers is None:
+            in_scope_tickers = list(supported_tickers)
+        if out_of_scope_tickers is None:
+            out_of_scope_tickers = []
+        scope_status = "out_of_scope" if out_of_scope_tickers else "in_scope"
+        data_backed_families = {
+            "options_microstructure",
+            "cross_asset_regime",
+            "geopolitical_macro_read",
+            "geopolitical_options_read",
+        }
+        is_data_backed_read = route == "sql_only" and query_family in data_backed_families
+        slot_evidence_contracts = build_slot_evidence_contracts(
+            query_family=query_family,
+            query_slots=query_slots,
+            capability_profile=data_capability_profile,
+        )
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+=======
+>>>>>>> Stashed changes
+        # Merge compensation values (IV/skew/liquidity per ticker) into the
+        # silver_values dict so _candidate_keys_for_token can satisfy slots like
+        # iv_skew_signal (needs latest_iv_skew) and liquidity_signal (needs
+        # GLD_liquid_contracts / GLD_avg_spread_pct etc.) via suffix matching.
+        # evidence_contracts.py is unchanged — only the input dict is enriched.
+        merged_silver_values = {**truth_values, **(compensation_values or {})}
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
+        retrieval_slot_support = evaluate_retrieval_slot_support(
+            slot_contracts=slot_evidence_contracts,
+            retrieval_outcome={
+                "missing_query_slots": missing_query_slots,
+                "news_coverage_status": news_coverage_status,
+                "background_only_read": background_only_read,
+                "retrieved_news_count": retrieved_news_count,
+                "supplemental_news_status": supplemental_news_status,
+                "supplemental_news_count": supplemental_news_count,
+            },
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+            silver_values=truth_values,
+=======
+            silver_values=merged_silver_values,
+>>>>>>> Stashed changes
+=======
+            silver_values=merged_silver_values,
+>>>>>>> Stashed changes
+            gold_ctx=gold_context or [],
+        )
+        hard_data_sufficient_for_answer = bool(
+            truth_values
+            and (
+                (
+                    is_data_backed_read
+                    and retrieval_slot_support.get("hard_gate_pass", False)
+                )
+                or (
+                    market_analysis_only
+                    and retrieval_slot_support.get("hard_gate_pass", False)
+                )
+            )
+        )
+        if not (is_data_backed_read or market_analysis_only):
+            hard_data_sufficient_for_answer = bool(
+                truth_values
+                and not missing_strict_sources
+                and not missing_query_slots
+                and retrieval_slot_support.get("hard_gate_pass", False)
+            )
+        primary_ticker = resolve_primary_ticker(
+            metadata=metadata,
+            scope_contract={"primary_ticker": (in_scope_tickers[0] if in_scope_tickers else "")},
+        ) or ""
 
         disclosures: List[str] = []
         if unavailable_metrics:
@@ -434,9 +1443,21 @@ class MasterRetriever:
                 "Missing query slots cannot be answered reliably: "
                 + ", ".join(missing_query_slots)
             )
-        if query_family == "insider_flow_driven":
+        if query_family == "geopolitical_macro_read" and background_only_read:
+            disclosures.append(
+                "No fresh geopolitical news was retrieved in the requested window; treat this answer as a background-only read anchored to GPR and cross-asset impact context."
+            )
+        if sec_index_presence_mismatch:
+            disclosures.append(
+                "Prepared SEC source data appears to contain matching filings for this ticker/window, but the live Gold retrieval did not return them; treat this as a possible index or ingestion mismatch."
+            )
+        if query_family == "insider_flow_driven" and "sec_insider_signal" in query_slots:
             disclosures.append(
                 "SEC action taxonomy is explicit: SELL means insider disposition, BUY means open-market purchase, and ACQUIRE/VEST means vesting-related acquisition rather than open-market buying or selling."
+            )
+        if query_family == "insider_flow_driven" and "sec_event_signal" in query_slots:
+            disclosures.append(
+                "SEC filing subtype is explicit: 8-K event filings are distinct from Form-4 insider transaction disclosures."
             )
         if time_defaulted:
             disclosures.append("The requested query omitted a time phrase, so the effective window used the project default.")
@@ -457,6 +1478,11 @@ class MasterRetriever:
             soft_sources_hit=soft_sources_hit,
             missing_strict_sources=missing_strict_sources,
             missing_query_slots=missing_query_slots,
+            news_coverage_status=news_coverage_status,
+            background_only_read=background_only_read,
+            retrieved_news_count=retrieved_news_count,
+            supplemental_news_status=supplemental_news_status,
+            supplemental_news_count=supplemental_news_count,
         )
         scope_contract = ScopeContract(
             query_family=query_family,
@@ -471,20 +1497,105 @@ class MasterRetriever:
             specificity_ceiling=specificity_ceiling,
             required_disclosures=disclosures,
             query_slots=query_slots,
+            slot_evidence_contracts=slot_evidence_contracts,
             sec_action_taxonomy=dict(SEC_ACTION_TAXONOMY) if query_family == "insider_flow_driven" else {},
+            sec_analysis_contract={
+                "form4_analysis_contract": {
+                    "analysis_fields": [
+                        "action_direction",
+                        "shares",
+                        "price",
+                        "total_value",
+                        "remaining_shares",
+                        "is_cluster_trade",
+                        "is_10b5_1_planned",
+                    ],
+                    "answer_slots": [
+                        "trader_identity_role",
+                        "transaction_type",
+                        "scale_materiality",
+                        "planned_vs_discretionary",
+                        "clustering_coordination",
+                        "residual_holdings_context",
+                        "directional_insider_flow_interpretation",
+                    ],
+                },
+                "form8k_analysis_contract": {
+                    "analysis_fields": [
+                        "tone_score",
+                        "topics",
+                        "entities",
+                        "filed_at",
+                        "content",
+                    ],
+                    "answer_slots": [
+                        "event_category",
+                        "tone_skew",
+                        "event_risk_interpretation",
+                        "repeat_vs_isolated_event_pressure",
+                    ],
+                },
+                "missing_policy": "degradable_disclosure",
+            } if query_family == "insider_flow_driven" else {},
+            primary_ticker=primary_ticker,
+            analysis_mode="data_backed_read" if is_data_backed_read else "default_read",
+            coverage_basis=coverage_basis,
+            requires_catalyst_confirmation=not (is_data_backed_read or market_analysis_only),
+            gold_context_optional=bool(is_data_backed_read or market_analysis_only),
+            hard_data_sufficient_for_answer=hard_data_sufficient_for_answer,
+            market_analysis_only=market_analysis_only,
+            scope_status=scope_status,
+            in_scope_tickers=list(in_scope_tickers),
+            out_of_scope_tickers=list(out_of_scope_tickers),
+            refusal_reason=refusal_reason,
+            primary_theme=primary_theme,
+            primary_surface=primary_surface,
+            canonical_news_topics=canonical_news_topics,
+            primary_news_topic=primary_news_topic,
+            expanded_news_topics=expanded_news_topics,
+            analysis_surfaces=analysis_surfaces,
+            comparison_targets=comparison_targets,
+            compensation_targets=compensation_targets,
+            requested_sec_forms=self._requested_sec_forms(metadata),
+            asset_scope=asset_scope,
+            read_profile=read_profile,
+            news_coverage_status=news_coverage_status,
+            background_only_read=background_only_read,
+            retrieved_news_count=retrieved_news_count,
+            supplemental_news_status=supplemental_news_status,
+            supplemental_news_count=supplemental_news_count,
         )
         retrieval_outcome = RetrievalOutcome(
             strict_sources_hit=strict_sources_hit,
             soft_sources_hit=soft_sources_hit,
             missing_strict_sources=missing_strict_sources,
             missing_query_slots=missing_query_slots,
-            has_gold_evidence=bool(gold_context),
+            sec_forms_requested=sec_forms_requested,
+            sec_forms_retrieved=sec_forms_retrieved,
+            sec_slot_hits=sec_slot_hits,
+            sec_slot_missing=sec_slot_missing,
+            sec_payload_context_by_form=sec_payload_context_by_form,
+            sec_analysis_bundle=sec_analysis_bundle,
+            sec_analysis_features=sec_analysis_features,
+            form4_analysis_result=form4_analysis_result,
+            form8k_analysis_result=form8k_analysis_result,
+            sec_index_presence_mismatch=sec_index_presence_mismatch,
+            news_coverage_status=news_coverage_status,
+            background_only_read=background_only_read,
+            retrieved_news_count=retrieved_news_count,
+            supplemental_news_status=supplemental_news_status,
+            supplemental_news_count=supplemental_news_count,
+            has_gold_evidence=bool(sec_payload_chunks or gold_context),
             has_silver_evidence=bool(truth_values),
             is_fallback=bool(is_fallback),
             time_window_extended=time_extended,
             time_window_defaulted=time_defaulted,
             time_contract=time_contract,
             source_coverage=source_coverage,
+            scope_status=scope_status,
+            in_scope_tickers=list(in_scope_tickers),
+            out_of_scope_tickers=list(out_of_scope_tickers),
+            refusal_reason=refusal_reason,
         )
         return scope_contract.model_dump(), retrieval_outcome.model_dump()
 
@@ -492,18 +1603,117 @@ class MasterRetriever:
     # B. Engine wrappers (per-engine timeouts + exception isolation)
     # ======================================================================
 
+    async def _precompute_query_vectors(
+        self,
+        transform_result: FullTransformationResult,
+    ) -> Optional[Any]:
+        """Compute (dense_vec, sparse_vec) outside any timeout budget.
+
+        Checks the per-process embedding cache first so repeated queries
+        (e.g. Streamlit re-runs with the same asset/time window) are instant.
+        Cache uses FIFO eviction at _EMBEDDING_CACHE_MAX entries.
+
+        Returns
+        -------
+        (dense_vec, sparse_vec) tuple, or None on failure (caller proceeds
+        without precomputed vecs and falls back to in-flight embedding).
+        """
+        try:
+            profile = getattr(transform_result.metadata, "news_semantic_profile", {}) or {}
+            hyde_para = getattr(transform_result.hyde, "hyde_paragraph", "") or ""
+            rerank_q = getattr(transform_result.hyde, "rerank_query", "") or ""
+            dense_text = dense_news_semantic_query(rerank_q, profile, semantic_context=hyde_para)
+            sparse_text = sparse_news_keyword_query(profile, fallback_query=rerank_q)
+            cache_key = hashlib.sha256(
+                f"{dense_text}\x00{sparse_text}".encode("utf-8", errors="replace")
+            ).hexdigest()
+
+            if cache_key in self._embedding_cache:
+                logger.debug("[EmbedCache] HIT key=%s", cache_key[:12])
+                return self._embedding_cache[cache_key]
+
+            dense_vec, sparse_vec = await asyncio.gather(
+                asyncio.to_thread(lambda: self.qdrant.dense_model.embed_query(dense_text)),
+                asyncio.to_thread(
+                    lambda: list(self.qdrant.sparse_model.query_embed(sparse_text))[0]
+                ),
+            )
+            if len(self._embedding_cache) >= _EMBEDDING_CACHE_MAX:
+                self._embedding_cache.pop(next(iter(self._embedding_cache)))
+            self._embedding_cache[cache_key] = (dense_vec, sparse_vec)
+            logger.debug(
+                "[EmbedCache] MISS — stored key=%s | cache_size=%d",
+                cache_key[:12],
+                len(self._embedding_cache),
+            )
+            return dense_vec, sparse_vec
+        except Exception as exc:
+            logger.warning("[_precompute_query_vectors] failed (non-fatal): %s", exc)
+            return None
+
     async def _fetch_gold_with_telemetry(
         self,
         query: str,
         transform_result: FullTransformationResult,
         top_k: int = 5,
+        precomputed_vecs: Optional[Any] = None,
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
     ) -> List[Any]:
         """Gold wrapper with independent timeout + exception isolation.
 
         Forwards the live `time_predicates` dict (compiled once upstream in
         `_compute_time_range`) so Qdrant can build source-specific time
         filters rather than rederiving the window on every call.
+=======
+        compensation_targets: Optional[List[str]] = None,
+    ) -> List[Any]:
+        """Gold wrapper with independent timeout + exception isolation.
+
+=======
+        compensation_targets: Optional[List[str]] = None,
+    ) -> List[Any]:
+        """Gold wrapper with independent timeout + exception isolation.
+
+>>>>>>> Stashed changes
+        For news-only queries, embeddings are precomputed HERE, before the
+        asyncio.wait_for budget starts.  This decouples CPU-bound SPLADE/
+        sentence-transformers compute (50-100 s on constrained CPU) from the
+        Qdrant search + CrossEncoder reranking budget (~5-8 s), so GOLD_TIMEOUT
+        only needs to cover the latter.  The LRU cache in _precompute_query_vectors
+        makes repeated queries within a session effectively free.
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
+
+        Parameters
+        ----------
+        precomputed_vecs
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+            (dense_vec, sparse_vec) pre-computed upstream when both Gold and
+            SupplementalNews run for the same query.  Forwarded to
+            `retrieve_async` to skip redundant embedding work.
+=======
+            Optional caller-supplied (dense_vec, sparse_vec).  If None and the
+            query is news-only, this method precomputes via _precompute_query_vectors.
+>>>>>>> Stashed changes
+=======
+            Optional caller-supplied (dense_vec, sparse_vec).  If None and the
+            query is news-only, this method precomputes via _precompute_query_vectors.
+>>>>>>> Stashed changes
         """
+        gold_src = {
+            str(getattr(s, "value", s))
+            for s in (getattr(transform_result.metadata, "source_types", []) or [])
+        }
+        # Precompute outside the timeout budget for news-only queries.
+        # Mixed (e.g. news+sec) or non-news queries fall through to the
+        # in-flight path inside retrieve_async unchanged.
+        if precomputed_vecs is None and gold_src <= {"news"}:
+            precomputed_vecs = await self._precompute_query_vectors(transform_result)
+
         t0 = time.time()
         predicates = getattr(self, "_current_predicate_set", None)
         try:
@@ -513,6 +1723,7 @@ class MasterRetriever:
                     transform_result=transform_result,
                     top_k=top_k,
                     time_predicates=predicates,
+                    precomputed_vecs=precomputed_vecs,
                 ),
                 timeout=self.gold_timeout,
             )
@@ -520,6 +1731,21 @@ class MasterRetriever:
             return res
         except asyncio.TimeoutError:
             logger.warning(f"⚠️ [Gold Timeout] Exceeded {self.gold_timeout}s. Returning empty context.")
+            self._emit_retrieval_timeout_audit(
+                query=query,
+                transform_result=transform_result,
+                fallback_tier="gold_timeout",
+                latency=time.time() - t0,
+                stage="gold",
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+                compensation_targets=compensation_targets,
+>>>>>>> Stashed changes
+=======
+                compensation_targets=compensation_targets,
+>>>>>>> Stashed changes
+            )
             return []
         except Exception as e:
             logger.error(f"❌ [Gold Failure] {repr(e)}")
@@ -543,13 +1769,13 @@ class MasterRetriever:
                 timeout=self.silver_timeout,
             )
             logger.debug(f"📊 [Telemetry] Silver engine finished in {time.time() - t0:.3f}s")
-            return res or {"values": {}, "lineage_anchors": []}
+            return res or {"values": {}, "lineage_anchors": [], "citation_contract": {}, "citation_anchor_map": {}}
         except asyncio.TimeoutError:
             logger.warning(f"⚠️ [Silver Timeout] Exceeded {self.silver_timeout}s.")
-            return {"values": {}, "lineage_anchors": [], "error": "Timeout"}
+            return {"values": {}, "lineage_anchors": [], "citation_contract": {}, "citation_anchor_map": {}, "error": "Timeout"}
         except Exception as e:
             logger.error(f"❌ [Silver Failure] {repr(e)}")
-            return {"values": {}, "lineage_anchors": [], "error": str(type(e).__name__)}
+            return {"values": {}, "lineage_anchors": [], "citation_contract": {}, "citation_anchor_map": {}, "error": str(type(e).__name__)}
 
     # ======================================================================
     # C. NEW helpers — Time-range audit / HE back-injection / compensation
@@ -691,6 +1917,8 @@ class MasterRetriever:
             return {
                 "values": {},
                 "lineage_anchors": [],
+                "citation_contract": {},
+                "citation_anchor_map": {},
                 "source_channel": "hyde_expansion",
                 "trigger_entities": [],
             }
@@ -706,6 +1934,8 @@ class MasterRetriever:
         aggregated: Dict[str, Any] = {
             "values": {},
             "lineage_anchors": [],
+            "citation_contract": {},
+            "citation_anchor_map": {},
             "source_channel": "hyde_expansion",
             "trigger_entities": list(novel_tickers),
             "per_ticker_errors": {},
@@ -720,6 +1950,14 @@ class MasterRetriever:
                 aggregated["per_ticker_errors"][tk] = r["error"]
             aggregated["values"].update(r.get("values", {}))
             aggregated["lineage_anchors"].extend(r.get("lineage_anchors", []))
+            aggregated["citation_contract"] = _merge_citation_contract(
+                aggregated.get("citation_contract"),
+                r.get("citation_contract"),
+            )
+            aggregated["citation_anchor_map"].update(
+                r.get("citation_anchor_map")
+                or _deprecated_anchor_map_from_contract(r.get("citation_contract"))
+            )
 
         logger.info(
             f"🔁 [HyDE-Compensation] tickers={novel_tickers} | "
@@ -733,7 +1971,7 @@ class MasterRetriever:
     # D. Main entry — Orchestrator with per-route plan
     # ======================================================================
 
-    async def retrieve(self, user_query: str) -> Dict[str, Any]:
+    async def retrieve(self, user_query: str, query_builder_contract: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Main pipeline: intent → transform → per-route concurrent fetch → assemble.
 
         Per-route plan (in plain English):
@@ -762,7 +2000,11 @@ class MasterRetriever:
         # 2. Two-stage transform (metadata + HyDE)
         # ==================================================================
         transform_start = time.time()
-        transform_res = await self.transformer.transform_for_dual_rag(user_query, intent)
+        transform_res = await self.transformer.transform_for_dual_rag(
+            user_query,
+            intent,
+            query_builder_contract=query_builder_contract,
+        )
         logger.info(f"🧠 [Telemetry] Transform cost: {time.time() - transform_start:.3f}s")
 
         metadata = transform_res.metadata if transform_res else None
@@ -792,6 +2034,22 @@ class MasterRetriever:
 
         time_range = self._compute_time_range(metadata, default_applied=default_applied)
 
+        if transform_res.out_of_scope_tickers:
+            refusal_reason = (
+                "Ticker is outside the local covered universe for this pipeline: "
+                + ", ".join(transform_res.out_of_scope_tickers)
+            )
+            return self._out_of_scope_payload(
+                intent=route,
+                user_query=user_query,
+                metadata=metadata,
+                time_range=time_range,
+                in_scope_tickers=list(transform_res.in_scope_tickers or []),
+                out_of_scope_tickers=list(transform_res.out_of_scope_tickers or []),
+                reason=refusal_reason,
+                start_ts=overall_start,
+            )
+
         # ==================================================================
         # 4. HyDE Entity Back-Injection (regex + whitelist)
         # ==================================================================
@@ -800,6 +2058,15 @@ class MasterRetriever:
             seed_tickers=metadata.tickers,
         )
         novel_tickers: List[str] = hyde_info["novel_tickers"]
+        structured_compensation_targets = [
+            str(ticker).upper().strip()
+            for ticker in self._compensation_targets(metadata, self._resolved_query_family(metadata))
+            if str(ticker).strip()
+        ]
+        compensation_targets: List[str] = []
+        for ticker in structured_compensation_targets + novel_tickers:
+            if ticker and ticker not in compensation_targets:
+                compensation_targets.append(ticker)
 
         # ==================================================================
         # 5. Build per-route task plan (all three may be None)
@@ -809,20 +2076,30 @@ class MasterRetriever:
         compensation_task = None
 
         if route == "hybrid_both":
-            gold_task = self._fetch_gold_with_telemetry(user_query, transform_res, top_k=5)
+            gold_task = self._fetch_gold_with_telemetry(
+                user_query,
+                transform_res,
+                top_k=5,
+                compensation_targets=compensation_targets,
+            )
             if metadata.tickers:
                 silver_task = self._fetch_silver_with_telemetry(metadata)
             # Optional HE compensation — only fires when the HE introduced
             # NEW tickers the user didn't mention.
-            if novel_tickers:
-                compensation_task = self._run_silver_compensation(metadata, novel_tickers)
+            if compensation_targets:
+                compensation_task = self._run_silver_compensation(metadata, compensation_targets)
 
         elif route == "vector_only":
-            gold_task = self._fetch_gold_with_telemetry(user_query, transform_res, top_k=5)
+            gold_task = self._fetch_gold_with_telemetry(
+                user_query,
+                transform_res,
+                top_k=5,
+                compensation_targets=compensation_targets,
+            )
             # Primary Silver is OFF by design for vector_only; compensation is
             # the ONLY path into Parquet — realises "Entity Back-Injection".
-            if novel_tickers:
-                compensation_task = self._run_silver_compensation(metadata, novel_tickers)
+            if compensation_targets:
+                compensation_task = self._run_silver_compensation(metadata, compensation_targets)
             elif metadata.tickers:
                 # If HE produced nothing novel but the user explicitly named
                 # tickers, still run Silver as a courtesy (labelled primary).
@@ -833,19 +2110,27 @@ class MasterRetriever:
             if metadata.tickers:
                 silver_task = self._fetch_silver_with_telemetry(metadata)
             gold_task = self._fetch_gold_with_telemetry(
-                user_query, transform_res, top_k=_SQL_ONLY_FALLBACK_TOPK
+                user_query,
+                transform_res,
+                top_k=_SQL_ONLY_FALLBACK_TOPK,
+                compensation_targets=compensation_targets,
             )
             # HE compensation is still available when HE produces novel tickers —
             # realises "Semantic-SQL Parallelism". The hyde_anticipation payload
             # below also exposes the full HyDE paragraph to the Analyst so the
             # LLM prior knowledge can fill the gap when Parquet is empty.
-            if novel_tickers:
-                compensation_task = self._run_silver_compensation(metadata, novel_tickers)
+            if compensation_targets:
+                compensation_task = self._run_silver_compensation(metadata, compensation_targets)
 
         else:
             # Unknown route — degrade to hybrid.
             logger.warning(f"[Route] Unknown primary_route={route} — falling back to hybrid_both.")
-            gold_task = self._fetch_gold_with_telemetry(user_query, transform_res, top_k=5)
+            gold_task = self._fetch_gold_with_telemetry(
+                user_query,
+                transform_res,
+                top_k=5,
+                compensation_targets=compensation_targets,
+            )
             if metadata.tickers:
                 silver_task = self._fetch_silver_with_telemetry(metadata)
 
@@ -869,9 +2154,13 @@ class MasterRetriever:
             "metadata": metadata,
             "time_range": time_range,
             "gold_context": [],
+            "supplemental_news_context": [],
+            "sec_retrieval_contract": {},
             "silver_context": {
                 "values": {},
                 "lineage_anchors": [],
+                "citation_contract": {},
+                "citation_anchor_map": {},
                 "source_channel": "primary",
             },
             "hyde_anticipation": {
@@ -880,6 +2169,7 @@ class MasterRetriever:
                 "raw_candidates": hyde_info["raw_candidates"],
                 "whitelisted_tickers": hyde_info["whitelisted"],
                 "novel_tickers": novel_tickers,
+                "compensation_targets": compensation_targets,
                 # Only sql_only lifts the HE paragraph as a semantic hedge;
                 # the other routes still expose it for auditability but the
                 # Analyst will weight it lower.
@@ -898,13 +2188,18 @@ class MasterRetriever:
 
             if slot == "gold":
                 final_context["gold_context"] = res or []
+                final_context["sec_retrieval_contract"] = self.qdrant.get_last_sec_retrieval_contract()
+            elif slot == "supplemental_news":
+                final_context["supplemental_news_context"] = res or []
             elif slot == "silver":
-                primary_silver = res or {"values": {}, "lineage_anchors": []}
+                primary_silver = res or {"values": {}, "lineage_anchors": [], "citation_contract": {}, "citation_anchor_map": {}}
                 if primary_silver.get("error"):
                     partial_failure = True
                 final_context["silver_context"] = {
                     "values": primary_silver.get("values", {}),
                     "lineage_anchors": primary_silver.get("lineage_anchors", []),
+                    "citation_contract": primary_silver.get("citation_contract", {}),
+                    "citation_anchor_map": primary_silver.get("citation_anchor_map", {}),
                     "source_channel": "primary",
                     **(
                         {"error": primary_silver["error"]}
@@ -920,6 +2215,8 @@ class MasterRetriever:
                 final_context["silver_context"]["compensation"] = {
                     "values": comp.get("values", {}),
                     "lineage_anchors": comp.get("lineage_anchors", []),
+                    "citation_contract": comp.get("citation_contract", {}),
+                    "citation_anchor_map": comp.get("citation_anchor_map", {}),
                     "source_channel": "silver_layer_via_hyde_expansion",
                     "trigger_entities": comp.get("trigger_entities", []),
                     "per_ticker_errors": comp.get("per_ticker_errors", {}),
@@ -927,6 +2224,32 @@ class MasterRetriever:
 
         if partial_failure:
             final_context["status"] = "partial_failure"
+
+        # ==================================================================
+        # 7.5a  News contract from gold chunks (deterministic, no LLM)
+        # ==================================================================
+        # Build a light NarrativeBrief from whatever gold news chunks were
+        # returned, using only field extraction and the ontology dict.
+        # Stored under final_context["news_contract"] for the Analyst to
+        # consume directly without repeating chunk iteration.
+        try:
+            news_gold_chunks = [
+                c for c in (final_context.get("gold_context") or [])
+                if str(
+                    getattr(getattr(c, "source_type", None), "value", None)
+                    or (c.get("source_type") if isinstance(c, dict) else "")
+                    or ""
+                ).strip().lower() == "news"
+            ]
+            if news_gold_chunks:
+                _nc_tickers = list(getattr(transform_res.metadata, "tickers", []) or [])
+                final_context["news_contract"] = news_contract_from_chunks(
+                    chunks=news_gold_chunks,
+                    tickers=_nc_tickers,
+                    original_query=user_query,
+                ).model_dump()
+        except Exception as _nc_err:
+            logger.warning("[NewsContract] failed (non-fatal): %s", _nc_err)
 
         # ==================================================================
         # 7.5  Macro → Silver anchor injection (Root Cause A fix, 2026-04-22)
@@ -945,6 +2268,15 @@ class MasterRetriever:
                 sv = final_context["silver_context"]
                 sv.setdefault("values", {}).update(macro_patch["values"])
                 existing_anchors = sv.setdefault("lineage_anchors", [])
+                _extend_silver_context_contract(
+                    self.sql_tool,
+                    sv,
+                    values=macro_patch["values"],
+                    lineage_anchors=list(macro_patch.get("lineage_anchors", [])),
+                    observed_at=str(anchor_for_macro),
+                    source_channel=str(sv.get("source_channel", "primary") or "primary"),
+                    explicit_contract=macro_patch.get("citation_contract"),
+                )
                 patch_status = macro_patch.get("status") or {}
                 if patch_status:
                     existing_status = sv.setdefault("status", {})
@@ -985,6 +2317,15 @@ class MasterRetriever:
             if gpr_result and gpr_result.get("values"):
                 sv = final_context["silver_context"]
                 sv.setdefault("values", {}).update(gpr_result["values"])
+                _extend_silver_context_contract(
+                    self.sql_tool,
+                    sv,
+                    values=gpr_result["values"],
+                    lineage_anchors=list(gpr_result.get("lineage_anchors", [])),
+                    observed_at=gpr_result.get("observed_at"),
+                    source_channel=str(sv.get("source_channel", "primary") or "primary"),
+                    explicit_contract=gpr_result.get("citation_contract"),
+                )
                 existing = set(sv.setdefault("lineage_anchors", []))
                 for a in gpr_result.get("lineage_anchors", []):
                     if a not in existing:
@@ -1033,6 +2374,14 @@ class MasterRetriever:
                         existing_anchors.add(anchor_id)
                 sv["values"].update(pq_values)
                 sv["lineage_anchors"].extend(pq_anchors)
+                _extend_silver_context_contract(
+                    self.sql_tool,
+                    sv,
+                    values=pq_values,
+                    lineage_anchors=pq_anchors,
+                    observed_at=str(rows[0][4]),
+                    source_channel=str(sv.get("source_channel", "primary") or "primary"),
+                )
                 logger.info(
                     f"📊 [MacroParquetPatch] injected {len(pq_values)} values "
                     f"+ {len(pq_anchors)} anchors from {len(rows)} Macro symbols."
@@ -1059,14 +2408,30 @@ class MasterRetriever:
             final_context["silver_context_frozen"] = None
 
         try:
+            _comp_vals = dict(
+                ((final_context.get("silver_context") or {}).get("compensation") or {}).get("values") or {}
+            )
             scope_contract, retrieval_outcome = self._build_runtime_contracts(
                 user_query=user_query,
+                route=route,
                 metadata=metadata,
                 silver_context=final_context["silver_context"],
                 silver_context_frozen=final_context.get("silver_context_frozen"),
                 gold_context=final_context["gold_context"],
+                supplemental_news_context=final_context.get("supplemental_news_context", []),
+                sec_retrieval_contract=final_context.get("sec_retrieval_contract"),
                 time_range=time_range,
                 is_fallback=(final_context["status"] != "success"),
+                in_scope_tickers=list(transform_res.in_scope_tickers or []),
+                out_of_scope_tickers=list(transform_res.out_of_scope_tickers or []),
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+                compensation_values=_comp_vals,
+>>>>>>> Stashed changes
+=======
+                compensation_values=_comp_vals,
+>>>>>>> Stashed changes
             )
             final_context["scope_contract"] = scope_contract
             final_context["retrieval_outcome"] = retrieval_outcome
@@ -1133,15 +2498,69 @@ class MasterRetriever:
             "metadata": None,
             "time_range": None,
             "gold_context": [],
+            "supplemental_news_context": [],
+            "sec_retrieval_contract": {},
             "silver_context": {
                 "values": {},
                 "lineage_anchors": [],
+                "citation_contract": {},
+                "citation_anchor_map": {},
                 "source_channel": "primary",
                 "error": reason,
             },
             "hyde_anticipation": None,
             "scope_contract": None,
             "retrieval_outcome": None,
+            "status": "partial_failure",
+            "latency_stats": {"total_e2e": f"{time.time() - start_ts:.3f}s"},
+        }
+
+    def _out_of_scope_payload(
+        self,
+        *,
+        intent: str,
+        user_query: str,
+        metadata: MetadataExtraction,
+        time_range: Dict[str, Any],
+        in_scope_tickers: List[str],
+        out_of_scope_tickers: List[str],
+        reason: str,
+        start_ts: float,
+    ) -> Dict[str, Any]:
+        """Return a structured refusal payload for unsupported ticker scope."""
+        scope_contract, retrieval_outcome = self._build_runtime_contracts(
+            user_query=user_query,
+            route=intent,
+            metadata=metadata,
+            silver_context={"values": {}, "lineage_anchors": [], "citation_contract": {}, "citation_anchor_map": {}},
+            silver_context_frozen=None,
+            gold_context=[],
+            supplemental_news_context=[],
+            sec_retrieval_contract={},
+            time_range=time_range,
+            is_fallback=True,
+            in_scope_tickers=in_scope_tickers,
+            out_of_scope_tickers=out_of_scope_tickers,
+            refusal_reason=reason,
+        )
+        return {
+            "intent": intent,
+            "metadata": metadata,
+            "time_range": time_range,
+            "gold_context": [],
+            "supplemental_news_context": [],
+            "sec_retrieval_contract": {},
+            "silver_context": {
+                "values": {},
+                "lineage_anchors": [],
+                "citation_contract": {},
+                "citation_anchor_map": {},
+                "source_channel": "primary",
+                "error": reason,
+            },
+            "hyde_anticipation": None,
+            "scope_contract": scope_contract,
+            "retrieval_outcome": retrieval_outcome,
             "status": "partial_failure",
             "latency_stats": {"total_e2e": f"{time.time() - start_ts:.3f}s"},
         }

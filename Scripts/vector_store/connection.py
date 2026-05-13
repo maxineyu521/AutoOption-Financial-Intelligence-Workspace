@@ -123,7 +123,7 @@ def get_qdrant_client() -> QdrantClient:
             client = QdrantClient(
                 url=qdrant_url,
                 api_key=qdrant_api_key,
-                timeout=15.0, 
+                timeout=20.0,
                 prefer_grpc=False  # HTTP/HTTPS only; avoids many firewall/grpc blocks
             )
             

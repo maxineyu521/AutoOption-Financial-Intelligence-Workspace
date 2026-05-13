@@ -257,6 +257,7 @@ def get_audit_logger(
 
 
 __all__ = [
+    "append_audit_jsonl",
     "audit_path",
     "configure_root_logger",
     "current_run_id",
@@ -264,6 +265,26 @@ __all__ = [
     "record_retrieval_fallback_kpi",
     "start_run",
 ]
+
+
+def append_audit_jsonl(
+    *,
+    module: str,
+    payload: dict,
+    filename: Optional[str] = None,
+    anchor: Optional[date] = None,
+    scoped_by_run: bool = False,
+) -> Path:
+    """Append one JSONL payload to the canonical audit location."""
+    target = audit_path(
+        module,
+        anchor=anchor,
+        filename=filename,
+        scoped_by_run=scoped_by_run,
+    )
+    with open(target, "a", encoding="utf-8") as fp:
+        fp.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    return target
 
 
 def record_retrieval_fallback_kpi(

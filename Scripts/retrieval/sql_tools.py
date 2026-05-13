@@ -33,6 +33,7 @@ from Scripts.core.financial_ontology import (
     METRIC_TO_COLUMN_MAPPING,
     ETF_TO_MACRO_ALIAS,
 )
+from Scripts.core.liquidity_policy import classify_market_impact_risk
 # Shared retrieval contract:
 # - MetadataExtraction: LLM structured output consumed by every handler.
 # - time_window_to_days / TIME_WINDOW_DAYS: global TimeWindow policy, same one
@@ -77,7 +78,9 @@ class SilverSQLTool:
             "required": {
                 "snapshot_date", "symbol", "option_type", "volume",
                 "open_interest", "implied_volatility", "moneyness_pct",
-                "spread_pct", "dte", "is_liquid", "contract_symbol",
+                "strike", "underlying_price",
+                "spread_ratio", "spread_pct", "dte", "is_liquid",
+                "is_liquid_basic", "is_executable_liquid", "contract_symbol",
             },
         },
         "macro": {
@@ -92,6 +95,58 @@ class SilverSQLTool:
             "required": {"date", "gpr", "gpr_percentile", "gpr_mom_pct"},
         },
     }
+
+    @staticmethod
+    def _build_citation_contract(
+        values: Dict[str, Any],
+        *,
+        lineage_anchors: Optional[List[str]] = None,
+        observed_at: Optional[str] = None,
+        source_channel: str = "primary",
+        preferred_anchor_by_metric: Optional[Dict[str, str]] = None,
+        audit_lineage_by_metric: Optional[Dict[str, List[str]]] = None,
+        legacy_aliases_by_metric: Optional[Dict[str, List[str]]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Build the canonical inline-citation contract for Silver metrics.
+
+        The contract separates:
+        - preferred inline citation (`preferred_anchor`)
+        - audit/provenance lineage refs (`audit_lineage_anchors`)
+        - migration aliases (`legacy_aliases`)
+        """
+        lineage_list = [str(a) for a in (lineage_anchors or []) if a is not None]
+        preferred_anchor_by_metric = preferred_anchor_by_metric or {}
+        audit_lineage_by_metric = audit_lineage_by_metric or {}
+        legacy_aliases_by_metric = legacy_aliases_by_metric or {}
+
+        contract: Dict[str, Dict[str, Any]] = {}
+        for metric_key in (values or {}).keys():
+            audit_refs = [
+                str(a) for a in audit_lineage_by_metric.get(metric_key, lineage_list) if a is not None
+            ]
+            legacy_aliases = [
+                str(a) for a in legacy_aliases_by_metric.get(metric_key, []) if a is not None
+            ]
+            contract[str(metric_key)] = {
+                "preferred_anchor": str(preferred_anchor_by_metric.get(metric_key, metric_key)),
+                "audit_lineage_anchors": audit_refs,
+                "legacy_aliases": legacy_aliases,
+                "observed_at": str(observed_at) if observed_at is not None else None,
+                "source_channel": source_channel,
+            }
+        return contract
+
+    @staticmethod
+    def _preferred_anchor_map_from_contract(
+        citation_contract: Optional[Dict[str, Dict[str, Any]]],
+    ) -> Dict[str, str]:
+        """Deprecated compatibility shim for callers still reading metric -> anchor."""
+        out: Dict[str, str] = {}
+        for metric_key, entry in (citation_contract or {}).items():
+            preferred = (entry or {}).get("preferred_anchor")
+            if preferred:
+                out[str(metric_key)] = str(preferred)
+        return out
 
     def __init__(self):
         # 1) Robust path resolution (expands ~, resolves env).
@@ -498,6 +553,8 @@ class SilverSQLTool:
         results: Dict[str, Any] = {
             "values": {},
             "lineage_anchors": [],
+            "citation_contract": {},
+            "citation_anchor_map": {},
             "status": {
                 "unsupported_metrics": [],
                 "unsupported_metrics_message": "",
@@ -557,8 +614,18 @@ class SilverSQLTool:
                 try:
                     res = handler(ticker, metadata)
                     if res:
+                        contract = res.get("citation_contract") or self._build_citation_contract(
+                            res.get("values", {}) or {},
+                            lineage_anchors=res.get("lineage_anchors", []),
+                            observed_at=res.get("observed_at"),
+                            source_channel=str(res.get("source_channel", "primary") or "primary"),
+                        )
                         results["values"].update(res.get("values", {}))
                         results["lineage_anchors"].extend(res.get("lineage_anchors", []))
+                        results["citation_contract"].update(contract)
+                        results["citation_anchor_map"].update(
+                            self._preferred_anchor_map_from_contract(contract)
+                        )
                 except Exception as e:
                     self.audit_logger.error(
                         f"EXECUTION_ERROR | Ticker: {ticker} | Metric: {metric} | Error: {str(e)}"
@@ -650,15 +717,19 @@ class SilverSQLTool:
                 "pcr_open_interest": round(pcr_oi, 3),
                 "pcr_status": "Bearish Sentiment" if pcr_vol > 1.0 else "Bullish/Neutral"
             },
-            "lineage_anchors": [f"PCR_AGG_{ticker}_{row['snapshot_date']}"]
+            "lineage_anchors": [f"PCR_AGG_{ticker}_{row['snapshot_date']}"],
+            "observed_at": str(row["snapshot_date"]),
         }
 
     def _handle_options_analysis(self, ticker: str, meta: MetadataExtraction) -> Dict[str, Any]:
-        """Surface latest ATM IV + IV rank percentile + freshness.
+        """Surface latest ATM IV, IV rank percentile, and a robust OTM skew proxy.
 
-        IV rank is computed as a rolling historical percentile over daily ATM IV
-        observations for the same ticker. This makes regime classification
-        stable across assets (percentile space) instead of using hard IV levels.
+        IV skew uses a 25-delta-style proxy because true delta is not stored in
+        Silver parquet. We approximate it from the latest eligible snapshot on or
+        before the query anchor by selecting:
+          - the best OTM put in the 5%-10% OTM bucket
+          - the best OTM call in the 5%-10% OTM bucket
+        and computing put IV minus call IV. Ties prefer tighter spreads.
         """
         # This handler applies no WHERE filter on snapshot_date; it picks the
         # latest available row. Log the anchor + requested window so the audit
@@ -671,7 +742,7 @@ class SilverSQLTool:
         self._audit_sql_range(
             handler="options_analysis", ticker=ticker, meta=meta,
             mode="latest_only", end=anchor, window_days=window_days,
-            extra=f"filter=is_liquid=true;dte_in_[7,45];iv_rank_lookback={iv_rank_lookback_days}d",
+            extra=f"filter=is_liquid=true;dte_in_[7,45];iv_rank_lookback={iv_rank_lookback_days}d;iv_skew_proxy=5-10pct_otm",
         )
 
         query = f"""
@@ -679,9 +750,14 @@ class SilverSQLTool:
                 SELECT
                     CAST(snapshot_date AS DATE) AS snapshot_date,
                     contract_symbol,
+                    option_type,
                     implied_volatility,
                     ABS(moneyness_pct) AS abs_moneyness,
-                    spread_pct
+                    spread_pct,
+                    CASE
+                        WHEN underlying_price > 0 THEN (strike / underlying_price) - 1.0
+                        ELSE NULL
+                    END AS signed_moneyness
                 FROM read_parquet('{self.options_glob}')
                 WHERE symbol = ?
                   AND is_liquid = true
@@ -715,8 +791,54 @@ class SilverSQLTool:
                         ELSE NULL
                     END AS iv_rank_pct
                 FROM series
+            ),
+            latest_snapshot AS (
+                SELECT MAX(snapshot_date) AS snapshot_date
+                FROM raw
+            ),
+            skew_candidates AS (
+                SELECT
+                    r.snapshot_date,
+                    r.contract_symbol,
+                    LOWER(r.option_type) AS option_type,
+                    r.implied_volatility,
+                    r.spread_pct,
+                    r.signed_moneyness,
+                    ABS(ABS(r.signed_moneyness) - 0.075) AS target_distance
+                FROM raw r
+                JOIN latest_snapshot ls
+                  ON r.snapshot_date = ls.snapshot_date
+                WHERE (
+                    LOWER(r.option_type) = 'put'
+                    AND r.signed_moneyness BETWEEN -0.10 AND -0.05
+                ) OR (
+                    LOWER(r.option_type) = 'call'
+                    AND r.signed_moneyness BETWEEN 0.05 AND 0.10
+                )
+            ),
+            best_put AS (
+                SELECT contract_symbol, implied_volatility
+                FROM skew_candidates
+                WHERE option_type = 'put'
+                ORDER BY target_distance ASC, spread_pct ASC NULLS LAST
+                LIMIT 1
+            ),
+            best_call AS (
+                SELECT contract_symbol, implied_volatility
+                FROM skew_candidates
+                WHERE option_type = 'call'
+                ORDER BY target_distance ASC, spread_pct ASC NULLS LAST
+                LIMIT 1
             )
-            SELECT snapshot_date, contract_symbol, atm_iv, iv_rank_pct
+            SELECT
+                ranked.snapshot_date,
+                ranked.contract_symbol,
+                ranked.atm_iv,
+                ranked.iv_rank_pct,
+                (SELECT implied_volatility FROM best_put) AS otm_put_iv,
+                (SELECT implied_volatility FROM best_call) AS otm_call_iv,
+                (SELECT contract_symbol FROM best_put) AS put_contract_symbol,
+                (SELECT contract_symbol FROM best_call) AS call_contract_symbol
             FROM ranked
             ORDER BY snapshot_date DESC
             LIMIT 1
@@ -729,7 +851,11 @@ class SilverSQLTool:
         atm_iv = df["atm_iv"].iloc[0]
         iv_rank_pct = df["iv_rank_pct"].iloc[0]
         contract_symbol = df["contract_symbol"].iloc[0]
-        
+        otm_put_iv = df["otm_put_iv"].iloc[0]
+        otm_call_iv = df["otm_call_iv"].iloc[0]
+        put_contract_symbol = df["put_contract_symbol"].iloc[0]
+        call_contract_symbol = df["call_contract_symbol"].iloc[0]
+
         iv_rank_val = None
         if iv_rank_pct is not None:
             try:
@@ -738,67 +864,162 @@ class SilverSQLTool:
             except Exception:
                 iv_rank_val = None
 
-        return {
-            "values": {
-                "latest_atm_iv": round(atm_iv, 4),
-                "latest_atm_iv_rank_pct": iv_rank_val,
-                "iv_rank_lookback_days": iv_rank_lookback_days,
-                "data_freshness": str(latest_date),
-            },
-            "lineage_anchors": [
+        put_iv_val = None
+        call_iv_val = None
+        skew_val = None
+        try:
+            put_iv_val = round(float(otm_put_iv), 4) if otm_put_iv is not None and float(otm_put_iv) == float(otm_put_iv) else None
+        except Exception:
+            put_iv_val = None
+        try:
+            call_iv_val = round(float(otm_call_iv), 4) if otm_call_iv is not None and float(otm_call_iv) == float(otm_call_iv) else None
+        except Exception:
+            call_iv_val = None
+        if put_iv_val is not None and call_iv_val is not None:
+            skew_val = round(put_iv_val - call_iv_val, 4)
+
+        values = {
+            "latest_atm_iv": round(atm_iv, 4),
+            "latest_atm_iv_rank_pct": iv_rank_val,
+            "latest_iv_skew": skew_val,
+            "latest_otm_put_iv": put_iv_val,
+            "latest_otm_call_iv": call_iv_val,
+            "iv_rank_lookback_days": iv_rank_lookback_days,
+            "data_freshness": str(latest_date),
+        }
+        lineage_anchors = [
+            str(anchor_id)
+            for anchor_id in [
+                contract_symbol,
+                f"IVRANK_{ticker}_{latest_date}",
+                f"IVSKEW_{ticker}_{latest_date}",
+                put_contract_symbol,
+                call_contract_symbol,
+            ]
+            if anchor_id
+        ]
+
+        audit_lineage_by_metric = {
+            "latest_atm_iv": [
                 str(contract_symbol),
                 f"IVRANK_{ticker}_{latest_date}",
             ],
+            "latest_atm_iv_rank_pct": [
+                str(contract_symbol),
+                f"IVRANK_{ticker}_{latest_date}",
+            ],
+            "latest_iv_skew": [
+                str(anchor_id)
+                for anchor_id in [f"IVSKEW_{ticker}_{latest_date}", put_contract_symbol, call_contract_symbol]
+                if anchor_id
+            ],
+            "latest_otm_put_iv": [
+                str(anchor_id)
+                for anchor_id in [f"IVSKEW_{ticker}_{latest_date}", put_contract_symbol]
+                if anchor_id
+            ],
+            "latest_otm_call_iv": [
+                str(anchor_id)
+                for anchor_id in [f"IVSKEW_{ticker}_{latest_date}", call_contract_symbol]
+                if anchor_id
+            ],
+        }
+
+        return {
+            "values": values,
+            "citation_contract": self._build_citation_contract(
+                values,
+                lineage_anchors=lineage_anchors,
+                observed_at=str(latest_date),
+                preferred_anchor_by_metric={
+                    "latest_atm_iv": "latest_atm_iv",
+                    "latest_atm_iv_rank_pct": "latest_atm_iv_rank_pct",
+                    "latest_iv_skew": "latest_iv_skew",
+                    "latest_otm_put_iv": "latest_otm_put_iv",
+                    "latest_otm_call_iv": "latest_otm_call_iv",
+                },
+                audit_lineage_by_metric=audit_lineage_by_metric,
+                legacy_aliases_by_metric={
+                    "latest_atm_iv": [f"IVRANK_{ticker}_{latest_date}"],
+                    "latest_atm_iv_rank_pct": [f"IVRANK_{ticker}_{latest_date}"],
+                },
+            ),
+            "lineage_anchors": lineage_anchors,
+            "observed_at": str(latest_date),
         }
 
     def _handle_liquidity_analysis(self, ticker: str, meta: MetadataExtraction) -> Dict[str, Any]:
         """Liquidity & execution-risk snapshot.
 
-        Upgrade note (2026-04-22):
-          - Now surfaces OPEN INTEREST and LIQUID_CONTRACT_COUNT so the
-            "Options Liquidity" / "Open Interest" dispatches carry the data
-            the Analyst expects (previously only total_vol + avg_spread).
-          - Still `latest_only` — picks the most recent snapshot_date with
-            rows for this symbol so the result survives weekends/holidays.
+        The executable-liquidity contract:
+          - every surfaced metric comes ONLY from the executable subset
+            (`is_executable_liquid = true`)
+          - `spread_pct` is stored in Silver parquet as percentage points
+            (for example 2.5 means 2.5%), so retrieval must NOT multiply by
+            100 again
+          - market_impact_risk must be classified by the shared
+            liquidity-policy helper, not via an inline spread threshold
         """
         anchor = self._get_anchor_date("options")
         window_days = self._time_window_to_days(meta.time_window, default=180)
         self._audit_sql_range(
             handler="liquidity_analysis", ticker=ticker, meta=meta,
             mode="latest_only", end=anchor, window_days=window_days,
+            extra="filter=is_executable_liquid=true;agg=volume_weighted_spread",
         )
 
         query = f"""
+            WITH latest_snapshot AS (
+                SELECT MAX(snapshot_date) AS snapshot_date
+                FROM read_parquet('{self.options_glob}')
+                WHERE symbol = ?
+                  AND CAST(snapshot_date AS DATE) <= ?
+            ),
+            latest_chain AS (
+                SELECT *
+                FROM read_parquet('{self.options_glob}')
+                WHERE symbol = ?
+                  AND snapshot_date = (SELECT snapshot_date FROM latest_snapshot)
+            ),
+            executable_subset AS (
+                SELECT *
+                FROM latest_chain
+                WHERE is_executable_liquid = true
+            )
             SELECT
-                snapshot_date,
-                SUM(volume)                               AS total_vol,
-                SUM(open_interest)                        AS total_oi,
-                AVG(spread_pct)                           AS avg_spread,
-                SUM(CASE WHEN is_liquid THEN 1 ELSE 0 END) AS liquid_contracts
-            FROM read_parquet('{self.options_glob}')
-            WHERE symbol = ?
-            GROUP BY snapshot_date
-            ORDER BY snapshot_date DESC
-            LIMIT 1
+                (SELECT snapshot_date FROM latest_snapshot) AS snapshot_date,
+                (SELECT SUM(volume) FROM executable_subset) AS executable_vol,
+                (SELECT SUM(open_interest) FROM executable_subset) AS executable_oi,
+                (
+                    SELECT
+                        CASE
+                            WHEN NULLIF(SUM(volume), 0) IS NULL THEN NULL
+                            ELSE SUM(spread_pct * volume) / NULLIF(SUM(volume), 0)
+                        END
+                    FROM executable_subset
+                ) AS real_market_impact_pct,
+                (SELECT COUNT(contract_symbol) FROM executable_subset) AS liquid_contracts_count
         """
-        res = self.conn.execute(query, [ticker]).fetchone()
-        if not res:
+        res = self.conn.execute(query, [ticker, anchor, ticker]).fetchone()
+        if not res or res[0] is None:
             return None
 
-        total_vol = int(res[1] or 0)
-        total_oi  = int(res[2] or 0)
-        avg_spread = float(res[3] or 0.0)
+        executable_vol = int(res[1] or 0)
+        executable_oi = int(res[2] or 0)
+        avg_spread = float(res[3]) if res[3] is not None else None
         liquid_ct = int(res[4] or 0)
+        market_impact_risk = classify_market_impact_risk(ticker, avg_spread, liquid_ct if liquid_ct > 0 else None)
 
         return {
             "values": {
-                f"{ticker}_daily_option_volume":  total_vol,
-                f"{ticker}_open_interest":        total_oi,
-                f"{ticker}_avg_spread_pct":       round(avg_spread * 100, 3),
-                f"{ticker}_liquid_contracts":     liquid_ct,
-                f"{ticker}_market_impact_risk":   "High" if avg_spread > 0.02 else "Low",
+                f"{ticker}_executable_option_volume": executable_vol,
+                f"{ticker}_executable_open_interest": executable_oi,
+                f"{ticker}_avg_spread_pct": round(avg_spread, 3) if avg_spread is not None else None,
+                f"{ticker}_liquid_contracts": liquid_ct,
+                f"{ticker}_market_impact_risk": market_impact_risk,
             },
             "lineage_anchors": [f"LIQ_{ticker}_{res[0]}"],
+            "observed_at": str(res[0]),
         }
 
     def _handle_pricing_spread(self, ticker: str, meta: MetadataExtraction) -> Dict[str, Any]:
@@ -807,6 +1028,11 @@ class SilverSQLTool:
         Returns the latest-snapshot ATM-adjacent bid/ask mid so queries like
         "what's the current SPY option spread" land on quote data instead
         of the IV-centric options-analysis handler.
+
+        Unit contract:
+          - `spread_pct` in Silver parquet is already stored as percentage
+            points (for example 1.8 means 1.8%).
+          - Retrieval returns the same unit and must not multiply by 100.
         """
         anchor = self._get_anchor_date("options")
         window_days = self._time_window_to_days(meta.time_window, default=180)
@@ -841,10 +1067,11 @@ class SilverSQLTool:
                 f"{ticker}_underlying_price": float(res[1] or 0),
                 f"{ticker}_avg_bid":          round(float(res[2] or 0), 3),
                 f"{ticker}_avg_ask":          round(float(res[3] or 0), 3),
-                f"{ticker}_avg_spread_pct":   round(float(res[4] or 0) * 100, 3),
+                f"{ticker}_avg_spread_pct":   round(float(res[4] or 0), 3),
                 f"{ticker}_avg_last_price":   round(float(res[5] or 0), 3),
             },
             "lineage_anchors": [f"PX_{ticker}_{res[0]}"],
+            "observed_at": str(res[0]),
         }
 
     def _handle_macro_analysis(self, ticker: str, meta: MetadataExtraction) -> Dict[str, Any]:
@@ -907,7 +1134,8 @@ class SilverSQLTool:
                 f"{ticker}_last_value": last_value,
                 change_label: change_str,
             },
-            "lineage_anchors": [f"{lineage_prefix}_{obs_date}"]
+            "lineage_anchors": [f"{lineage_prefix}_{obs_date}"],
+            "observed_at": str(obs_date),
         }
 
     def _handle_geopolitical_analysis(self, ticker: str, meta: MetadataExtraction) -> Dict[str, Any]:
@@ -917,6 +1145,12 @@ class SilverSQLTool:
         successfully ingested month (collect_data_state.json -> gpr_monthly).
         No WHERE filter is applied here — we always return the latest month —
         but the anchor is logged so the audit trail is still decisive.
+
+        Unit contract:
+          - `gpr_percentile` is stored upstream as a percentage-point value
+            (for example 97.58 means 97.58%, not 0.9758).
+          - Retrieval should render it as a display percentage string only and
+            must not multiply it by 100 again.
         """
         anchor = self._get_anchor_date("gpr")
         window_days = self._time_window_to_days(meta.time_window, default=180)
@@ -942,5 +1176,6 @@ class SilverSQLTool:
                 "gpr_percentile": f"{res[2]}%",
                 "gpr_trend": trend
             },
-            "lineage_anchors": [f"GPR_{res[0].strftime('%Y%m')}"]
+            "lineage_anchors": [f"GPR_{res[0].strftime('%Y%m')}"],
+            "observed_at": str(res[0]),
         }
