@@ -475,9 +475,9 @@ NEWS_TOPIC_ALIAS: Dict[str, str] = {
 # docs so Gold ticker filters stop yielding 0 hits. Ticker universe limited to
 # what ACTUALLY exists in our Silver parquets — do not add aspirational symbols.
 TOPIC_TO_TICKERS: Dict[str, List[str]] = {
-    "macro_central_banks":        ["FEDFUNDS", "DX-Y.NYB", "^VIX", "^GSPC", "^IXIC"],
+    "macro_central_banks":        ["FEDFUNDS", "DX-Y.NYB", "GLD", "SLV", "^VIX", "^GSPC", "^IXIC"],
     "macro_inflation_employment": ["CPIAUCSL", "UNRATE", "^GSPC", "^VIX"],
-    "macro_yields_dollar":        ["DX-Y.NYB", "^VIX"],
+    "macro_yields_dollar":        ["DX-Y.NYB", "GLD", "SLV", "^VIX"],
     "macro_geopolitics_risk":     ["^VIX", "GLD", "^GSPC"],
     "asset_precious_metals_spot": ["GLD", "SLV"],
     "asset_metals_derivatives":   ["GLD", "SLV"],
@@ -485,14 +485,93 @@ TOPIC_TO_TICKERS: Dict[str, List[str]] = {
 
 TOPIC_IMPACT_BASKETS: Dict[str, List[str]] = {
     "macro_geopolitics_risk": ["GLD", "SLV", "^VIX", "^GSPC", "DX-Y.NYB"],
+    "macro_central_banks": ["GLD", "SLV", "DX-Y.NYB", "^VIX", "^GSPC"],
+    "macro_yields_dollar": ["GLD", "SLV", "DX-Y.NYB", "^VIX"],
+    "asset_precious_metals_spot": ["GLD", "SLV", "DX-Y.NYB", "^VIX"],
+    "asset_metals_derivatives": ["GLD", "SLV", "DX-Y.NYB", "^VIX"],
 }
 
 NEWS_TOPIC_EXPANSIONS: Dict[str, List[str]] = {
+    "macro_central_banks": [
+        "macro_central_banks",
+        "macro_yields_dollar",
+        "asset_precious_metals_spot",
+        "asset_metals_derivatives",
+    ],
+    "macro_yields_dollar": [
+        "macro_yields_dollar",
+        "macro_central_banks",
+        "asset_precious_metals_spot",
+        "asset_metals_derivatives",
+    ],
     "macro_geopolitics_risk": [
         "macro_geopolitics_risk",
         "macro_yields_dollar",
         "asset_precious_metals_spot",
         "asset_metals_derivatives",
+    ],
+    "asset_precious_metals_spot": [
+        "asset_precious_metals_spot",
+        "asset_metals_derivatives",
+        "macro_yields_dollar",
+        "macro_central_banks",
+    ],
+    "asset_metals_derivatives": [
+        "asset_metals_derivatives",
+        "asset_precious_metals_spot",
+        "macro_yields_dollar",
+        "macro_central_banks",
+    ],
+}
+
+NEWS_TOPIC_KEYWORD_HINTS: Dict[str, List[str]] = {
+    "asset_precious_metals_spot": [
+        "gld",
+        "slv",
+        "gold",
+        "silver",
+        "precious metal",
+        "precious metals",
+        "bullion",
+        "safe haven",
+    ],
+    "asset_metals_derivatives": [
+        "gold futures",
+        "silver futures",
+        "gold options",
+        "silver options",
+        "metals derivatives",
+        "comex",
+    ],
+    "macro_yields_dollar": [
+        "10y",
+        "10-year",
+        "10 year",
+        "treasury yield",
+        "treasury yields",
+        "treasuries",
+        "dxy",
+        "dollar index",
+        "us dollar",
+        "usd",
+        "bond market",
+        "real yield",
+        "real yields",
+    ],
+    "macro_central_banks": [
+        "fed",
+        "fomc",
+        "powell",
+        "ecb",
+        "boj",
+        "bank of japan",
+        "central bank",
+        "central banks",
+        "interest rate",
+        "interest rates",
+        "monetary policy",
+        "rate hike",
+        "rate cut",
     ],
 }
 
