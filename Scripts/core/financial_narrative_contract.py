@@ -36,6 +36,10 @@ class NewsSemanticProfile:
     news_asset_terms: List[str] = field(default_factory=list)
     news_driver_terms: List[str] = field(default_factory=list)
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+    dense_context_terms: List[str] = field(default_factory=list)
+>>>>>>> Stashed changes
 =======
     dense_context_terms: List[str] = field(default_factory=list)
 >>>>>>> Stashed changes
@@ -55,7 +59,14 @@ class NarrativeBrief:
     macro_transmission: str = ""
     asset_reaction: str = ""
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     risk_read: str = ""
+=======
+    game_theory_read: str = ""
+    volatility_setup: str = ""
+    risk_read: str = ""
+    risk_trigger: str = ""
+>>>>>>> Stashed changes
 =======
     game_theory_read: str = ""
     volatility_setup: str = ""
@@ -73,6 +84,10 @@ _TICKER_NEWS_LANGUAGE: Dict[str, Dict[str, List[str]]] = {
         "asset_terms": ["gold", "bullion", "precious metals", "safe haven"],
         "driver_terms": ["gold futures", "real yields", "treasury yields", "dollar", "dxy", "fed"],
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+        "dense_context_terms": ["10-year Treasury yields", "10Y yields", "real yields", "FOMC", "Fed policy path"],
+>>>>>>> Stashed changes
 =======
         "dense_context_terms": ["10-year Treasury yields", "10Y yields", "real yields", "FOMC", "Fed policy path"],
 >>>>>>> Stashed changes
@@ -83,6 +98,10 @@ _TICKER_NEWS_LANGUAGE: Dict[str, Dict[str, List[str]]] = {
         "asset_terms": ["silver", "precious metals", "gold silver ratio", "industrial demand"],
         "driver_terms": ["silver futures", "real yields", "dollar", "dxy", "fed", "comex"],
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+        "dense_context_terms": ["10-year Treasury yields", "10Y yields", "real yields", "FOMC", "Fed policy path"],
+>>>>>>> Stashed changes
 =======
         "dense_context_terms": ["10-year Treasury yields", "10Y yields", "real yields", "FOMC", "Fed policy path"],
 >>>>>>> Stashed changes
@@ -129,7 +148,10 @@ def _dedupe(values: List[Any]) -> List[str]:
 
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
+=======
+>>>>>>> Stashed changes
 def _profile_data(profile: Mapping[str, Any] | NewsSemanticProfile | Any | None) -> Dict[str, Any]:
     if profile is None:
         return {}
@@ -144,6 +166,9 @@ def _profile_data(profile: Mapping[str, Any] | NewsSemanticProfile | Any | None)
     return {}
 
 
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 _SPARSE_TERM_NORMALIZATION: Dict[str, str] = {
     "bullion": "gold",
@@ -189,6 +214,7 @@ _HIGH_FREQUENCY_NEWS_TERMS: List[str] = [
 
 _TICKER_SPARSE_TERMS: Dict[str, List[str]] = {
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     "GLD": ["gold", "dollar", "fed", "yields"],
     "SLV": ["silver", "gold", "dollar", "fed"],
     "SPY": ["stocks", "fed", "yields", "vix"],
@@ -206,6 +232,16 @@ _TICKER_SPARSE_TERMS: Dict[str, List[str]] = {
     "DX-Y.NYB": ["dollar", "fed", "yields"],
 }
 
+=======
+    "GLD": ["gold", "dollar", "yields"],
+    "SLV": ["silver", "gold", "dollar"],
+    "SPY": ["fed", "yields", "vix"],
+    "QQQ": ["nasdaq", "fed", "dollar"],
+    "^VIX": ["vix", "risk", "fed"],
+    "DX-Y.NYB": ["dollar", "fed", "yields"],
+}
+
+>>>>>>> Stashed changes
 _TICKER_DENSE_TERMS: Dict[str, List[str]] = {
     "GLD": ["gold", "real yields", "dollar", "FOMC", "10-year Treasury yields"],
     "SLV": ["silver", "gold", "real yields", "dollar", "FOMC"],
@@ -236,6 +272,9 @@ def narrative_option_posture_metrics_for_tickers(tickers: List[str] | None) -> L
         metrics.extend(_NARRATIVE_OPTION_POSTURE_METRICS.get(ticker, []))
     return _dedupe(metrics)
 
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 
 def _obj_get(obj: Any, key: str, default: Any = None) -> Any:
@@ -276,6 +315,10 @@ def build_news_semantic_profile(
     asset_terms: List[str] = []
     driver_terms: List[str] = []
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+    dense_context_terms: List[str] = []
+>>>>>>> Stashed changes
 =======
     dense_context_terms: List[str] = []
 >>>>>>> Stashed changes
@@ -288,6 +331,10 @@ def build_news_semantic_profile(
         asset_terms.extend(profile.get("asset_terms", []))
         driver_terms.extend(profile.get("driver_terms", []))
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+        dense_context_terms.extend(profile.get("dense_context_terms", []))
+>>>>>>> Stashed changes
 =======
         dense_context_terms.extend(profile.get("dense_context_terms", []))
 >>>>>>> Stashed changes
@@ -317,6 +364,10 @@ def build_news_semantic_profile(
         news_asset_terms=_dedupe(asset_terms),
         news_driver_terms=_dedupe(driver_terms),
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+        dense_context_terms=_dedupe(dense_context_terms),
+>>>>>>> Stashed changes
 =======
         dense_context_terms=_dedupe(dense_context_terms),
 >>>>>>> Stashed changes
@@ -333,7 +384,11 @@ def expanded_news_rerank_query(original_query: str, profile: Mapping[str, Any] |
     """
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     data = profile.model_dump() if isinstance(profile, NewsSemanticProfile) else dict(profile or {})
+=======
+    data = _profile_data(profile)
+>>>>>>> Stashed changes
 =======
     data = _profile_data(profile)
 >>>>>>> Stashed changes
@@ -352,7 +407,10 @@ def expanded_news_rerank_query(original_query: str, profile: Mapping[str, Any] |
 
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
+=======
+>>>>>>> Stashed changes
 def dense_news_terms(profile: Mapping[str, Any] | NewsSemanticProfile | None, *, max_terms: int = 5) -> List[str]:
     """Return compact dense-only semantic terms.
 
@@ -376,6 +434,9 @@ def dense_news_terms(profile: Mapping[str, Any] | NewsSemanticProfile | None, *,
     return terms[: max(max_terms, 1)]
 
 
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 def dense_news_semantic_query(
     original_query: str,
@@ -386,11 +447,15 @@ def dense_news_semantic_query(
     """Dense query can carry semantic context because transformer embeddings handle it well."""
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     data = profile.model_dump() if isinstance(profile, NewsSemanticProfile) else dict(profile or {})
     terms = _dedupe(
         list(data.get("news_asset_terms") or [])[:5]
         + list(data.get("news_driver_terms") or [])[:5]
     )
+=======
+    terms = dense_news_terms(profile, max_terms=5)
+>>>>>>> Stashed changes
 =======
     terms = dense_news_terms(profile, max_terms=5)
 >>>>>>> Stashed changes
@@ -414,7 +479,11 @@ def sparse_news_keyword_query(
     """
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     data = profile.model_dump() if isinstance(profile, NewsSemanticProfile) else dict(profile or {})
+=======
+    data = _profile_data(profile)
+>>>>>>> Stashed changes
 =======
     data = _profile_data(profile)
 >>>>>>> Stashed changes
@@ -457,7 +526,11 @@ def structured_news_relevance_score(
     """Metadata-aware score for supplemental news ordering; no regex needed."""
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     data = profile.model_dump() if isinstance(profile, NewsSemanticProfile) else dict(profile or {})
+=======
+    data = _profile_data(profile)
+>>>>>>> Stashed changes
 =======
     data = _profile_data(profile)
 >>>>>>> Stashed changes
@@ -528,7 +601,10 @@ def _market_value(values: Mapping[str, Any], *keys: str) -> Any:
 
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
+=======
+>>>>>>> Stashed changes
 def _primary_ticker_bundle(values: Mapping[str, Any], primary: str) -> Dict[str, Any]:
     primary = str(primary or "").upper().strip()
     if not primary:
@@ -564,6 +640,9 @@ def _fmt_num(value: Any, digits: int = 2) -> str:
     return str(value)
 
 
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 def build_narrative_brief(
     *,
@@ -590,9 +669,17 @@ def build_narrative_brief(
     gld_move = _market_value(values, "GLD_change_pct", "GLD_SPOT_change_pct")
     slv_move = _market_value(values, "SLV_change_pct", "SLV_SPOT_change_pct")
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+    gld_value = _market_value(values, "GLD_value", "GLD_SPOT_value")
+    slv_value = _market_value(values, "SLV_value", "SLV_SPOT_value")
+    dxy_value = _market_value(values, "DXY_value", "DX_Y_NYB_value")
+>>>>>>> Stashed changes
     dxy_move = _market_value(values, "DXY_change_pct", "DX_Y_NYB_change_pct")
+    ten_year_value = _market_value(values, "TNX_value", "TNX_close", "US10Y_value", "US10Y_yield")
     vix_value = _market_value(values, "VIX_value")
     gpr_pct = _market_value(values, "gpr_percentile")
+<<<<<<< Updated upstream
 =======
     gld_value = _market_value(values, "GLD_value", "GLD_SPOT_value")
     slv_value = _market_value(values, "SLV_value", "SLV_SPOT_value")
@@ -601,6 +688,8 @@ def build_narrative_brief(
     ten_year_value = _market_value(values, "TNX_value", "TNX_close", "US10Y_value", "US10Y_yield")
     vix_value = _market_value(values, "VIX_value")
     gpr_pct = _market_value(values, "gpr_percentile")
+=======
+>>>>>>> Stashed changes
     atm_iv = _market_value(values, "latest_atm_iv")
     iv_rank = _market_value(values, "latest_atm_iv_rank_pct")
     iv_skew = _market_value(values, "latest_iv_skew")
@@ -608,6 +697,9 @@ def build_narrative_brief(
     avg_spread_pct = ticker_bundle.get("avg_spread_pct")
     liquid_contracts = ticker_bundle.get("liquid_contracts")
     market_impact_risk = ticker_bundle.get("market_impact_risk")
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 
     asset_label = {
@@ -620,8 +712,11 @@ def build_narrative_brief(
     }.get(primary, primary or "the asset")
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     headline = posture.get("posture_takeaway") or f"For {topic}, the cleaner read is a contextual macro/news posture rather than a live options escalation."
 =======
+=======
+>>>>>>> Stashed changes
     if primary in {"GLD", "SLV"}:
         level_text = ""
         if primary == "GLD" and gld_value is not None:
@@ -636,6 +731,9 @@ def build_narrative_brief(
         headline = posture.get("posture_takeaway") or (
             f"For {topic}, the cleaner read is a macro/news transmission narrative anchored to the retrieved cross-asset evidence."
         )
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
     if news_line:
         news_driver = f"The news driver to weigh is {news_line}."
@@ -652,6 +750,11 @@ def build_narrative_brief(
     if vix_value is not None:
         transmission_bits.append(f"volatility remains a market-risk gauge (VIX {vix_value})")
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+    if primary in {"GLD", "SLV"}:
+        transmission_bits.append("yield direction is explicitly part of the metals news channel")
+>>>>>>> Stashed changes
 =======
     if primary in {"GLD", "SLV"}:
         transmission_bits.append("yield direction is explicitly part of the metals news channel")
@@ -670,20 +773,29 @@ def build_narrative_brief(
     if slv_move is not None and primary != "SLV":
         reaction_bits.append(f"SLV adds the silver confirmation leg ({slv_move}% move)")
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
+=======
+>>>>>>> Stashed changes
     if iv_rank is not None:
         reaction_bits.append(f"IV rank is {_fmt_num(iv_rank)}%, so optionality is part of the setup rather than a footnote")
     if iv_skew is not None:
         reaction_bits.append(f"IV skew is {_fmt_num(iv_skew, 4)}, framing put-versus-call premium asymmetry")
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
     if not reaction_bits:
         reaction_bits.append(f"{asset_label} should be framed through the retrieved macro/news channel, not through ticker text alone")
     asset_reaction = "Asset reaction: " + "; ".join(reaction_bits[:3]) + "."
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     risk_read = posture.get("escalation_risk_read") or "Main risk: the setup weakens if fresh headlines, dollar/yield direction, or volatility confirmation move against the narrative."
     what_would_change = "What would change the view: fresher asset-relevant news, a clear reversal in dollar/yield pressure, or options evidence strong enough to justify moving beyond an informational read."
 =======
+=======
+>>>>>>> Stashed changes
     news_chunks = list(supplemental_news_context or []) + list(gold_context or [])
     if _has_central_bank_signal(news_chunks):
         game_theory_read = (
@@ -738,6 +850,9 @@ def build_narrative_brief(
         "What would change the view: fresher asset-relevant news, a clear reversal in dollar/yield pressure, "
         "or options evidence that changes the long-vol versus wait-for-confirmation balance."
     )
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 
     return NarrativeBrief(
@@ -746,7 +861,14 @@ def build_narrative_brief(
         macro_transmission=macro_transmission.strip(),
         asset_reaction=asset_reaction.strip(),
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
         risk_read=str(risk_read).strip(),
+=======
+        game_theory_read=game_theory_read.strip(),
+        volatility_setup=volatility_setup.strip(),
+        risk_read=str(risk_read).strip(),
+        risk_trigger=risk_trigger.strip(),
+>>>>>>> Stashed changes
 =======
         game_theory_read=game_theory_read.strip(),
         volatility_setup=volatility_setup.strip(),
@@ -758,7 +880,10 @@ def build_narrative_brief(
 
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
+=======
+>>>>>>> Stashed changes
 def news_contract_from_chunks(
     chunks: List[Any],
     tickers: List[str],
@@ -827,6 +952,9 @@ def news_contract_from_chunks(
     )
 
 
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 def render_narrative_brief_block(brief: Mapping[str, Any] | NarrativeBrief | None) -> str:
     data = brief.model_dump() if isinstance(brief, NarrativeBrief) else dict(brief or {})
@@ -838,7 +966,14 @@ def render_narrative_brief_block(brief: Mapping[str, Any] | NarrativeBrief | Non
         ("macro_transmission", "Macro transmission"),
         ("asset_reaction", "Asset reaction"),
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
         ("risk_read", "Risk read"),
+=======
+        ("game_theory_read", "Game-theory read"),
+        ("volatility_setup", "Volatility setup"),
+        ("risk_read", "Risk read"),
+        ("risk_trigger", "Risk trigger"),
+>>>>>>> Stashed changes
 =======
         ("game_theory_read", "Game-theory read"),
         ("volatility_setup", "Volatility setup"),

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 from typing import Any, Dict, List, Mapping
+=======
+from typing import Any, Dict, List, Mapping, Set
+>>>>>>> Stashed changes
 =======
 from typing import Any, Dict, List, Mapping, Set
 >>>>>>> Stashed changes
@@ -136,7 +140,10 @@ def build_silver_citation_registry(
 
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
+=======
+>>>>>>> Stashed changes
 def _gold_obj_get(obj: Any, key: str, default: Any = None) -> Any:
     if isinstance(obj, Mapping):
         return obj.get(key, default)
@@ -226,6 +233,9 @@ def resolve_gold_anchor_ref(anchor: str, registry: Mapping[str, Any] | None) -> 
     return {"anchor": anchor_text, "resolution_status": "unresolved", "resolved_ref": ""}
 
 
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 def parse_silver_inline_payload(payload_text: str) -> List[Dict[str, Any]]:
     refs: List[Dict[str, Any]] = []
@@ -444,11 +454,19 @@ def build_slot_evidence_contracts(
             "slot_name": "equity_vol_signal",
             "slot_label": slot_labels.get("equity_vol_signal", "equity implied-volatility signal"),
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
             "satisfaction_mode": "evidence_required",
             "required_disclosures": [],
             "min_groups_required": 1,
             "evidence_groups": [
                 _group("atm_iv", "ATM IV", ["latest_atm_iv"]),
+=======
+            "satisfaction_mode": "optional_evidence",
+            "required_disclosures": [],
+            "min_groups_required": 1,
+            "evidence_groups": [
+                _group("atm_iv_rank_or_skew", "ATM IV, IV rank, or skew", ["latest_atm_iv", "latest_atm_iv_rank_pct", "latest_iv_skew"], min_tokens_required=1),
+>>>>>>> Stashed changes
 =======
             "satisfaction_mode": "optional_evidence",
             "required_disclosures": [],
@@ -718,13 +736,19 @@ def semantic_slot_evidence_eval(
 
         if not active:
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
             if mode == "evidence_or_disclose" and disclosure_present:
 =======
+=======
+>>>>>>> Stashed changes
             if mode == "optional_evidence":
                 slot_status[slot_name_s] = "not_applicable"
                 slot_disclosure_honesty[slot_name_s] = None
                 slot_strength_scores[slot_name_s] = 1.0
             elif mode == "evidence_or_disclose" and disclosure_present:
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
                 slot_status[slot_name_s] = "disclosed_unanswerable"
                 slot_disclosure_honesty[slot_name_s] = True
@@ -755,14 +779,20 @@ def semantic_slot_evidence_eval(
             continue
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
         if mode == "evidence_or_disclose" and disclosure_present:
 =======
+=======
+>>>>>>> Stashed changes
         if mode == "optional_evidence":
             slot_status[slot_name_s] = "optional_unmentioned"
             slot_disclosure_honesty[slot_name_s] = None
             slot_evidence_strength[slot_name_s] = "weak" if avg_coverage > 0 else None
             slot_strength_scores[slot_name_s] = 0.75
         elif mode == "evidence_or_disclose" and disclosure_present:
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
             slot_status[slot_name_s] = "disclosed_unanswerable"
             slot_disclosure_honesty[slot_name_s] = True
@@ -915,6 +945,10 @@ def evaluate_retrieval_slot_support(
             continue
         groups = list(contract.get("evidence_groups") or [])
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+        mode = str(contract.get("satisfaction_mode") or "evidence_required")
+>>>>>>> Stashed changes
 =======
         mode = str(contract.get("satisfaction_mode") or "evidence_required")
 >>>>>>> Stashed changes
@@ -932,8 +966,11 @@ def evaluate_retrieval_slot_support(
             satisfied_groups += 1
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
         if slot_name_s in missing_slots and satisfied_groups < min_groups_required:
 =======
+=======
+>>>>>>> Stashed changes
         if mode == "optional_evidence" and active_groups == 0:
             slot_status[slot_name_s] = "optional_unretrieved"
             slot_strength_scores[slot_name_s] = 1.0
@@ -941,6 +978,9 @@ def evaluate_retrieval_slot_support(
             slot_status[slot_name_s] = "retrieved" if satisfied_groups >= min_groups_required else "partial"
             slot_strength_scores[slot_name_s] = 1.0 if satisfied_groups >= min_groups_required else 0.75
         elif slot_name_s in missing_slots and satisfied_groups < min_groups_required:
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
             slot_status[slot_name_s] = "missing_required_retrieval"
             slot_strength_scores[slot_name_s] = 0.0
@@ -956,9 +996,12 @@ def evaluate_retrieval_slot_support(
 
     applicable = [status for status in slot_status.values() if status != "not_applicable"]
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     retrieved = [status for status in slot_status.values() if status in {"retrieved", "coverage_disclosed"}]
     hard_gate_pass = bool(slot_status) and all(status in {"retrieved", "coverage_disclosed"} for status in slot_status.values())
 =======
+=======
+>>>>>>> Stashed changes
     retrieved = [status for status in slot_status.values() if status in {"retrieved", "coverage_disclosed", "optional_unretrieved"}]
     required_slots = [
         str(slot)
@@ -969,6 +1012,9 @@ def evaluate_retrieval_slot_support(
         slot_status.get(slot) in {"retrieved", "coverage_disclosed"}
         for slot in required_slots
     )
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 
     return {
