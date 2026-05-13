@@ -30,6 +30,10 @@ Core capabilities (this version):
 
 import asyncio
 import copy
+<<<<<<< Updated upstream
+=======
+import hashlib
+>>>>>>> Stashed changes
 import json
 import logging
 import os
@@ -86,6 +90,15 @@ from Scripts.core.financial_ontology import (
 )
 from Scripts.core.financial_reasoning_contract import build_data_capability_profile
 from Scripts.core.evidence_contracts import build_slot_evidence_contracts, canonical_query_family, evaluate_retrieval_slot_support
+<<<<<<< Updated upstream
+=======
+from Scripts.core.financial_narrative_contract import (
+    dense_news_semantic_query,
+    dense_news_terms,
+    news_contract_from_chunks,
+    sparse_news_keyword_query,
+)
+>>>>>>> Stashed changes
 from Scripts.core.liquidity_policy import resolve_primary_ticker
 from Scripts.core.sec_analysis import compose_sec_analysis_bundle
 from Scripts.observability.audit import append_audit_jsonl
@@ -106,6 +119,11 @@ logger = logging.getLogger(__name__)
 # if SQL succeeds the LLM will prefer precise numerics; if SQL fails there is
 # always at least one news anchor. This does NOT change business routing.
 _SQL_ONLY_FALLBACK_TOPK = 2
+
+# Maximum number of (dense_vec, sparse_vec) pairs to keep in the per-process
+# query-vector cache.  Capped to avoid unbounded memory growth on long-running
+# server processes.  FIFO eviction (insertion-order dict).
+_EMBEDDING_CACHE_MAX = 32
 
 # Max number of novel tickers the HE back-injection can promote to a real
 # Silver compensation query. A hard cap protects the silver_timeout budget:
@@ -247,6 +265,11 @@ class MasterRetriever:
         # --- 3. Runtime knobs (env-tunable without code change) ---
         self.gold_timeout = float(os.getenv("GOLD_TIMEOUT", 15.0))
         self.silver_timeout = float(os.getenv("SILVER_TIMEOUT", 10.0))
+
+        # --- 4. Per-process query-vector cache (FIFO, process-scoped) ---
+        # Keyed on sha256(dense_text + "\x00" + sparse_text) so identical
+        # semantic queries within a Streamlit session skip re-embedding.
+        self._embedding_cache: Dict[str, Any] = {}
 
         logger.info(
             f"🏛️ MasterRetriever ready | Gold_TO: {self.gold_timeout}s | "
@@ -834,7 +857,46 @@ class MasterRetriever:
         fallback_tier: str,
         latency: float,
         stage: str,
+<<<<<<< Updated upstream
     ) -> None:
+=======
+        compensation_targets: Optional[List[str]] = None,
+    ) -> None:
+        metadata = getattr(transform_result, "metadata", None)
+        requested_gold_sources = {
+            str(getattr(s, "value", s) or "").strip().lower()
+            for s in (getattr(metadata, "source_types", None) or [])
+        }
+        gold_source_types = sorted(requested_gold_sources & {"news", "sec", "gpr"})
+        audit_extra: Dict[str, Any] = {
+            "gold_source_types": gold_source_types,
+            "metadata_tickers": [
+                str(ticker).upper().strip()
+                for ticker in (getattr(metadata, "tickers", None) or [])
+                if str(ticker).strip()
+            ],
+            "compensation_targets": list(compensation_targets or []),
+        }
+        if gold_source_types == ["news"]:
+            profile = getattr(metadata, "news_semantic_profile", {}) or {}
+            dense_query = dense_news_semantic_query(
+                query,
+                profile,
+                semantic_context=getattr(transform_result.hyde, "hyde_paragraph", ""),
+            )
+            sparse_query = sparse_news_keyword_query(
+                profile,
+                fallback_query=getattr(transform_result.hyde, "rerank_query", query),
+            )
+            audit_extra.update({
+                "dense_query_used": dense_query,
+                "dense_terms": dense_news_terms(profile),
+                "dense_terms_count": len(dense_news_terms(profile)),
+                "sparse_query_used": sparse_query,
+                "sparse_terms": str(sparse_query or "").split(),
+                "sparse_terms_count": len(str(sparse_query or "").split()),
+            })
+>>>>>>> Stashed changes
         payload = {
             "timestamp": datetime.now().isoformat(),
             "original_query": query,
@@ -848,6 +910,10 @@ class MasterRetriever:
             "status": "TIMEOUT",
             "error_msg": f"{stage} timeout before retriever audit emission",
             "retrieval_stage": stage,
+<<<<<<< Updated upstream
+=======
+            **audit_extra,
+>>>>>>> Stashed changes
         }
         try:
             append_audit_jsonl(
@@ -1114,6 +1180,10 @@ class MasterRetriever:
         in_scope_tickers: Optional[List[str]] = None,
         out_of_scope_tickers: Optional[List[str]] = None,
         refusal_reason: str = "",
+<<<<<<< Updated upstream
+=======
+        compensation_values: Optional[Dict[str, Any]] = None,
+>>>>>>> Stashed changes
     ) -> tuple[Dict[str, Any], Dict[str, Any]]:
         query_family = canonical_query_family(self._infer_query_family(metadata, user_query))
         primary_theme = self._resolved_primary_theme(metadata)
@@ -1270,6 +1340,15 @@ class MasterRetriever:
             query_slots=query_slots,
             capability_profile=data_capability_profile,
         )
+<<<<<<< Updated upstream
+=======
+        # Merge compensation values (IV/skew/liquidity per ticker) into the
+        # silver_values dict so _candidate_keys_for_token can satisfy slots like
+        # iv_skew_signal (needs latest_iv_skew) and liquidity_signal (needs
+        # GLD_liquid_contracts / GLD_avg_spread_pct etc.) via suffix matching.
+        # evidence_contracts.py is unchanged — only the input dict is enriched.
+        merged_silver_values = {**truth_values, **(compensation_values or {})}
+>>>>>>> Stashed changes
         retrieval_slot_support = evaluate_retrieval_slot_support(
             slot_contracts=slot_evidence_contracts,
             retrieval_outcome={
@@ -1280,7 +1359,11 @@ class MasterRetriever:
                 "supplemental_news_status": supplemental_news_status,
                 "supplemental_news_count": supplemental_news_count,
             },
+<<<<<<< Updated upstream
             silver_values=truth_values,
+=======
+            silver_values=merged_silver_values,
+>>>>>>> Stashed changes
             gold_ctx=gold_context or [],
         )
         hard_data_sufficient_for_answer = bool(
@@ -1484,26 +1567,102 @@ class MasterRetriever:
     # B. Engine wrappers (per-engine timeouts + exception isolation)
     # ======================================================================
 
+    async def _precompute_query_vectors(
+        self,
+        transform_result: FullTransformationResult,
+    ) -> Optional[Any]:
+        """Compute (dense_vec, sparse_vec) outside any timeout budget.
+
+        Checks the per-process embedding cache first so repeated queries
+        (e.g. Streamlit re-runs with the same asset/time window) are instant.
+        Cache uses FIFO eviction at _EMBEDDING_CACHE_MAX entries.
+
+        Returns
+        -------
+        (dense_vec, sparse_vec) tuple, or None on failure (caller proceeds
+        without precomputed vecs and falls back to in-flight embedding).
+        """
+        try:
+            profile = getattr(transform_result.metadata, "news_semantic_profile", {}) or {}
+            hyde_para = getattr(transform_result.hyde, "hyde_paragraph", "") or ""
+            rerank_q = getattr(transform_result.hyde, "rerank_query", "") or ""
+            dense_text = dense_news_semantic_query(rerank_q, profile, semantic_context=hyde_para)
+            sparse_text = sparse_news_keyword_query(profile, fallback_query=rerank_q)
+            cache_key = hashlib.sha256(
+                f"{dense_text}\x00{sparse_text}".encode("utf-8", errors="replace")
+            ).hexdigest()
+
+            if cache_key in self._embedding_cache:
+                logger.debug("[EmbedCache] HIT key=%s", cache_key[:12])
+                return self._embedding_cache[cache_key]
+
+            dense_vec, sparse_vec = await asyncio.gather(
+                asyncio.to_thread(lambda: self.qdrant.dense_model.embed_query(dense_text)),
+                asyncio.to_thread(
+                    lambda: list(self.qdrant.sparse_model.query_embed(sparse_text))[0]
+                ),
+            )
+            if len(self._embedding_cache) >= _EMBEDDING_CACHE_MAX:
+                self._embedding_cache.pop(next(iter(self._embedding_cache)))
+            self._embedding_cache[cache_key] = (dense_vec, sparse_vec)
+            logger.debug(
+                "[EmbedCache] MISS — stored key=%s | cache_size=%d",
+                cache_key[:12],
+                len(self._embedding_cache),
+            )
+            return dense_vec, sparse_vec
+        except Exception as exc:
+            logger.warning("[_precompute_query_vectors] failed (non-fatal): %s", exc)
+            return None
+
     async def _fetch_gold_with_telemetry(
         self,
         query: str,
         transform_result: FullTransformationResult,
         top_k: int = 5,
         precomputed_vecs: Optional[Any] = None,
+<<<<<<< Updated upstream
     ) -> List[Any]:
         """Gold wrapper with independent timeout + exception isolation.
 
         Forwards the live `time_predicates` dict (compiled once upstream in
         `_compute_time_range`) so Qdrant can build source-specific time
         filters rather than rederiving the window on every call.
+=======
+        compensation_targets: Optional[List[str]] = None,
+    ) -> List[Any]:
+        """Gold wrapper with independent timeout + exception isolation.
+
+        For news-only queries, embeddings are precomputed HERE, before the
+        asyncio.wait_for budget starts.  This decouples CPU-bound SPLADE/
+        sentence-transformers compute (50-100 s on constrained CPU) from the
+        Qdrant search + CrossEncoder reranking budget (~5-8 s), so GOLD_TIMEOUT
+        only needs to cover the latter.  The LRU cache in _precompute_query_vectors
+        makes repeated queries within a session effectively free.
+>>>>>>> Stashed changes
 
         Parameters
         ----------
         precomputed_vecs
+<<<<<<< Updated upstream
             (dense_vec, sparse_vec) pre-computed upstream when both Gold and
             SupplementalNews run for the same query.  Forwarded to
             `retrieve_async` to skip redundant embedding work.
+=======
+            Optional caller-supplied (dense_vec, sparse_vec).  If None and the
+            query is news-only, this method precomputes via _precompute_query_vectors.
+>>>>>>> Stashed changes
         """
+        gold_src = {
+            str(getattr(s, "value", s))
+            for s in (getattr(transform_result.metadata, "source_types", []) or [])
+        }
+        # Precompute outside the timeout budget for news-only queries.
+        # Mixed (e.g. news+sec) or non-news queries fall through to the
+        # in-flight path inside retrieve_async unchanged.
+        if precomputed_vecs is None and gold_src <= {"news"}:
+            precomputed_vecs = await self._precompute_query_vectors(transform_result)
+
         t0 = time.time()
         predicates = getattr(self, "_current_predicate_set", None)
         try:
@@ -1527,6 +1686,10 @@ class MasterRetriever:
                 fallback_tier="gold_timeout",
                 latency=time.time() - t0,
                 stage="gold",
+<<<<<<< Updated upstream
+=======
+                compensation_targets=compensation_targets,
+>>>>>>> Stashed changes
             )
             return []
         except Exception as e:
@@ -1908,7 +2071,12 @@ class MasterRetriever:
         supplemental_news_task = None
 
         if route == "hybrid_both":
-            gold_task = self._fetch_gold_with_telemetry(user_query, transform_res, top_k=5)
+            gold_task = self._fetch_gold_with_telemetry(
+                user_query,
+                transform_res,
+                top_k=5,
+                compensation_targets=compensation_targets,
+            )
             if metadata.tickers:
                 silver_task = self._fetch_silver_with_telemetry(metadata)
             # Optional HE compensation — only fires when the HE introduced
@@ -1917,7 +2085,12 @@ class MasterRetriever:
                 compensation_task = self._run_silver_compensation(metadata, compensation_targets)
 
         elif route == "vector_only":
-            gold_task = self._fetch_gold_with_telemetry(user_query, transform_res, top_k=5)
+            gold_task = self._fetch_gold_with_telemetry(
+                user_query,
+                transform_res,
+                top_k=5,
+                compensation_targets=compensation_targets,
+            )
             # Primary Silver is OFF by design for vector_only; compensation is
             # the ONLY path into Parquet — realises "Entity Back-Injection".
             if compensation_targets:
@@ -1932,7 +2105,10 @@ class MasterRetriever:
             if metadata.tickers:
                 silver_task = self._fetch_silver_with_telemetry(metadata)
             gold_task = self._fetch_gold_with_telemetry(
-                user_query, transform_res, top_k=_SQL_ONLY_FALLBACK_TOPK
+                user_query,
+                transform_res,
+                top_k=_SQL_ONLY_FALLBACK_TOPK,
+                compensation_targets=compensation_targets,
             )
             # HE compensation is still available when HE produces novel tickers —
             # realises "Semantic-SQL Parallelism". The hyde_anticipation payload
@@ -1944,7 +2120,12 @@ class MasterRetriever:
         else:
             # Unknown route — degrade to hybrid.
             logger.warning(f"[Route] Unknown primary_route={route} — falling back to hybrid_both.")
-            gold_task = self._fetch_gold_with_telemetry(user_query, transform_res, top_k=5)
+            gold_task = self._fetch_gold_with_telemetry(
+                user_query,
+                transform_res,
+                top_k=5,
+                compensation_targets=compensation_targets,
+            )
             if metadata.tickers:
                 silver_task = self._fetch_silver_with_telemetry(metadata)
 
@@ -2038,6 +2219,32 @@ class MasterRetriever:
 
         if partial_failure:
             final_context["status"] = "partial_failure"
+
+        # ==================================================================
+        # 7.5a  News contract from gold chunks (deterministic, no LLM)
+        # ==================================================================
+        # Build a light NarrativeBrief from whatever gold news chunks were
+        # returned, using only field extraction and the ontology dict.
+        # Stored under final_context["news_contract"] for the Analyst to
+        # consume directly without repeating chunk iteration.
+        try:
+            news_gold_chunks = [
+                c for c in (final_context.get("gold_context") or [])
+                if str(
+                    getattr(getattr(c, "source_type", None), "value", None)
+                    or (c.get("source_type") if isinstance(c, dict) else "")
+                    or ""
+                ).strip().lower() == "news"
+            ]
+            if news_gold_chunks:
+                _nc_tickers = list(getattr(transform_res.metadata, "tickers", []) or [])
+                final_context["news_contract"] = news_contract_from_chunks(
+                    chunks=news_gold_chunks,
+                    tickers=_nc_tickers,
+                    original_query=user_query,
+                ).model_dump()
+        except Exception as _nc_err:
+            logger.warning("[NewsContract] failed (non-fatal): %s", _nc_err)
 
         # ==================================================================
         # 7.5  Macro → Silver anchor injection (Root Cause A fix, 2026-04-22)
@@ -2196,6 +2403,9 @@ class MasterRetriever:
             final_context["silver_context_frozen"] = None
 
         try:
+            _comp_vals = dict(
+                ((final_context.get("silver_context") or {}).get("compensation") or {}).get("values") or {}
+            )
             scope_contract, retrieval_outcome = self._build_runtime_contracts(
                 user_query=user_query,
                 route=route,
@@ -2209,6 +2419,10 @@ class MasterRetriever:
                 is_fallback=(final_context["status"] != "success"),
                 in_scope_tickers=list(transform_res.in_scope_tickers or []),
                 out_of_scope_tickers=list(transform_res.out_of_scope_tickers or []),
+<<<<<<< Updated upstream
+=======
+                compensation_values=_comp_vals,
+>>>>>>> Stashed changes
             )
             final_context["scope_contract"] = scope_contract
             final_context["retrieval_outcome"] = retrieval_outcome

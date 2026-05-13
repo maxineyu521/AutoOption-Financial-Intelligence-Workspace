@@ -144,6 +144,21 @@ class SentimentTarget(str, Enum):
 # 2. TWO-STAGE LLM OUTPUT SCHEMAS
 # ==========================================
 
+class NewsSemanticProfilePayload(BaseModel):
+    """Closed JSON-schema payload for deterministic news semantic expansion."""
+
+    tickers: List[str] = Field(default_factory=list)
+    canonical_topics: List[str] = Field(default_factory=list)
+    expanded_topics: List[str] = Field(default_factory=list)
+    news_search_terms: List[str] = Field(default_factory=list)
+    news_asset_terms: List[str] = Field(default_factory=list)
+    news_driver_terms: List[str] = Field(default_factory=list)
+    dense_context_terms: List[str] = Field(default_factory=list)
+    impacted_asset_aliases: List[str] = Field(default_factory=list)
+    impact_basket: List[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
 class MetadataExtraction(BaseModel):
     """
     STAGE 1: Pure Metadata Extraction (The Extractor)
@@ -199,8 +214,17 @@ class MetadataExtraction(BaseModel):
         default_factory=list,
         description="Macro driver words used by news sources for this narrative, e.g. real yields, dollar, Fed."
     )
+<<<<<<< Updated upstream
     news_semantic_profile: Dict[str, Any] = Field(
         default_factory=dict,
+=======
+    dense_context_terms: List[str] = Field(
+        default_factory=list,
+        description="Dense-only semantic expansion terms. These must not be passed to sparse keyword retrieval."
+    )
+    news_semantic_profile: NewsSemanticProfilePayload = Field(
+        default_factory=NewsSemanticProfilePayload,
+>>>>>>> Stashed changes
         description="Serializable NewsSemanticProfile from financial_narrative_contract."
     )
     analysis_surfaces: List[str] = Field(
@@ -220,7 +244,12 @@ class MetadataExtraction(BaseModel):
         description="Structured answer-shaping profile used by retrieval and reporting."
     )
 
-    model_config = ConfigDict(use_enum_values=True, populate_by_name=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(
+        use_enum_values=True,
+        populate_by_name=True,
+        arbitrary_types_allowed=True,
+        extra="forbid",
+    )
 
     @field_validator('tickers')
     @classmethod
@@ -258,6 +287,11 @@ class HyDEGeneration(BaseModel):
         )
         )
 
+<<<<<<< Updated upstream
+=======
+    model_config = ConfigDict(extra="forbid")
+
+>>>>>>> Stashed changes
 class BuilderQueryContract(BaseModel):
     """Structured frontend-builder contract carried alongside the free-text query."""
 
@@ -396,6 +430,10 @@ class ScopeContract(BaseModel):
     news_search_terms: List[str] = Field(default_factory=list)
     news_asset_terms: List[str] = Field(default_factory=list)
     news_driver_terms: List[str] = Field(default_factory=list)
+<<<<<<< Updated upstream
+=======
+    dense_context_terms: List[str] = Field(default_factory=list)
+>>>>>>> Stashed changes
     news_semantic_profile: Dict[str, Any] = Field(default_factory=dict)
     analysis_surfaces: List[str] = Field(default_factory=list)
     comparison_targets: List[str] = Field(default_factory=list)

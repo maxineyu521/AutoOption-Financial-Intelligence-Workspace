@@ -27,9 +27,17 @@ from langchain_openai import ChatOpenAI
 from Scripts.agents.state import AgentFeedback, FinalizerEdit
 from Scripts.agents.prompts import get_checker_prompt
 from Scripts.core.evidence_contracts import (
+<<<<<<< Updated upstream
     build_silver_citation_registry,
     normalize_silver_citation_contract,
     parse_silver_inline_payload,
+=======
+    build_gold_citation_registry,
+    build_silver_citation_registry,
+    normalize_silver_citation_contract,
+    parse_silver_inline_payload,
+    resolve_gold_anchor_ref,
+>>>>>>> Stashed changes
     resolve_silver_anchor_ref,
     semantic_slot_evidence_eval,
 )
@@ -768,10 +776,8 @@ def _deterministic_audit(draft: str, silver_context: Dict[str, Any], gold_contex
     legacy_alias_to_preferred: Dict[str, str] = dict(silver_anchor_sets["legacy_alias_to_preferred"])
     audit_lineage_anchors: Set[str] = set(silver_anchor_sets["audit_lineage_anchors"])
     
-    known_gold_refs: Set[str] = set()
-    for chunk in gold_context or []:
-        br = getattr(chunk, "bronze_ref", None) or (chunk.get("bronze_ref") if isinstance(chunk, dict) else None)
-        if br: known_gold_refs.add(str(br))
+    gold_registry = build_gold_citation_registry(gold_context)
+    known_gold_refs: Set[str] = set(gold_registry.get("known_refs") or set())
 
     # 🌟 架构师增强：容忍 LLM 对 Citation Anchor 的截断和缩写
     for m in _CITATION_RE.finditer(draft):
@@ -880,7 +886,31 @@ def _deterministic_audit(draft: str, silver_context: Dict[str, Any], gold_contex
             if not repeated_label and not legacy_refs:
                 continue
         elif kind == "Gold":
+<<<<<<< Updated upstream
             if anchor not in known_gold_refs:
+=======
+            resolved_gold_ref = resolve_gold_anchor_ref(anchor, gold_registry)
+            if resolved_gold_ref.get("resolution_status") == "alias":
+                feedbacks.append(AgentFeedback(
+                    sender="Checker",
+                    error_type="Minor",
+                    comment=(
+                        f"[rule:GOLD_ALIAS_USED | anchor={anchor}] "
+                        f"Gold citation used a source/date alias; canonical inline citation is "
+                        f"[Gold: {resolved_gold_ref.get('resolved_ref')}]."
+                    ),
+                ))
+            elif resolved_gold_ref.get("resolution_status") == "ambiguous":
+                feedbacks.append(AgentFeedback(
+                    sender="Checker", error_type="Fatal",
+                    comment=(
+                        f"[rule:AMBIGUOUS_GOLD_REF | anchor={anchor}] "
+                        "Gold source/date alias maps to multiple retrieved chunks; use the exact bronze_ref."
+                    ),
+                    missing_lineage_id=[anchor],
+                ))
+            elif resolved_gold_ref.get("resolution_status") != "canonical":
+>>>>>>> Stashed changes
                 feedbacks.append(AgentFeedback(
                     sender="Checker", error_type="Fatal",
                     comment=f"[rule:UNKNOWN_GOLD_REF | anchor={anchor}] Ref '{anchor}' not found.",

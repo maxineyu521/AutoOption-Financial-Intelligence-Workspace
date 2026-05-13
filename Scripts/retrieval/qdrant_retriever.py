@@ -110,7 +110,20 @@ class FinancialHybridRetriever:
         reranker_model_name = os.getenv("RERANKER_MODEL_NAME", "BAAI/bge-reranker-v2-m3")
         self.reranker = CrossEncoder(reranker_model_name, device=device)
         self._last_sec_retrieval_contract: Dict[str, Any] = {}
+<<<<<<< Updated upstream
         
+=======
+
+        # Pre-warm ONNX Runtime thread pool so the first real query does not
+        # absorb the JIT compilation cost (~3-8 s for SPLADE on CPU).
+        try:
+            list(self.sparse_model.query_embed("warmup"))
+            self.dense_model.embed_query("warmup")
+            logger.info("✅ Embedding models warmed up (ONNX thread pool ready).")
+        except Exception as _warmup_err:
+            logger.warning("⚠️ Warmup embedding failed (non-fatal): %s", _warmup_err)
+
+>>>>>>> Stashed changes
         logger.info(f"✅ Models initialized. Reranker: {reranker_model_name}")
         self._is_initialized = True
 
@@ -828,6 +841,16 @@ class FinancialHybridRetriever:
                     getattr(transform_result.hyde, "rerank_query", original_query),
                     profile,
                 )
+<<<<<<< Updated upstream
+=======
+                logger.info(
+                    "🧭 News retrieval queries | dense_terms=%s | sparse_terms=%s | rerank_terms=%s | sparse='%s'",
+                    len(str(dense_query_text or "").split()),
+                    len(str(sparse_query_text or "").split()),
+                    len(str(rerank_query_text or "").split()),
+                    sparse_query_text,
+                )
+>>>>>>> Stashed changes
             requested_sec_forms = self._requested_sec_forms(transform_result.metadata)
             if "sec" in requested_gold_sources and requested_sec_forms:
                 sec_points_by_form = await self._retrieve_sec_payload_context_by_form(
@@ -880,7 +903,13 @@ class FinancialHybridRetriever:
                 }
 
             # Keep compatibility with LangChain embedding invocation API.
+<<<<<<< Updated upstream
             if precomputed_vecs is not None and not _is_news_only:
+=======
+            # Precomputed vecs are accepted for all query types including news-only;
+            # the caller (_fetch_gold_with_telemetry) precomputes outside wait_for.
+            if precomputed_vecs is not None:
+>>>>>>> Stashed changes
                 dense_vec, sparse_vec = precomputed_vecs
             else:
                 dense_query_task = asyncio.to_thread(

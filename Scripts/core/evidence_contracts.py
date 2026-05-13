@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+<<<<<<< Updated upstream
 from typing import Any, Dict, List, Mapping
+=======
+from typing import Any, Dict, List, Mapping, Set
+>>>>>>> Stashed changes
 
 from Scripts.core.financial_ontology import metric_comparison_mode, query_slots_for_family
 
@@ -131,6 +135,98 @@ def build_silver_citation_registry(
     }
 
 
+<<<<<<< Updated upstream
+=======
+def _gold_obj_get(obj: Any, key: str, default: Any = None) -> Any:
+    if isinstance(obj, Mapping):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _gold_source_value(raw_source: Any) -> str:
+    value = getattr(raw_source, "value", raw_source)
+    return str(value or "").strip()
+
+
+def _gold_metadata(chunk: Any) -> Dict[str, Any]:
+    meta = _gold_obj_get(chunk, "metadata", {}) or {}
+    return dict(meta) if isinstance(meta, Mapping) else {}
+
+
+def _normalise_gold_alias(text: str) -> str:
+    return " ".join(str(text or "").strip().split()).lower()
+
+
+def build_gold_citation_registry(gold_context: List[Any] | None) -> Dict[str, Any]:
+    """Build canonical Gold refs plus deterministic citation aliases.
+
+    LLMs sometimes cite the visible source/date tuple instead of the hidden
+    `bronze_ref`.  We resolve only aliases that map to exactly one retrieved
+    chunk, which preserves lineage strictness without turning a formatting
+    mistake into a false fatal.
+    """
+
+    known_refs: Set[str] = set()
+    alias_candidates: Dict[str, Set[str]] = {}
+
+    for chunk in gold_context or []:
+        bronze_ref = str(_gold_obj_get(chunk, "bronze_ref", "") or "").strip()
+        if not bronze_ref:
+            continue
+        known_refs.add(bronze_ref)
+
+        meta = _gold_metadata(chunk)
+        source_raw = _gold_source_value(_gold_obj_get(chunk, "source_type", ""))
+        record_date = str(meta.get("record_date") or meta.get("publish_date") or "").strip()[:10]
+        source_aliases = [source_raw]
+        if source_raw:
+            source_aliases.append(f"SourceType.{source_raw.upper()}")
+            source_aliases.append(source_raw.upper())
+
+        alias_texts = [bronze_ref]
+        for source_alias in source_aliases:
+            if source_alias and record_date:
+                alias_texts.append(f"{source_alias}, record_date={record_date}")
+                alias_texts.append(f"source={source_alias}, record_date={record_date}")
+            if source_alias:
+                alias_texts.append(source_alias)
+
+        for alias in alias_texts:
+            key = _normalise_gold_alias(alias)
+            if key:
+                alias_candidates.setdefault(key, set()).add(bronze_ref)
+
+    alias_to_ref: Dict[str, str] = {}
+    ambiguous_aliases: Set[str] = set()
+    for alias, refs in alias_candidates.items():
+        if len(refs) == 1:
+            alias_to_ref[alias] = next(iter(refs))
+        else:
+            ambiguous_aliases.add(alias)
+
+    return {
+        "known_refs": known_refs,
+        "alias_to_ref": alias_to_ref,
+        "ambiguous_aliases": ambiguous_aliases,
+    }
+
+
+def resolve_gold_anchor_ref(anchor: str, registry: Mapping[str, Any] | None) -> Dict[str, Any]:
+    anchor_text = str(anchor or "").strip()
+    known_refs = set((registry or {}).get("known_refs") or set())
+    if anchor_text in known_refs:
+        return {"anchor": anchor_text, "resolution_status": "canonical", "resolved_ref": anchor_text}
+    alias_key = _normalise_gold_alias(anchor_text)
+    ambiguous = set((registry or {}).get("ambiguous_aliases") or set())
+    if alias_key in ambiguous:
+        return {"anchor": anchor_text, "resolution_status": "ambiguous", "resolved_ref": ""}
+    alias_to_ref = dict((registry or {}).get("alias_to_ref") or {})
+    if alias_key in alias_to_ref:
+        return {"anchor": anchor_text, "resolution_status": "alias", "resolved_ref": alias_to_ref[alias_key]}
+    return {"anchor": anchor_text, "resolution_status": "unresolved", "resolved_ref": ""}
+
+
+>>>>>>> Stashed changes
 def parse_silver_inline_payload(payload_text: str) -> List[Dict[str, Any]]:
     refs: List[Dict[str, Any]] = []
     for raw_piece in str(payload_text or "").split(","):
@@ -347,11 +443,19 @@ def build_slot_evidence_contracts(
         contracts["equity_vol_signal"] = {
             "slot_name": "equity_vol_signal",
             "slot_label": slot_labels.get("equity_vol_signal", "equity implied-volatility signal"),
+<<<<<<< Updated upstream
             "satisfaction_mode": "evidence_required",
             "required_disclosures": [],
             "min_groups_required": 1,
             "evidence_groups": [
                 _group("atm_iv", "ATM IV", ["latest_atm_iv"]),
+=======
+            "satisfaction_mode": "optional_evidence",
+            "required_disclosures": [],
+            "min_groups_required": 1,
+            "evidence_groups": [
+                _group("atm_iv_rank_or_skew", "ATM IV, IV rank, or skew", ["latest_atm_iv", "latest_atm_iv_rank_pct", "latest_iv_skew"], min_tokens_required=1),
+>>>>>>> Stashed changes
             ],
         }
         contracts["macro_vol_signal"] = {
@@ -613,7 +717,15 @@ def semantic_slot_evidence_eval(
             avg_coverage = 0.0
 
         if not active:
+<<<<<<< Updated upstream
             if mode == "evidence_or_disclose" and disclosure_present:
+=======
+            if mode == "optional_evidence":
+                slot_status[slot_name_s] = "not_applicable"
+                slot_disclosure_honesty[slot_name_s] = None
+                slot_strength_scores[slot_name_s] = 1.0
+            elif mode == "evidence_or_disclose" and disclosure_present:
+>>>>>>> Stashed changes
                 slot_status[slot_name_s] = "disclosed_unanswerable"
                 slot_disclosure_honesty[slot_name_s] = True
                 slot_strength_scores[slot_name_s] = 0.75
@@ -642,7 +754,16 @@ def semantic_slot_evidence_eval(
                 slot_strength_scores[slot_name_s] = 0.5
             continue
 
+<<<<<<< Updated upstream
         if mode == "evidence_or_disclose" and disclosure_present:
+=======
+        if mode == "optional_evidence":
+            slot_status[slot_name_s] = "optional_unmentioned"
+            slot_disclosure_honesty[slot_name_s] = None
+            slot_evidence_strength[slot_name_s] = "weak" if avg_coverage > 0 else None
+            slot_strength_scores[slot_name_s] = 0.75
+        elif mode == "evidence_or_disclose" and disclosure_present:
+>>>>>>> Stashed changes
             slot_status[slot_name_s] = "disclosed_unanswerable"
             slot_disclosure_honesty[slot_name_s] = True
             slot_evidence_strength[slot_name_s] = None
@@ -793,6 +914,10 @@ def evaluate_retrieval_slot_support(
             slot_strength_scores[slot_name_s] = 0.75
             continue
         groups = list(contract.get("evidence_groups") or [])
+<<<<<<< Updated upstream
+=======
+        mode = str(contract.get("satisfaction_mode") or "evidence_required")
+>>>>>>> Stashed changes
         min_groups_required = max(int(contract.get("min_groups_required", 1) or 1), 1)
         active_groups = 0
         satisfied_groups = 0
@@ -806,7 +931,17 @@ def evaluate_retrieval_slot_support(
             active_groups += 1
             satisfied_groups += 1
 
+<<<<<<< Updated upstream
         if slot_name_s in missing_slots and satisfied_groups < min_groups_required:
+=======
+        if mode == "optional_evidence" and active_groups == 0:
+            slot_status[slot_name_s] = "optional_unretrieved"
+            slot_strength_scores[slot_name_s] = 1.0
+        elif mode == "optional_evidence":
+            slot_status[slot_name_s] = "retrieved" if satisfied_groups >= min_groups_required else "partial"
+            slot_strength_scores[slot_name_s] = 1.0 if satisfied_groups >= min_groups_required else 0.75
+        elif slot_name_s in missing_slots and satisfied_groups < min_groups_required:
+>>>>>>> Stashed changes
             slot_status[slot_name_s] = "missing_required_retrieval"
             slot_strength_scores[slot_name_s] = 0.0
         elif active_groups == 0:
@@ -820,8 +955,21 @@ def evaluate_retrieval_slot_support(
             slot_strength_scores[slot_name_s] = 0.5
 
     applicable = [status for status in slot_status.values() if status != "not_applicable"]
+<<<<<<< Updated upstream
     retrieved = [status for status in slot_status.values() if status in {"retrieved", "coverage_disclosed"}]
     hard_gate_pass = bool(slot_status) and all(status in {"retrieved", "coverage_disclosed"} for status in slot_status.values())
+=======
+    retrieved = [status for status in slot_status.values() if status in {"retrieved", "coverage_disclosed", "optional_unretrieved"}]
+    required_slots = [
+        str(slot)
+        for slot, contract in contracts.items()
+        if str((contract or {}).get("satisfaction_mode") or "evidence_required") != "optional_evidence"
+    ]
+    hard_gate_pass = bool(slot_status) and all(
+        slot_status.get(slot) in {"retrieved", "coverage_disclosed"}
+        for slot in required_slots
+    )
+>>>>>>> Stashed changes
 
     return {
         "slot_status": slot_status,
