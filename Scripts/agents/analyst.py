@@ -1157,6 +1157,10 @@ def build_finalizer_input_card(
                 narrative_brief.news_driver,
                 narrative_brief.macro_transmission,
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+                narrative_brief.game_theory_read,
+>>>>>>> Stashed changes
 =======
                 narrative_brief.game_theory_read,
 >>>>>>> Stashed changes
@@ -1184,7 +1188,13 @@ def build_finalizer_input_card(
     def _render_safe_asset_read_seed() -> str:
         if query_family in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
             return narrative_brief.asset_reaction
+=======
+            return " ".join(
+                part for part in (narrative_brief.asset_reaction, narrative_brief.volatility_setup) if part
+            ).strip()
+>>>>>>> Stashed changes
 =======
             return " ".join(
                 part for part in (narrative_brief.asset_reaction, narrative_brief.volatility_setup) if part
@@ -1232,7 +1242,13 @@ def build_finalizer_input_card(
             )
         if query_family in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
             return _compact_sentence(narrative_brief.asset_reaction)
+=======
+            return _compact_sentence(
+                " ".join(part for part in (narrative_brief.asset_reaction, narrative_brief.volatility_setup) if part)
+            )
+>>>>>>> Stashed changes
 =======
             return _compact_sentence(
                 " ".join(part for part in (narrative_brief.asset_reaction, narrative_brief.volatility_setup) if part)
@@ -1246,7 +1262,11 @@ def build_finalizer_input_card(
                 part for part in (
                     narrative_brief.headline_read,
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
                     narrative_brief.risk_read,
+=======
+                    narrative_brief.risk_trigger or narrative_brief.risk_read,
+>>>>>>> Stashed changes
 =======
                     narrative_brief.risk_trigger or narrative_brief.risk_read,
 >>>>>>> Stashed changes
@@ -1264,7 +1284,11 @@ def build_finalizer_input_card(
     ):
         direct_answer_seed = f"{posture_takeaway} {_topic_stripped(direct_answer_seed)}".strip()
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     elif posture_takeaway:
+=======
+    elif posture_takeaway and query_family not in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
+>>>>>>> Stashed changes
 =======
     elif posture_takeaway and query_family not in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
 >>>>>>> Stashed changes
@@ -1280,7 +1304,11 @@ def build_finalizer_input_card(
         asset_read_seed=_render_safe_asset_read_seed(),
         risk_seed=_compact_sentence(
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
             narrative_brief.what_would_change
+=======
+            " ".join(part for part in (narrative_brief.risk_trigger, narrative_brief.what_would_change) if part)
+>>>>>>> Stashed changes
 =======
             " ".join(part for part in (narrative_brief.risk_trigger, narrative_brief.what_would_change) if part)
 >>>>>>> Stashed changes
