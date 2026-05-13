@@ -22,6 +22,10 @@ from Scripts.core.financial_narrative_contract import (
     build_news_semantic_profile,
     expanded_news_rerank_query,
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+    narrative_option_posture_metrics_for_tickers,
+>>>>>>> Stashed changes
 =======
     narrative_option_posture_metrics_for_tickers,
 >>>>>>> Stashed changes
@@ -48,6 +52,10 @@ try:
     from .schema import (
         QueryIntent, MetadataExtraction, HyDEGeneration, FullTransformationResult, TimeWindow, BuilderQueryContract,
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+        NewsSemanticProfilePayload,
+>>>>>>> Stashed changes
 =======
         NewsSemanticProfilePayload,
 >>>>>>> Stashed changes
@@ -66,6 +74,10 @@ except ImportError as e:
         from Scripts.retrieval.schema import (
             QueryIntent, MetadataExtraction, HyDEGeneration, FullTransformationResult, TimeWindow, BuilderQueryContract,
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+            NewsSemanticProfilePayload,
+>>>>>>> Stashed changes
 =======
             NewsSemanticProfilePayload,
 >>>>>>> Stashed changes
@@ -262,10 +274,18 @@ class QueryTransformer:
         )
         payload = profile.model_dump()
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
         metadata.news_semantic_profile = payload
         metadata.news_search_terms = list(payload.get("news_search_terms") or [])
         metadata.news_asset_terms = list(payload.get("news_asset_terms") or [])
         metadata.news_driver_terms = list(payload.get("news_driver_terms") or [])
+=======
+        metadata.news_semantic_profile = NewsSemanticProfilePayload.model_validate(payload)
+        metadata.news_search_terms = list(payload.get("news_search_terms") or [])
+        metadata.news_asset_terms = list(payload.get("news_asset_terms") or [])
+        metadata.news_driver_terms = list(payload.get("news_driver_terms") or [])
+        metadata.dense_context_terms = list(payload.get("dense_context_terms") or [])
+>>>>>>> Stashed changes
 =======
         metadata.news_semantic_profile = NewsSemanticProfilePayload.model_validate(payload)
         metadata.news_search_terms = list(payload.get("news_search_terms") or [])
@@ -281,7 +301,10 @@ class QueryTransformer:
         return metadata
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
+=======
+>>>>>>> Stashed changes
     def _apply_narrative_option_posture_metrics(self, metadata: MetadataExtraction) -> MetadataExtraction:
         """Attach GLD/SLV options posture metrics without changing family routing."""
 
@@ -306,6 +329,9 @@ class QueryTransformer:
         metadata.metrics = self._dedupe_keep_order([str(metric).strip() for metric in enriched_metrics if str(metric).strip()])
         return metadata
 
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
     @staticmethod
     def _has_explicit_gpr_intent(metadata: MetadataExtraction, query: str = "") -> bool:
@@ -341,6 +367,7 @@ class QueryTransformer:
         explicit_gpr_intent = self._has_explicit_gpr_intent(metadata, query)
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
         has_options_native_metric = any(is_options_native_metric(metric) for metric in metrics)
         if "options" in source_types or has_options_native_metric:
             normalized_sources: List[str] = ["options"]
@@ -356,6 +383,8 @@ class QueryTransformer:
             )
             return metadata
 
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
         cross_asset_macro_news = (
@@ -378,7 +407,10 @@ class QueryTransformer:
                 [surface for surface in (getattr(metadata, "analysis_surfaces", []) or []) if str(surface).strip().lower() != "geopolitical_context"]
             )
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
+=======
+>>>>>>> Stashed changes
             return metadata
 
         has_options_native_metric = any(is_options_native_metric(metric) for metric in metrics)
@@ -395,6 +427,9 @@ class QueryTransformer:
                 [surface for surface in (getattr(metadata, "analysis_surfaces", []) or []) if str(surface).strip().lower() != "geopolitical_context"]
             )
             return metadata
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
         return metadata
 
@@ -474,6 +509,7 @@ class QueryTransformer:
             and "news narrative" in signals
         )
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
         if ("options" in source_types or any(is_options_native_metric(metric) for metric in metrics)) and not explicit_gpr_intent:
             return "options"
         candidate = str(getattr(metadata, "primary_theme", "") or "").strip().lower()
@@ -483,10 +519,18 @@ class QueryTransformer:
         candidate = str(getattr(metadata, "primary_theme", "") or "").strip().lower()
         if explicit_macro_news_narrative:
             return "cross_asset"
+=======
+        candidate = str(getattr(metadata, "primary_theme", "") or "").strip().lower()
+        if explicit_macro_news_narrative:
+            return "cross_asset"
+>>>>>>> Stashed changes
         if candidate == "cross_asset" and "news" in source_types and "macro_history" in source_types:
             return "cross_asset"
         if ("options" in source_types or any(is_options_native_metric(metric) for metric in metrics)) and not explicit_gpr_intent:
             return "options"
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
         if candidate in {"insider", "geopolitics", "cross_asset", "options"}:
             return candidate
@@ -502,9 +546,17 @@ class QueryTransformer:
         source_types = {str(s).lower() for s in (getattr(metadata, "source_types", []) or [])}
         metrics = [str(m) for m in (getattr(metadata, "metrics", []) or [])]
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
         if "options" in source_types or any(is_options_native_metric(metric) for metric in metrics):
             return "options_surface"
         candidate = str(getattr(metadata, "primary_surface", "") or "").strip().lower()
+=======
+        candidate = str(getattr(metadata, "primary_surface", "") or "").strip().lower()
+        if candidate == "macro_news_surface" and "news" in source_types and "macro_history" in source_types:
+            return "macro_news_surface"
+        if "options" in source_types or any(is_options_native_metric(metric) for metric in metrics):
+            return "options_surface"
+>>>>>>> Stashed changes
 =======
         candidate = str(getattr(metadata, "primary_surface", "") or "").strip().lower()
         if candidate == "macro_news_surface" and "news" in source_types and "macro_history" in source_types:
@@ -805,6 +857,10 @@ class QueryTransformer:
             metadata.expanded_news_topics = self._expanded_news_topics(metadata)
             metadata = self._apply_news_semantic_profile(metadata)
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+            metadata = self._apply_narrative_option_posture_metrics(metadata)
+>>>>>>> Stashed changes
 =======
             metadata = self._apply_narrative_option_posture_metrics(metadata)
 >>>>>>> Stashed changes
@@ -888,7 +944,11 @@ class QueryTransformer:
             # language ("GLD macro regime narrative news narrative") that SPLADE can
             # use efficiently. Only fall back to the keyword expansion when:
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
             #   a) Stage 1 failed (regex fallback — logical_reasoning carries the marker), OR
+=======
+            #   a) Stage 1 failed (deterministic fallback — logical_reasoning carries the marker), OR
+>>>>>>> Stashed changes
 =======
             #   a) Stage 1 failed (deterministic fallback — logical_reasoning carries the marker), OR
 >>>>>>> Stashed changes

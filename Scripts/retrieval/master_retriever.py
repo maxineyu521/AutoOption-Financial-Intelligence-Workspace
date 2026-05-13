@@ -31,6 +31,10 @@ Core capabilities (this version):
 import asyncio
 import copy
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+import hashlib
+>>>>>>> Stashed changes
 =======
 import hashlib
 >>>>>>> Stashed changes
@@ -91,13 +95,19 @@ from Scripts.core.financial_ontology import (
 from Scripts.core.financial_reasoning_contract import build_data_capability_profile
 from Scripts.core.evidence_contracts import build_slot_evidence_contracts, canonical_query_family, evaluate_retrieval_slot_support
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
+=======
+>>>>>>> Stashed changes
 from Scripts.core.financial_narrative_contract import (
     dense_news_semantic_query,
     dense_news_terms,
     news_contract_from_chunks,
     sparse_news_keyword_query,
 )
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 from Scripts.core.liquidity_policy import resolve_primary_ticker
 from Scripts.core.sec_analysis import compose_sec_analysis_bundle
@@ -858,10 +868,15 @@ class MasterRetriever:
         latency: float,
         stage: str,
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     ) -> None:
 =======
         compensation_targets: Optional[List[str]] = None,
     ) -> None:
+=======
+        compensation_targets: Optional[List[str]] = None,
+    ) -> None:
+>>>>>>> Stashed changes
         metadata = getattr(transform_result, "metadata", None)
         requested_gold_sources = {
             str(getattr(s, "value", s) or "").strip().lower()
@@ -896,6 +911,9 @@ class MasterRetriever:
                 "sparse_terms": str(sparse_query or "").split(),
                 "sparse_terms_count": len(str(sparse_query or "").split()),
             })
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
         payload = {
             "timestamp": datetime.now().isoformat(),
@@ -911,6 +929,10 @@ class MasterRetriever:
             "error_msg": f"{stage} timeout before retriever audit emission",
             "retrieval_stage": stage,
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+            **audit_extra,
+>>>>>>> Stashed changes
 =======
             **audit_extra,
 >>>>>>> Stashed changes
@@ -1181,6 +1203,10 @@ class MasterRetriever:
         out_of_scope_tickers: Optional[List[str]] = None,
         refusal_reason: str = "",
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+        compensation_values: Optional[Dict[str, Any]] = None,
+>>>>>>> Stashed changes
 =======
         compensation_values: Optional[Dict[str, Any]] = None,
 >>>>>>> Stashed changes
@@ -1341,13 +1367,19 @@ class MasterRetriever:
             capability_profile=data_capability_profile,
         )
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
+=======
+>>>>>>> Stashed changes
         # Merge compensation values (IV/skew/liquidity per ticker) into the
         # silver_values dict so _candidate_keys_for_token can satisfy slots like
         # iv_skew_signal (needs latest_iv_skew) and liquidity_signal (needs
         # GLD_liquid_contracts / GLD_avg_spread_pct etc.) via suffix matching.
         # evidence_contracts.py is unchanged — only the input dict is enriched.
         merged_silver_values = {**truth_values, **(compensation_values or {})}
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
         retrieval_slot_support = evaluate_retrieval_slot_support(
             slot_contracts=slot_evidence_contracts,
@@ -1360,7 +1392,11 @@ class MasterRetriever:
                 "supplemental_news_count": supplemental_news_count,
             },
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
             silver_values=truth_values,
+=======
+            silver_values=merged_silver_values,
+>>>>>>> Stashed changes
 =======
             silver_values=merged_silver_values,
 >>>>>>> Stashed changes
@@ -1622,6 +1658,7 @@ class MasterRetriever:
         top_k: int = 5,
         precomputed_vecs: Optional[Any] = None,
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     ) -> List[Any]:
         """Gold wrapper with independent timeout + exception isolation.
 
@@ -1633,21 +1670,35 @@ class MasterRetriever:
     ) -> List[Any]:
         """Gold wrapper with independent timeout + exception isolation.
 
+=======
+        compensation_targets: Optional[List[str]] = None,
+    ) -> List[Any]:
+        """Gold wrapper with independent timeout + exception isolation.
+
+>>>>>>> Stashed changes
         For news-only queries, embeddings are precomputed HERE, before the
         asyncio.wait_for budget starts.  This decouples CPU-bound SPLADE/
         sentence-transformers compute (50-100 s on constrained CPU) from the
         Qdrant search + CrossEncoder reranking budget (~5-8 s), so GOLD_TIMEOUT
         only needs to cover the latter.  The LRU cache in _precompute_query_vectors
         makes repeated queries within a session effectively free.
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 
         Parameters
         ----------
         precomputed_vecs
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
             (dense_vec, sparse_vec) pre-computed upstream when both Gold and
             SupplementalNews run for the same query.  Forwarded to
             `retrieve_async` to skip redundant embedding work.
+=======
+            Optional caller-supplied (dense_vec, sparse_vec).  If None and the
+            query is news-only, this method precomputes via _precompute_query_vectors.
+>>>>>>> Stashed changes
 =======
             Optional caller-supplied (dense_vec, sparse_vec).  If None and the
             query is news-only, this method precomputes via _precompute_query_vectors.
@@ -1687,6 +1738,10 @@ class MasterRetriever:
                 latency=time.time() - t0,
                 stage="gold",
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+                compensation_targets=compensation_targets,
+>>>>>>> Stashed changes
 =======
                 compensation_targets=compensation_targets,
 >>>>>>> Stashed changes
@@ -1694,55 +1749,6 @@ class MasterRetriever:
             return []
         except Exception as e:
             logger.error(f"❌ [Gold Failure] {repr(e)}")
-            return []
-
-    async def _fetch_supplemental_news_with_telemetry(
-        self,
-        query: str,
-        transform_result: FullTransformationResult,
-        top_k: int = 5,
-        precomputed_vecs: Optional[Any] = None,
-    ) -> List[Any]:
-        """Supplemental macro-news lane for narrative families.
-
-        Parameters
-        ----------
-        precomputed_vecs
-            (dense_vec, sparse_vec) pre-computed upstream when both Gold and
-            SupplementalNews run for the same query.  Forwarded to
-            `retrieve_supplemental_news_async` to skip redundant embedding.
-        """
-        t0 = time.time()
-        predicates = getattr(self, "_current_predicate_set", None)
-        try:
-            res = await asyncio.wait_for(
-                self.qdrant.retrieve_supplemental_news_async(
-                    original_query=query,
-                    transform_result=transform_result,
-                    top_k=top_k,
-                    time_predicates=predicates,
-                    precomputed_vecs=precomputed_vecs,
-                ),
-                timeout=self.supplemental_news_timeout,
-            )
-            logger.debug(
-                f"📊 [Telemetry] Supplemental news engine finished in {time.time() - t0:.3f}s (top_k={top_k})"
-            )
-            return res
-        except asyncio.TimeoutError:
-            logger.warning(
-                f"⚠️ [Supplemental News Timeout] Exceeded {self.supplemental_news_timeout}s. Returning empty supplemental context."
-            )
-            self._emit_retrieval_timeout_audit(
-                query=query,
-                transform_result=transform_result,
-                fallback_tier="supplemental_news_timeout",
-                latency=time.time() - t0,
-                stage="supplemental_news",
-            )
-            return []
-        except Exception as e:
-            logger.error(f"❌ [Supplemental News Failure] {repr(e)}")
             return []
 
     async def _fetch_silver_with_telemetry(self, metadata: MetadataExtraction) -> Dict[str, Any]:
@@ -2068,7 +2074,6 @@ class MasterRetriever:
         gold_task = None
         silver_task = None
         compensation_task = None
-        supplemental_news_task = None
 
         if route == "hybrid_both":
             gold_task = self._fetch_gold_with_telemetry(
@@ -2134,7 +2139,7 @@ class MasterRetriever:
         # ==================================================================
         awaitables = []
         slots: List[str] = []
-        for name, t in (("gold", gold_task), ("silver", silver_task), ("compensation", compensation_task), ("supplemental_news", supplemental_news_task)):
+        for name, t in (("gold", gold_task), ("silver", silver_task), ("compensation", compensation_task)):
             if t is not None:
                 awaitables.append(t)
                 slots.append(name)
@@ -2420,6 +2425,10 @@ class MasterRetriever:
                 in_scope_tickers=list(transform_res.in_scope_tickers or []),
                 out_of_scope_tickers=list(transform_res.out_of_scope_tickers or []),
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+                compensation_values=_comp_vals,
+>>>>>>> Stashed changes
 =======
                 compensation_values=_comp_vals,
 >>>>>>> Stashed changes
