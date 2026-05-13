@@ -565,10 +565,10 @@ def render_sidebar_context() -> None:
 @st.cache_data(show_spinner=False)
 def _load_query_guide_examples() -> List[str]:
     return [
-        "Today SPY put-call ratio and IV skew for options posture",
-        "Past month AAPL Form 4 insider selling and liquidity for sec filing risk",
-        "Past month AAPL SEC 8-K event risk for sec filing risk",
-        "Past week GLD GPR context and 10Y yields for macro regime",
+        "Today SPY put-call ratio and IV skew",
+        "Past month AAPL Form 4 insider selling and liquidity",
+        "Past month AAPL SEC 8-K event risk",
+        "Past week GLD GPR context and 10Y yields",
     ]
 
 
@@ -673,7 +673,7 @@ def render_query_builder() -> Optional[Dict[str, Any]]:
     default_signals = ["IV skew", "put-call ratio"]
     selected_signals = [str(x) for x in st.session_state.get(signal_state_key, default_signals)]
     selected_goal = str(st.session_state.get(goal_state_key) or goal_options[0])
-    force_asset = selected_goal == "sec filing risk" or _event_asset_required(selected_signals)
+    force_asset = _event_asset_required(selected_signals)
 
     if ticker_state_key not in st.session_state:
         st.session_state[ticker_state_key] = "AAPL" if force_asset else "No specific asset"
