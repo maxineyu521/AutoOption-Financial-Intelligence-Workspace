@@ -199,21 +199,26 @@ class FinalReport(BaseModel):
     def to_markdown(self) -> str:
         """Converts the structured Pydantic object into a clean, readable Markdown report for UI display."""
         md_lines = [
-            f"# 📊 Institutional Options Strategy Report",
+            f"# 📊 Market Read for Decision Support",
             f"**Generated on:** {self.report_date}",
             f"**Overall Confidence Score:** {self.confidence_score * 100:.1f}%",
         ]
         direct_conclusion = _trim_to_word_limit(self.conversation_reply.strip(), 100) if self.conversation_reply else ""
-        status_note = _trim_to_word_limit((self.status_note or "").strip(), 60)
         macro_backdrop = _trim_to_word_limit((self.macro_summary or "").strip(), 150)
         asset_options_read = _trim_to_word_limit(_build_asset_options_section_text(self), 150)
         recommendation_mode = _trim_to_word_limit(_build_recommendation_mode_text(self), 150)
         risks_text = _trim_to_word_limit(_build_risks_section_text(self), 150)
+        disclosure_parts = [
+            str(self.evidence_coverage_note or "").strip(),
+            str(self.status_note or "").strip(),
+        ]
+        missing_info_disclosure = _trim_to_word_limit(
+            " ".join(part for part in disclosure_parts if part),
+            120,
+        )
 
         if direct_conclusion:
-            md_lines += [f"\n## Direct Conclusion", direct_conclusion]
-        if status_note:
-            md_lines += [f"\n> Note: {status_note}"]
+            md_lines += [f"\n## Quick Take", direct_conclusion]
         if macro_backdrop:
             md_lines += [f"\n## Macro / Event Backdrop", macro_backdrop]
         if asset_options_read:
@@ -222,6 +227,8 @@ class FinalReport(BaseModel):
             md_lines += [f"\n## Recommendation Mode", recommendation_mode]
         if risks_text:
             md_lines += [f"\n## Risks / What Would Change the View", risks_text]
+        if missing_info_disclosure:
+            md_lines += [f"\n## Missing Info Disclosure", missing_info_disclosure]
 
         return "\n".join(md_lines)
 
@@ -1596,13 +1603,9 @@ def _illustrative_structure_text(
 
 
 def _build_non_actionable_risk_sentence(report: FinalReport, *, state: Dict[str, Any]) -> str:
-    severity = _evidence_coverage_severity(state)
-    disclosure_sentence = ""
-    if severity == "hard_gap" and not _direct_answer_includes_missing_slot_disclosure(state):
-        disclosure_sentence = _missing_slot_disclosure_sentence(state)
     why_not_now = _why_not_now_sentence(state)
     summary_caveat = _summary_caveat_seed(state)
-    risk_bits = [bit for bit in (disclosure_sentence, why_not_now, summary_caveat) if bit]
+    risk_bits = [bit for bit in (why_not_now, summary_caveat) if bit]
     return " ".join(dict.fromkeys(risk_bits)).strip()
 
 
@@ -1647,6 +1650,45 @@ def _render_directional_watchlist_reply(
     return _trim_to_word_limit(body)
 
 
+_QUICK_TAKE_DISCLOSURE_MARKERS = (
+    "No supplemental news was retrieved",
+    "Some requested evidence was not retrieved",
+    "Missing source(s):",
+    "Cannot assess reliably",
+    "IV skew and options liquidity posture were not retrieved",
+    "Main caution:",
+)
+
+
+def _split_quick_take_disclosure_tail(text: str) -> tuple[str, str]:
+    body = str(text or "").strip()
+    if not body:
+        return "", ""
+    first_idx: Optional[int] = None
+    for marker in _QUICK_TAKE_DISCLOSURE_MARKERS:
+        idx = body.find(marker)
+        if idx >= 0 and (first_idx is None or idx < first_idx):
+            first_idx = idx
+    if first_idx is None:
+        return body, ""
+    lead = body[:first_idx].strip(" \n\t.;")
+    disclosure = body[first_idx:].strip(" \n\t")
+    return lead, disclosure
+
+
+def _append_evidence_coverage_note(report: FinalReport, note: str) -> None:
+    clean = str(note or "").strip()
+    if not clean:
+        return
+    existing = str(report.evidence_coverage_note or "").strip()
+    if existing and clean.lower() in existing.lower():
+        return
+    if existing:
+        report.evidence_coverage_note = f"{existing} {clean}".strip()
+    else:
+        report.evidence_coverage_note = clean
+
+
 def _build_query_first_reply(
     report: FinalReport,
     *,
@@ -1669,6 +1711,10 @@ def _build_query_first_reply(
             user_query=user_query,
         )
     risk_sentence = _build_non_actionable_risk_sentence(report, state=state)
+    evidence_sentence, evidence_disclosure = _split_quick_take_disclosure_tail(evidence_sentence)
+    risk_sentence, risk_disclosure = _split_quick_take_disclosure_tail(risk_sentence)
+    _append_evidence_coverage_note(report, evidence_disclosure)
+    _append_evidence_coverage_note(report, risk_disclosure)
     posture_takeaway = _posture_takeaway(state)
     direct_answer_seed_present = bool(_direct_answer_seed(state))
     direct_answer_includes_posture = _direct_answer_includes_posture_takeaway(state)
@@ -1701,23 +1747,20 @@ def _build_query_first_reply(
     if recommendation_mode == "directional_watchlist":
         reply = _render_directional_watchlist_reply(
             evidence_sentence=evidence_sentence,
-            risk_sentence=risk_sentence or "Main caution: the evidence is not strong enough to promote a clean trade idea.",
+            risk_sentence=risk_sentence,
         )
     else:
         if _market_read_only_flag(state):
             reply = _render_market_read_only_reply(
                 state=state,
                 evidence_sentence=evidence_sentence,
-                risk_sentence=risk_sentence or "Main risk: define the invalidation level before upgrading the posture.",
+                risk_sentence=risk_sentence,
             )
         else:
             reply = _render_informational_only_reply(
                 evidence_sentence=evidence_sentence,
-                risk_sentence=risk_sentence or "Main caution: the evidence is not strong enough to promote a clean trade idea.",
+                risk_sentence=risk_sentence,
             )
-    soft_note = _soft_missing_metric_tail_note(report, state=state)
-    if soft_note:
-        reply = _trim_to_word_limit(f"{reply} {soft_note}")
     if reason_sentence:
         reply = _trim_to_word_limit(f"{reply} {reason_sentence.strip()}")
     return reply

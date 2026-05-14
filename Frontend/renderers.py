@@ -13,7 +13,6 @@ from .contracts import (
     evidence_blend_summary,
     load_ticker_universe,
     normalize_state,
-    quick_query_quality,
     sanitize_text,
     state_query_quality,
 )
@@ -92,6 +91,13 @@ _SIGNAL_CONTRACTS: Dict[str, Dict[str, Any]] = {
         "source_types": ["sec"],
         "requested_sec_forms": ["4"],
     },
+}
+
+_GOAL_DEFAULT_SIGNALS: Dict[str, List[str]] = {
+    "options posture": ["IV skew", "put-call ratio", "liquidity"],
+    "sec filing risk": ["SEC Form 4 insider flow", "SEC 8-K event risk"],
+    "macro regime": ["news narrative", "macro regime narrative"],
+    "geopolitics narrative": ["GPR context", "macro regime narrative"],
 }
 
 _LIQUIDITY_FIELDS = [
@@ -670,9 +676,17 @@ def render_query_builder() -> Optional[Dict[str, Any]]:
     signal_state_key = "qb_signals"
     ticker_state_key = "qb_ticker"
     goal_state_key = "qb_goal"
-    default_signals = ["IV skew", "put-call ratio"]
-    selected_signals = [str(x) for x in st.session_state.get(signal_state_key, default_signals)]
+    previous_goal_state_key = "qb_previous_goal"
     selected_goal = str(st.session_state.get(goal_state_key) or goal_options[0])
+    if selected_goal not in goal_options:
+        selected_goal = goal_options[0]
+    default_signals = _GOAL_DEFAULT_SIGNALS.get(selected_goal, ["IV skew", "put-call ratio", "liquidity"])
+    if signal_state_key not in st.session_state:
+        st.session_state[signal_state_key] = [s for s in default_signals if s in signal_options]
+    elif st.session_state.get(previous_goal_state_key) != selected_goal:
+        st.session_state[signal_state_key] = [s for s in default_signals if s in signal_options]
+    st.session_state[previous_goal_state_key] = selected_goal
+    selected_signals = [str(x) for x in st.session_state.get(signal_state_key, default_signals)]
     force_asset = _event_asset_required(selected_signals)
 
     if ticker_state_key not in st.session_state:
@@ -708,6 +722,15 @@ def render_query_builder() -> Optional[Dict[str, Any]]:
         )
         time_window = str(time_window or "Past week")
 
+    goal_index = goal_options.index(selected_goal) if selected_goal in goal_options else 0
+    goal = st.selectbox("Goal", goal_options, index=goal_index, key=goal_state_key)
+    if str(goal) != selected_goal:
+        selected_goal = str(goal)
+        default_signals = _GOAL_DEFAULT_SIGNALS.get(selected_goal, ["IV skew", "put-call ratio", "liquidity"])
+        st.session_state[signal_state_key] = [s for s in default_signals if s in signal_options]
+        st.session_state[previous_goal_state_key] = selected_goal
+        selected_signals = [str(x) for x in st.session_state.get(signal_state_key, default_signals)]
+
     signals = st.multiselect(
         "Signal chips",
         signal_options,
@@ -715,8 +738,6 @@ def render_query_builder() -> Optional[Dict[str, Any]]:
         max_selections=3,
         key=signal_state_key,
     )
-    goal_index = goal_options.index(selected_goal) if selected_goal in goal_options else 0
-    goal = st.selectbox("Goal", goal_options, index=goal_index, key=goal_state_key)
     query = _compose_builder_query(str(ticker), str(time_window), [str(x) for x in signals], str(goal))
     builder_contract = _build_builder_contract(
         ticker=str(ticker),
@@ -741,7 +762,7 @@ def render_query_guide_buttons(current_query: str = "") -> Optional[Dict[str, An
 <section class="guide-hero">
   <div class="guide-kicker">Query Guide</div>
   <div class="guide-title">Build an evidence-ready market question</div>
-  <div class="guide-copy">Choose a workflow, signal, time window, and goal. The system cross-checks options microstructure, executive behavior, event evidence, and deterministic guardrails so weak or contradictory setups can be downgraded instead of overclaimed.</div>
+  <div class="guide-copy">We turn options, filings, and macro evidence into a disciplined market read that is easier to understand. Deterministic guardrails cross-check microstructure, executive behavior, and event evidence. This output is informational only; investment decisions remain the investor's responsibility.</div>
 </section>
         """,
         unsafe_allow_html=True,
@@ -750,10 +771,6 @@ def render_query_guide_buttons(current_query: str = "") -> Optional[Dict[str, An
     if builder_query:
         return builder_query
 
-    quality = quick_query_quality(current_query)
-    st.caption(f"Query quality pre-check: {quality['score']}/100")
-    if quality["suggestions"]:
-        st.caption("Make it stronger: " + " ".join(quality["suggestions"][:2]))
     templates = _load_query_guide_examples()
     if not templates:
         return None
@@ -784,7 +801,7 @@ def _render_silver_readable_parts(normalized_state: Dict[str, Any]) -> None:
     grouped = group_metrics_by_category(silver)
 
     st.markdown(
-        f'<div class="chat-card">{_surface_title_html("Part 4 · Signal Explorer")}</div>',
+        _surface_title_html("Part 2 · Signal Explorer"),
         unsafe_allow_html=True,
     )
     if not silver:
@@ -1039,10 +1056,11 @@ def _render_metric_rows(keys: List[str], values: Dict[str, Any], *, compact: boo
 def _render_macro_groups(keys: List[str], values: Dict[str, Any]) -> None:
     buckets: Dict[str, List[str]] = {}
     for key in keys:
-        buckets.setdefault(_macro_bucket(key), []).append(key)
+        bucket = _macro_bucket(key)
+        if bucket in {"Policy and Rates", "Inflation and Labor"}:
+            continue
+        buckets.setdefault(bucket, []).append(key)
     order = [
-        "Policy and Rates",
-        "Inflation and Labor",
         "Market Regime Gauges",
         "Dollar and Safe-Haven Context",
         "Other Macro Signals",
@@ -1193,10 +1211,11 @@ def _extract_markdown_sections(md: str) -> Dict[str, str]:
 
 def _render_time_consistency(normalized_state: Dict[str, Any]) -> None:
     rows = normalized_state.get("source_predicates") or []
+    st.markdown("---")
     st.markdown(
         """
 """
-        + _surface_title_html("Part 5 · Time Consistency Timeline")
+        + _surface_title_html("Time Consistency Timeline")
         + """
 <div class="timeline-section-copy">How the evidence windows line up across options, macro, filings, and narrative sources.</div>
         """,
@@ -1286,13 +1305,7 @@ def render_phase1_silver(state: Dict[str, Any], target) -> None:
         }
 
         st.markdown(
-            """
-<div class="chat-card">
-"""
-            + _surface_title_html("Part 1 · Query Expansion Thesis")
-            + """
-</div>
-            """,
+            _surface_title_html("Part 1 · Query Expansion Thesis"),
             unsafe_allow_html=True,
         )
         st.write(sanitize_text(hyde.get("paragraph", "HyDE anticipation is not available yet.")))
@@ -1301,38 +1314,8 @@ def render_phase1_silver(state: Dict[str, Any], target) -> None:
         if hyde.get("whitelisted_tickers"):
             st.markdown(f"**Expanded Universe:** {', '.join(hyde.get('whitelisted_tickers', []))}")
 
-        st.markdown(
-            f"""
-<div class="chat-card">
-  {_surface_title_html("Part 2 · Target Tickers and Scope")}
-  <b>Target Tickers:</b> {", ".join(metadata_with_lineage.get("tickers", [])) or "N/A"}<br/>
-  <b>Requested Window:</b> {metadata_with_lineage.get("time_window", "N/A")}<br/>
-  <b>Data Sources:</b> {", ".join(metadata_with_lineage.get("source_types", [])) or "N/A"}<br/>
-  <b>Signal Type:</b> {metadata_with_lineage.get("event_keyword", "N/A")}<br/>
-  <b>Direction Bias:</b> {metadata_with_lineage.get("action_direction", "N/A")}<br/>
-  <b>Latest Update Date:</b> {metadata_with_lineage.get("latest_update_date", "Unknown")}
-</div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            f"""
-<div class="chat-card">
-  {_surface_title_html("Part 3 · Metadata Health")}
-  <b>query_quality_score:</b> {quality['score']}/100<br/>
-  <b>mapped_metrics:</b> {quality['metrics_count']}<br/>
-  <b>time_window:</b> {quality['time_window']}<br/>
-  <b>ticker_coverage:</b> {", ".join(quality['in_universe']) if quality['in_universe'] else "None"}
-</div>
-            """,
-            unsafe_allow_html=True,
-        )
-        if quality["suggestions"]:
-            st.info("Make the next query stronger: " + " ".join(quality["suggestions"]))
-
         _render_silver_readable_parts(normalized)
         _render_time_consistency(normalized)
-        st.success(evidence_blend_summary(normalized))
 
 
 def render_phase2_gold(state: Dict[str, Any], target) -> None:
@@ -1487,7 +1470,6 @@ def _render_risk_card(target, title: str, value: str, level: str, subtitle: str)
 
 def render_final_dashboard(state: Dict[str, Any]) -> None:
     normalized = normalize_state(state)
-    st.markdown("---")
     st.header("Strategy Dashboard")
 
     final_strategy = normalized.get("final_strategy") or {}
@@ -1546,59 +1528,55 @@ def render_final_dashboard(state: Dict[str, Any]) -> None:
     )
 
     macro_summary = final_report.get("macro_summary") or "No macro summary available."
-    convo = final_report.get("conversation_reply") or "No final narrative available."
     status_note = final_report.get("status_note") or ""
     asset_options_read = markdown_sections.get("Asset / Options Read") or "No asset/options read available."
     key_risks = final_report.get("key_risks_and_hedges") or []
     macro_summary = sanitize_text(macro_summary)
-    convo = _frontend_quick_take(convo) or sanitize_text(convo)
     status_note = sanitize_text(status_note)
 
     st.markdown(
         f"""
-<div class="institutional-card">
-  <div class="institutional-title">Executive Summary</div>
-  {convo}
-</div>
+<section class="market-read-section">
+  <div class="market-read-title">Macro Regime Narrative</div>
+  <div class="market-read-body">{escape(macro_summary)}</div>
+</section>
         """,
         unsafe_allow_html=True,
     )
+
+    st.markdown(
+        f"""
+<section class="market-read-section">
+  <div class="market-read-title">Asset / Options Read</div>
+  <div class="market-read-body">{escape(sanitize_text(asset_options_read))}</div>
+</section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        """
+<section class="market-read-section">
+  <div class="market-read-title">Risk Controls and Hedges</div>
+</section>
+        """,
+        unsafe_allow_html=True,
+    )
+    if key_risks:
+        for rk in key_risks:
+            st.markdown(f"{sanitize_text(rk)}")
+    else:
+        st.info("No explicit risk/hedge block produced.")
     if status_note:
         st.markdown(
             f"""
-<div class="institutional-card">
-  <div class="institutional-title">Status Note</div>
-  {escape(status_note)}
-</div>
+<section class="market-read-section market-read-status">
+  <div class="market-read-title">Status Note</div>
+  <div class="market-read-body">{escape(status_note)}</div>
+</section>
             """,
             unsafe_allow_html=True,
         )
-    st.markdown(
-        f"""
-<div class="institutional-card">
-  <div class="institutional-title">Macro Regime Narrative</div>
-  {macro_summary}
-</div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        f"""
-<div class="institutional-card">
-  <div class="institutional-title">Asset / Options Read</div>
-  {escape(sanitize_text(asset_options_read))}
-</div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown('<div class="institutional-card"><div class="institutional-title">Risk Controls and Hedges</div></div>', unsafe_allow_html=True)
-    if key_risks:
-        for rk in key_risks:
-            st.markdown(f"- {sanitize_text(rk)}")
-    else:
-        st.info("No explicit risk/hedge block produced.")
 
 def render_footer_disclaimer() -> None:
     st.markdown(
