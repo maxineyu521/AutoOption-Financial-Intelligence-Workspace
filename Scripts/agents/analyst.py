@@ -65,6 +65,12 @@ from Scripts.core.financial_narrative_contract import (
     build_narrative_brief,
     render_narrative_brief_block,
 )
+from Scripts.core.liquidity_policy import (
+    available_ticker_prefixes as liquidity_available_ticker_prefixes,
+    resolve_first_available_ticker_bundle,
+    resolve_primary_ticker,
+)
+from Scripts.core.silver_context import preferred_silver_context_from_state
 from Scripts.core.sec_contract import SECAnalysisBundle
 
 logger = logging.getLogger(__name__)
@@ -352,14 +358,19 @@ def _options_narrative_summary(
     iv_rank = silver_values.get("latest_atm_iv_rank_pct")
     iv_skew = silver_values.get("latest_iv_skew")
 
-    flow_sentence = "Positioning looks broadly balanced rather than aggressively defensive."
+    has_flow_evidence = pcr_volume is not None or pcr_oi is not None or bool(pcr_status) or pcr_state not in {"", "unknown"}
+    flow_sentence = ""
     if pcr_state == "protection_heavy":
         flow_sentence = "Flow leans defensive, with put demand signaling more active downside hedging."
     elif pcr_state == "call_skewed":
         flow_sentence = "Flow leans constructive, with call-side activity outweighing heavier downside protection."
     elif pcr_status:
         flow_sentence = f"Flow looks broadly {pcr_status.lower()}, rather than pointing to a one-way hedge chase."
+    elif has_flow_evidence:
+        flow_sentence = "Flow is not showing a one-way hedge chase from the available put/call evidence."
     if pcr_volume is not None:
+        if not flow_sentence:
+            flow_sentence = "Put/call flow is available."
         flow_sentence += f" PCR volume is {pcr_volume:.3f}"
         if pcr_oi is not None:
             flow_sentence += f" and PCR open interest is {pcr_oi:.3f}"
@@ -399,11 +410,15 @@ def _options_narrative_summary(
     liquid_contracts = bundle.get("liquid_contracts")
     spread_pct = bundle.get("avg_spread_pct")
     executable_oi = bundle.get("executable_open_interest")
-    if liquid_contracts is not None or spread_pct is not None or market_impact_risk:
+    has_liquidity_evidence = liquid_contracts is not None or spread_pct is not None or executable_oi is not None
+    has_known_market_impact = market_impact_risk and market_impact_risk.lower() != "unknown"
+    if has_liquidity_evidence or has_known_market_impact:
         if liquidity_state == "fragile":
             liquidity_sentence = "Execution looks fragile"
-        else:
+        elif has_known_market_impact and market_impact_risk in {"Low", "Medium"}:
             liquidity_sentence = "Liquidity looks healthy"
+        else:
+            liquidity_sentence = "Liquidity is bounded by the retrieved executable-market evidence"
         detail_bits: List[str] = []
         if liquid_contracts is not None:
             detail_bits.append(f"{int(liquid_contracts)} executable contracts")
@@ -411,7 +426,7 @@ def _options_narrative_summary(
             detail_bits.append(f"{int(executable_oi)} executable open interest")
         if spread_pct is not None:
             detail_bits.append(f"{float(spread_pct):.3f}% weighted spread")
-        if market_impact_risk:
+        if has_known_market_impact:
             detail_bits.append(f"{market_impact_risk.lower()} market-impact risk")
         if detail_bits:
             liquidity_sentence += " through " + ", ".join(detail_bits)
@@ -422,11 +437,7 @@ def _options_narrative_summary(
 
 
 def _preferred_silver_context(state: Dict[str, Any]) -> Dict[str, Any]:
-    frozen = state.get("silver_context_frozen")
-    if isinstance(frozen, dict) and frozen.get("values"):
-        return frozen
-    silver = state.get("silver_context") or {}
-    return silver if isinstance(silver, dict) else {}
+    return preferred_silver_context_from_state(state)
 
 
 def _derive_query_family(metadata: Any, original_query: str, silver_values: Dict[str, Any], gold_ctx: List[Any]) -> str:
@@ -631,15 +642,7 @@ _TICKER_METRIC_SUFFIXES = {
 
 
 def _available_ticker_prefixes(silver_values: Dict[str, Any]) -> List[str]:
-    prefixes: List[str] = []
-    for key in silver_values:
-        match = re.match(r"^([A-Z][A-Z0-9]{0,9})_([a-z0-9_]+)$", str(key))
-        if not match:
-            continue
-        ticker, suffix = match.groups()
-        if suffix in _TICKER_METRIC_SUFFIXES and ticker not in prefixes:
-            prefixes.append(ticker)
-    return prefixes
+    return liquidity_available_ticker_prefixes(silver_values)
 
 
 def _preferred_ticker_prefixes(
@@ -649,7 +652,10 @@ def _preferred_ticker_prefixes(
 ) -> List[str]:
     preferred: List[str] = []
     available = _available_ticker_prefixes(silver_values)
-    query_u = (original_query or "").upper()
+    query_tokens = {
+        token.strip(" \t\r\n,;:!?()[]{}'\"").upper()
+        for token in str(original_query or "").split()
+    }
 
     for ticker in (_obj_get(metadata, "tickers", []) or []):
         ticker_u = str(ticker).upper().strip()
@@ -657,7 +663,7 @@ def _preferred_ticker_prefixes(
             preferred.append(ticker_u)
 
     for ticker in available:
-        if re.search(rf"\b{re.escape(ticker)}\b", query_u) and ticker not in preferred:
+        if ticker.upper() in query_tokens and ticker not in preferred:
             preferred.append(ticker)
 
     for ticker in available:
@@ -673,11 +679,7 @@ def _resolve_ticker_metric_bundle(
     suffixes: List[str],
 ) -> tuple[Optional[str], Dict[str, Any]]:
     candidates = list(dict.fromkeys(preferred_tickers + _available_ticker_prefixes(silver_values)))
-    for ticker in candidates:
-        bundle = {suffix: silver_values.get(f"{ticker}_{suffix}") for suffix in suffixes}
-        if any(value is not None for value in bundle.values()):
-            return ticker, bundle
-    return None, {suffix: None for suffix in suffixes}
+    return resolve_first_available_ticker_bundle(silver_values, candidates, suffixes)
 
 
 def _ticker_metric_label(ticker: Optional[str]) -> str:
@@ -1064,6 +1066,70 @@ def _build_analyst_conclusion(
     return f"For {topic}, the current read is anchored to the checked structured evidence in this run."
 
 
+_LIQUIDITY_EVIDENCE_SUFFIXES = [
+    "executable_option_volume",
+    "executable_open_interest",
+    "liquid_contracts",
+    "avg_spread_pct",
+    "market_impact_risk",
+]
+
+
+def _is_macro_news_surface(metadata: Any) -> bool:
+    primary_surface = str(_obj_get(metadata, "primary_surface", "") or "").strip().lower()
+    source_types = {
+        str(getattr(source, "value", source) or "").strip().lower()
+        for source in (_obj_get(metadata, "source_types", []) or [])
+        if str(getattr(source, "value", source) or "").strip()
+    }
+    return primary_surface == "macro_news_surface" and bool(source_types & {"news", "macro_history"})
+
+
+def _missing_options_surface_note(
+    *,
+    state: Dict[str, Any],
+    metadata: Any,
+    silver_values: Dict[str, Any],
+    retrieval_outcome: Dict[str, Any],
+) -> str:
+    missing_slots = {
+        str(slot).strip()
+        for slot in (retrieval_outcome or {}).get("missing_query_slots", [])
+        if str(slot).strip()
+    }
+    primary_ticker = resolve_primary_ticker(
+        state=state,
+        metadata=metadata,
+        scope_contract=state.get("scope_contract") or {},
+    )
+    _, liquidity_bundle = resolve_first_available_ticker_bundle(
+        silver_values,
+        [primary_ticker] if primary_ticker else [],
+        _LIQUIDITY_EVIDENCE_SUFFIXES,
+    )
+    has_iv_skew = silver_values.get("latest_iv_skew") is not None
+    has_liquidity_evidence = any(
+        liquidity_bundle.get(key) is not None
+        for key in ("executable_option_volume", "executable_open_interest", "liquid_contracts", "avg_spread_pct")
+    )
+    has_known_market_impact = str(liquidity_bundle.get("market_impact_risk") or "").strip() not in {"", "Unknown"}
+
+    missing_bits: List[str] = []
+    if not has_iv_skew or "iv_skew_signal" in missing_slots:
+        missing_bits.append("IV skew")
+    if not (has_liquidity_evidence or has_known_market_impact) or "liquidity_signal" in missing_slots:
+        missing_bits.append("options liquidity posture")
+    if not missing_bits:
+        return ""
+    if len(missing_bits) == 1:
+        subject = missing_bits[0]
+        verb = "was"
+    else:
+        subject = " and ".join(missing_bits)
+        verb = "were"
+    return f"{subject} {verb} not retrieved cleanly enough to assess execution risk."
+
+
 def build_finalizer_input_card(
     state: Dict[str, Any],
     draft: str,
@@ -1139,6 +1205,13 @@ def build_finalizer_input_card(
     narrative_brief_payload = narrative_brief.model_dump()
     sec_signal_summary = _sec_direct_read(sec_bundle)
     sec_missing_note = _sec_missing_note(sec_bundle)
+    macro_news_surface = _is_macro_news_surface(metadata)
+    missing_options_note = _missing_options_surface_note(
+        state=state,
+        metadata=metadata,
+        silver_values=silver_values,
+        retrieval_outcome=retrieval_outcome,
+    )
 
     def _compact_sentence(text: str) -> str:
         return " ".join(str(text or "").split()).strip()
@@ -1152,18 +1225,11 @@ def build_finalizer_input_card(
         return clean
 
     def _render_safe_macro_summary_seed(values: Dict[str, Any]) -> str:
-        if query_family in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
+        if macro_news_surface or query_family in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
             parts = [
                 narrative_brief.news_driver,
                 narrative_brief.macro_transmission,
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
                 narrative_brief.game_theory_read,
->>>>>>> Stashed changes
-=======
-                narrative_brief.game_theory_read,
->>>>>>> Stashed changes
             ]
             return " ".join(part for part in parts if part).strip()
         macro_bits: List[str] = []
@@ -1186,20 +1252,11 @@ def build_finalizer_input_card(
         return "Broader market backdrop: " + "; ".join(macro_bits[:4]) + "."
 
     def _render_safe_asset_read_seed() -> str:
-        if query_family in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-            return narrative_brief.asset_reaction
-=======
-            return " ".join(
+        if macro_news_surface or query_family in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
+            base = " ".join(
                 part for part in (narrative_brief.asset_reaction, narrative_brief.volatility_setup) if part
             ).strip()
->>>>>>> Stashed changes
-=======
-            return " ".join(
-                part for part in (narrative_brief.asset_reaction, narrative_brief.volatility_setup) if part
-            ).strip()
->>>>>>> Stashed changes
+            return " ".join(part for part in (base, missing_options_note) if part).strip()
         fragments: List[str] = []
         posture_rationale = _compact_sentence(posture_contract.get("posture_rationale", ""))
         base_regime_read = _compact_sentence(posture_contract.get("base_regime_read", ""))
@@ -1224,6 +1281,11 @@ def build_finalizer_input_card(
         return " ".join(fragment.strip() for fragment in fragments if fragment.strip()).strip()
 
     def _render_safe_asset_read_narrative_seed() -> str:
+        if macro_news_surface:
+            base = _compact_sentence(
+                " ".join(part for part in (narrative_brief.asset_reaction, narrative_brief.volatility_setup) if part)
+            )
+            return " ".join(part for part in (base, missing_options_note) if part).strip()
         if query_family == "options_microstructure":
             preferred_tickers = _preferred_ticker_prefixes(metadata, state.get("original_query", ""), silver_values)
             options_ticker, options_bundle = _resolve_ticker_metric_bundle(
@@ -1241,35 +1303,17 @@ def build_finalizer_input_card(
                 )
             )
         if query_family in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-            return _compact_sentence(narrative_brief.asset_reaction)
-=======
             return _compact_sentence(
                 " ".join(part for part in (narrative_brief.asset_reaction, narrative_brief.volatility_setup) if part)
             )
->>>>>>> Stashed changes
-=======
-            return _compact_sentence(
-                " ".join(part for part in (narrative_brief.asset_reaction, narrative_brief.volatility_setup) if part)
-            )
->>>>>>> Stashed changes
         return _render_safe_asset_read_seed()
 
-    if query_family in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
+    if macro_news_surface or query_family in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
         direct_answer_seed = _compact_sentence(
             " ".join(
                 part for part in (
                     narrative_brief.headline_read,
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-                    narrative_brief.risk_read,
-=======
                     narrative_brief.risk_trigger or narrative_brief.risk_read,
->>>>>>> Stashed changes
-=======
-                    narrative_brief.risk_trigger or narrative_brief.risk_read,
->>>>>>> Stashed changes
                 )
                 if part
             )
@@ -1280,39 +1324,24 @@ def build_finalizer_input_card(
     if (
         posture_takeaway
         and direct_answer_seed
+        and not macro_news_surface
         and query_family not in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}
     ):
         direct_answer_seed = f"{posture_takeaway} {_topic_stripped(direct_answer_seed)}".strip()
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-    elif posture_takeaway:
-=======
-    elif posture_takeaway and query_family not in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
->>>>>>> Stashed changes
-=======
-    elif posture_takeaway and query_family not in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
->>>>>>> Stashed changes
+    elif posture_takeaway and not macro_news_surface and query_family not in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}:
         direct_answer_seed = posture_takeaway
 
     render_safety_contract = RenderSafetyContract(
         direct_answer_seed=direct_answer_seed,
-        direct_answer_includes_posture_takeaway=bool(posture_takeaway),
+        direct_answer_includes_posture_takeaway=bool(posture_takeaway) and not macro_news_surface,
         direct_answer_includes_missing_slot_disclosure=bool(_insider_slot_caveat_from_outcome(retrieval_outcome or {}))
         or bool((retrieval_outcome or {}).get("background_only_read")),
         macro_summary_seed=_render_safe_macro_summary_seed(silver_values),
         asset_read_narrative_seed=_render_safe_asset_read_narrative_seed(),
         asset_read_seed=_render_safe_asset_read_seed(),
         risk_seed=_compact_sentence(
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-            narrative_brief.what_would_change
-=======
             " ".join(part for part in (narrative_brief.risk_trigger, narrative_brief.what_would_change) if part)
->>>>>>> Stashed changes
-=======
-            " ".join(part for part in (narrative_brief.risk_trigger, narrative_brief.what_would_change) if part)
->>>>>>> Stashed changes
-            if query_family in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}
+            if macro_news_surface or query_family in {"cross_asset_regime", "geopolitical_macro_read", "geopolitical_options_read"}
             else posture_contract.get("escalation_risk_read", "")
         ),
         summary_caveat_seed="",
@@ -2221,7 +2250,7 @@ class AnalystAgent:
         """
         user_query = state.get("original_query", "")
         macro_ctx = _load_macro_context(state.get("macro_context"))
-        silver_ctx = state.get("silver_context", {}) or {}
+        silver_ctx = _preferred_silver_context(state)
         gold_ctx = state.get("gold_context", []) or []
         feedback_log = state.get("critic_feedback", []) or []
         revision_constraints_block = _render_revision_constraints_block(state)

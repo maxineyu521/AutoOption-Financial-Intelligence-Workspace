@@ -27,29 +27,16 @@ from langchain_openai import ChatOpenAI
 from Scripts.agents.state import AgentFeedback, FinalizerEdit
 from Scripts.agents.prompts import get_checker_prompt
 from Scripts.core.evidence_contracts import (
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-    build_silver_citation_registry,
-    normalize_silver_citation_contract,
-    parse_silver_inline_payload,
-=======
     build_gold_citation_registry,
     build_silver_citation_registry,
     normalize_silver_citation_contract,
     parse_silver_inline_payload,
     resolve_gold_anchor_ref,
->>>>>>> Stashed changes
-=======
-    build_gold_citation_registry,
-    build_silver_citation_registry,
-    normalize_silver_citation_contract,
-    parse_silver_inline_payload,
-    resolve_gold_anchor_ref,
->>>>>>> Stashed changes
     resolve_silver_anchor_ref,
     semantic_slot_evidence_eval,
 )
 from Scripts.core.sec_contract import SECAnalysisBundle
+from Scripts.core.silver_context import effective_silver_context
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +108,11 @@ _COMMON_NUMERIC_WHITELIST: Set[float] = {
     0.18, 0.35,
 }
 _FORBIDDEN_INTERNAL_SILVER_ANCHORS: Set[str] = {"iv_regime_block"}
+_MONTH_NAMES: Set[str] = {
+    "jan", "january", "feb", "february", "mar", "march", "apr", "april",
+    "may", "jun", "june", "jul", "july", "aug", "august", "sep", "sept",
+    "september", "oct", "october", "nov", "november", "dec", "december",
+}
 
 _SENTINEL_ANCHORS: frozenset = frozenset({
     "insufficient data", "no direct data available", "no data", "no data available",
@@ -462,6 +454,69 @@ def _llm_violation_is_valid_missing_source_disclosure(
     return False
 
 
+def _llm_violation_is_valid_macro_news_options_boundary(
+    violation: CheckerViolation,
+    *,
+    retrieval_slot_eval: Dict[str, Any],
+    metadata_dict: Dict[str, Any],
+    retrieval_outcome: Optional[Dict[str, Any]] = None,
+) -> bool:
+    primary_surface = str(metadata_dict.get("primary_surface") or "").strip().lower()
+    if primary_surface != "macro_news_surface":
+        return False
+
+    lower = str(violation.description or "").lower()
+    option_markers = (
+        "systematic options",
+        "iv regime",
+        "implied volatility",
+        "detailed option",
+        "option metrics",
+        "iv skew",
+        "liquidity posture",
+        "options liquidity",
+    )
+    if not any(marker in lower for marker in option_markers):
+        return False
+
+    outcome = retrieval_outcome if isinstance(retrieval_outcome, dict) else {}
+    missing_sources = {str(item).strip().lower() for item in (outcome.get("missing_strict_sources") or [])}
+    missing_slots = {str(item).strip() for item in (outcome.get("missing_query_slots") or [])}
+    slot_status = dict((retrieval_slot_eval or {}).get("slot_status") or {})
+    boundary_slots = {"iv_skew_signal", "liquidity_signal", "atm_iv_signal", "iv_or_skew_signal"}
+    if "options" in missing_sources:
+        return True
+    if missing_slots & boundary_slots:
+        return True
+    return any(slot_status.get(slot) == "not_reliably_answerable" for slot in boundary_slots)
+
+
+def _is_calendar_date_number(match: "re.Match[str]", text: str) -> bool:
+    raw = str(match.group(1) or "").replace(",", "")
+    if "." in raw:
+        return False
+    try:
+        value = int(raw)
+    except ValueError:
+        return False
+    if value < 1 or value > 31:
+        return False
+
+    start = max(0, match.start() - 24)
+    end = min(len(text), match.end() + 24)
+    window = text[start:end].lower()
+    chars: List[str] = []
+    for ch in window:
+        chars.append(ch if ch.isalpha() else " ")
+    words = set("".join(chars).split())
+    if words & _MONTH_NAMES:
+        return True
+
+    before = text[match.start() - 1] if match.start() > 0 else ""
+    after = text[match.end()] if match.end() < len(text) else ""
+    return before in {"-", "/"} or after in {"-", "/"}
+
+
 def _llm_violation_numbers(violation: CheckerViolation) -> tuple[Optional[float], Optional[float]]:
     draft_num = _coerce_truth_number(violation.draft_value)
     truth_num = _coerce_truth_number(violation.cited_silver_value)
@@ -518,6 +573,13 @@ def _checker_feedback_from_llm_violation(
     if _should_suppress_llm_violation(violation.description):
         return None
     if _llm_violation_is_valid_missing_source_disclosure(
+        violation,
+        retrieval_slot_eval=retrieval_slot_eval,
+        metadata_dict=metadata_dict,
+        retrieval_outcome=retrieval_outcome,
+    ):
+        return None
+    if _llm_violation_is_valid_macro_news_options_boundary(
         violation,
         retrieval_slot_eval=retrieval_slot_eval,
         metadata_dict=metadata_dict,
@@ -894,12 +956,6 @@ def _deterministic_audit(draft: str, silver_context: Dict[str, Any], gold_contex
             if not repeated_label and not legacy_refs:
                 continue
         elif kind == "Gold":
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-            if anchor not in known_gold_refs:
-=======
-=======
->>>>>>> Stashed changes
             resolved_gold_ref = resolve_gold_anchor_ref(anchor, gold_registry)
             if resolved_gold_ref.get("resolution_status") == "alias":
                 feedbacks.append(AgentFeedback(
@@ -921,10 +977,6 @@ def _deterministic_audit(draft: str, silver_context: Dict[str, Any], gold_contex
                     missing_lineage_id=[anchor],
                 ))
             elif resolved_gold_ref.get("resolution_status") != "canonical":
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
                 feedbacks.append(AgentFeedback(
                     sender="Checker", error_type="Fatal",
                     comment=f"[rule:UNKNOWN_GOLD_REF | anchor={anchor}] Ref '{anchor}' not found.",
@@ -953,6 +1005,7 @@ def _deterministic_audit(draft: str, silver_context: Dict[str, Any], gold_contex
         # 🌟 架构师增强：免疫年份 (2020-2030) 和 常见自然数
         if abs(val) in _COMMON_NUMERIC_WHITELIST: continue
         if val >= 2020 and val <= 2030 and "." not in raw: continue
+        if _is_calendar_date_number(m, fact_section): continue
 
         is_claim = bool(is_pct) or "." in raw or abs(val) >= 10
         if not is_claim: continue
@@ -1055,8 +1108,10 @@ class CheckerAgent:
             logger.warning("CheckerAgent: max revisions reached — skipping audit.")
             return {"critic_feedback": [], "checker_verdict": "pass"}
 
-        draft, silver_ctx, gold_ctx = state.get("draft_report", ""), state.get("silver_context", {}), state.get("gold_context", [])
-        frozen_ctx = state.get("silver_context_frozen")
+        draft, raw_silver_ctx, gold_ctx = state.get("draft_report", ""), state.get("silver_context", {}), state.get("gold_context", [])
+        raw_frozen_ctx = state.get("silver_context_frozen")
+        silver_ctx = effective_silver_context(raw_silver_ctx if isinstance(raw_silver_ctx, dict) else {})
+        frozen_ctx = effective_silver_context(raw_frozen_ctx) if isinstance(raw_frozen_ctx, dict) else raw_frozen_ctx
         truth_ctx_for_anchor_contract = frozen_ctx if frozen_ctx is not None else silver_ctx
         silver_anchor_sets = _build_silver_anchor_sets(truth_ctx_for_anchor_contract)
         macro_text = state.get("macro_context", "")
