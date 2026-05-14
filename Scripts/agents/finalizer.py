@@ -10,10 +10,9 @@ Design pillars:
 1. **Structured output, not prose**  — uses ChatOllama.with_structured_output(FinalReport)
    so the LLM cannot return a free-form string. If the structured parse fails,
    we fall back to a safe skeleton report instead of throwing.
-2. **Traceability (Audit Trail)**  — populates every TradeIdea.supporting_evidence
-   with Silver provenance refs from state["silver_context"]["lineage_anchors"] and
-   state["gold_context"][*].bronze_ref. This satisfies the financial-compliance
-   requirement called out in the original docstring.
+2. **Traceability (Audit Trail)**  — exposes canonical Silver preferred anchors
+   and Gold bronze refs to the LLM while keeping raw audit lineage refs in
+   provenance/debug state only.
 3. **Confidence score reflects data, not vibes**  — if Gold or Silver layers
    returned nothing / errored, the confidence score is capped. If the
    revision counter hit the hard limit, we annotate the report as "degraded".
@@ -36,7 +35,12 @@ from langchain_openai import ChatOpenAI
 
 from Scripts.agents.prompts import get_finalizer_prompt
 from Scripts.agents.state import RenderSafetyContract
-from Scripts.core.evidence_contracts import canonical_query_family, evaluate_retrieval_slot_support
+from Scripts.core.evidence_contracts import (
+    build_silver_citation_registry,
+    canonical_query_family,
+    evaluate_retrieval_slot_support,
+    render_preferred_silver_citation,
+)
 from Scripts.core.financial_reasoning_contract import render_data_capability_profile
 from Scripts.core.financial_ontology import INSIDER_FLOW_QUERY_SLOTS, SEC_ACTION_TAXONOMY
 from Scripts.core.financial_narrative_contract import render_narrative_brief_block
@@ -45,6 +49,7 @@ from Scripts.core.liquidity_policy import (
     resolve_primary_ticker,
 )
 from Scripts.core.sec_contract import SECAnalysisBundle
+from Scripts.core.silver_context import preferred_silver_context_from_state
 from Scripts.retrieval.schema import render_scope_contract_block, render_time_contract_block
 
 logger = logging.getLogger(__name__)
@@ -234,19 +239,35 @@ def _collect_evidence_pool(state: Dict[str, Any]) -> List[SourceCitation]:
     """
     pool: List[SourceCitation] = []
 
-    silver_ctx = state.get("silver_context", {}) or {}
-    for anchor in silver_ctx.get("lineage_anchors", []) or []:
-        anchor_s = str(anchor)
-        # Route Silver anchors by prefix into the closest UI category. The
-        # anchor prefix convention comes from sql_tools.py lineage writes
-        # (e.g. "PCR_AGG_SPY_2026-04-19", "MACRO_VIX_...", "GPR_202604").
-        if anchor_s.startswith("GPR_"):
+    silver_ctx = _preferred_silver_context(state)
+    silver_values = dict(silver_ctx.get("values") or {})
+    citation_registry = build_silver_citation_registry(
+        silver_ctx.get("citation_contract") or {},
+        silver_values,
+        silver_ctx.get("lineage_anchors") or [],
+    )
+    citation_contract = dict(citation_registry.get("contract") or {})
+    for metric_key in silver_values:
+        metric_s = str(metric_key)
+        preferred = render_preferred_silver_citation(metric_s, citation_registry)
+        entry = dict(citation_contract.get(metric_s) or {})
+        observed_at = str(entry.get("observed_at") or "").strip()
+        source_channel = str(entry.get("source_channel") or "primary").strip()
+        metric_l = metric_s.lower()
+        if metric_s.startswith("gpr_"):
             st: Literal["Macro Data", "SEC Filing", "Global News", "GPR Index", "Options Market Data"] = "GPR Index"
-        elif anchor_s.startswith("MACRO_"):
+        elif metric_s.startswith(("GSPC_", "IXIC_", "VIX_", "DXY_", "DX_Y_NYB_", "GLD_SPOT_", "SLV_SPOT_", "FEDFUNDS_", "CPIAUCSL_", "UNRATE_")):
             st = "Macro Data"
-        else:
+        elif any(token in metric_l for token in ("iv", "spread", "liquid", "option", "open_interest", "pcr")):
             st = "Options Market Data"
-        pool.append(SourceCitation(source_type=st, detail=f"Silver lineage anchor: {anchor_s}"))
+        else:
+            st = "Macro Data"
+        bits = [f"Silver preferred anchor: {preferred}", f"metric={metric_s}"]
+        if observed_at:
+            bits.append(f"observed_at={observed_at}")
+        if source_channel:
+            bits.append(f"source_channel={source_channel}")
+        pool.append(SourceCitation(source_type=st, detail=" | ".join(bits)))
 
     for chunk in list(state.get("gold_context", []) or []) + list(state.get("supplemental_news_context", []) or []):
         src = getattr(chunk, "source_type", None) or (chunk.get("source_type", "") if isinstance(chunk, dict) else "")
@@ -584,11 +605,7 @@ def _trim_to_word_limit(text: str, max_words: int = 100) -> str:
 
 
 def _preferred_silver_context(state: Dict[str, Any]) -> Dict[str, Any]:
-    frozen = state.get("silver_context_frozen")
-    if isinstance(frozen, dict) and frozen.get("values"):
-        return frozen
-    silver = state.get("silver_context") or {}
-    return silver if isinstance(silver, dict) else {}
+    return preferred_silver_context_from_state(state)
 
 
 def _silver_values(state: Dict[str, Any]) -> Dict[str, Any]:

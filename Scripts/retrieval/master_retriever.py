@@ -95,6 +95,7 @@ from Scripts.core.financial_narrative_contract import (
 )
 from Scripts.core.liquidity_policy import resolve_primary_ticker
 from Scripts.core.sec_analysis import compose_sec_analysis_bundle
+from Scripts.core.silver_context import effective_silver_context
 from Scripts.observability.audit import append_audit_jsonl
 
 # Public re-export surface — keeps `__all__` explicit for static analysers.
@@ -1200,7 +1201,8 @@ class MasterRetriever:
         time_defaulted = bool((time_range or {}).get("is_default_window_applied"))
         time_extended = bool(is_fallback or effective_days > requested_days)
 
-        truth_ctx = silver_context_frozen if isinstance(silver_context_frozen, dict) and silver_context_frozen else silver_context
+        raw_truth_ctx = silver_context_frozen if isinstance(silver_context_frozen, dict) and silver_context_frozen else silver_context
+        truth_ctx = effective_silver_context(raw_truth_ctx if isinstance(raw_truth_ctx, dict) else {})
         truth_values = dict((truth_ctx or {}).get("values") or {})
         sec_payload_context_by_form = self._sec_payload_context_by_form(sec_retrieval_contract)
         sec_forms_requested = self._requested_sec_forms(metadata)
