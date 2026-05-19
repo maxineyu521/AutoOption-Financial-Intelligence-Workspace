@@ -651,20 +651,28 @@ def inject_theme() -> None:
     display: grid;
     gap: 14px;
     margin: 10px 0 10px 0;
+    max-width: 100%;
+    overflow-x: hidden;
+    box-sizing: border-box;
   }
   .timeline-row {
     display: grid;
     gap: 8px;
     margin: 0;
+    min-width: 0;
+    max-width: 100%;
   }
   .timeline-row-head {
-    display: flex;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: flex-end;
     gap: 14px;
+    min-width: 0;
   }
   .timeline-row-bar {
     display: block;
+    min-width: 0;
+    max-width: 100%;
   }
   .timeline-label {
     font-size: 12px;
@@ -677,6 +685,8 @@ def inject_theme() -> None:
     height: 12px;
     background: rgba(39,76,119,0.12);
     border-radius: 999px;
+    max-width: 100%;
+    overflow: hidden;
   }
   .timeline-bar {
     position: absolute;
@@ -689,6 +699,7 @@ def inject_theme() -> None:
     color: var(--text-muted);
     text-align: right;
     line-height: 1.35;
+    overflow-wrap: anywhere;
   }
   .timeline-note-inline {
     flex: 0 0 auto;
@@ -748,6 +759,56 @@ def inject_theme() -> None:
     color: var(--text-muted);
     margin-bottom: 6px;
     font-weight: 700;
+  }
+  .market-read-section {
+    border-left: 4px solid rgba(39,76,119,0.32);
+    padding: 2px 0 12px 14px;
+    margin: 8px 0 14px 0;
+  }
+  .market-read-section.market-read-status {
+    border-left-color: rgba(176,141,87,0.62);
+    margin-top: 16px;
+  }
+  .market-read-title {
+    color: var(--text-main) !important;
+    font-size: 1.02rem;
+    line-height: 1.3;
+    font-weight: 900;
+    margin-bottom: 6px;
+  }
+  .market-read-body {
+    color: var(--text-main) !important;
+    font-size: 1rem;
+    line-height: 1.6;
+    font-weight: 520;
+    max-width: 1080px;
+  }
+  .structured-part-title {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: var(--text-muted) !important;
+    margin: 18px 0 8px 0;
+    font-weight: 850;
+  }
+  .structured-part-title::after {
+    content: none;
+  }
+  .structured-signal-lines {
+    display: grid;
+    gap: 6px;
+    margin: 2px 0 14px 0;
+  }
+  .structured-signal-lines div {
+    color: var(--text-main) !important;
+    font-size: 0.98rem;
+    line-height: 1.45;
+  }
+  .structured-signal-lines span {
+    display: inline-block;
+    min-width: 170px;
+    color: #274c77 !important;
+    font-weight: 850;
   }
   .metric-row {
     border: 1px solid var(--accent-border);
