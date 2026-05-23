@@ -66,14 +66,31 @@ jobs:
       - name: Validate required secrets
         shell: bash
         run: |
-          test -n "$FRED_API_KEY"
-          test -n "$SEC_USER_AGENT"
-          test -n "$QDRANT_HOST"
-          test -n "$QDRANT_API_KEY"
+          MISSING_SECRETS=false
+          
+          check_secret() {
+            if [ -z "$2" ]; then
+              echo "❌ Error: Required secret '$1' is missing. Please add it in GitHub Settings -> Secrets -> Actions."
+              MISSING_SECRETS=true
+            else
+              echo "✅ Secret '$1' is loaded."
+            fi
+          }
+
+          check_secret "FRED_API_KEY" "$FRED_API_KEY"
+          check_secret "SEC_USER_AGENT" "$SEC_USER_AGENT"
+          check_secret "QDRANT_HOST" "$QDRANT_HOST"
+          check_secret "QDRANT_API_KEY" "$QDRANT_API_KEY"
+
           if [ "$INGESTION_LLM_PROVIDER" = "ollama" ]; then
-            test -n "$OLLAMA_HOST"
+            check_secret "OLLAMA_HOST" "$OLLAMA_HOST"
           else
-            test -n "$OPENAI_API_KEY"
+            check_secret "OPENAI_API_KEY" "$OPENAI_API_KEY"
+          fi
+
+          if [ "$MISSING_SECRETS" = true ]; then
+            echo "🚨 Pipeline aborted due to missing secrets."
+            exit 1
           fi
 
       - name: Collect data and ingest latest Gold files into Qdrant
