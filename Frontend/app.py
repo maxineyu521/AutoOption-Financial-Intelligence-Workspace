@@ -188,8 +188,8 @@ def _render_product_header() -> None:
     <div class="app-kicker">AutoOptions</div>
     <h1>Financial Intelligence Workspace</h1>
     <p>
-      Built for non-experts who need a rigorous market read without forcing a trade.
-      The system cross-checks options microstructure, filings, macro context, and execution reality before it allows conviction.
+      AutoOptions works like a research agent: it gathers market evidence and turns options, filings, news, and macro data into clear signals and directional context.
+      It supports decision-making, not trade execution. Outputs are informational only and do not provide strike-level investment instructions.
     </p>
   </div>
 </header>
@@ -374,10 +374,11 @@ def _render_result_workspace(
 
     with tab_context:
         context_mode = st.radio(
-            "Evidence view",
+            "Evidence context selector",
             ["Structured Signals", "News & Events"],
             horizontal=True,
             key="evidence_context_mode",
+            label_visibility="collapsed",
         )
         if context_mode == "Structured Signals":
             render_phase1_silver(final_state, st.container())
@@ -402,8 +403,8 @@ def main() -> None:
             {
                 "role": "assistant",
                 "content": (
-                    "I lower the barrier for non-experts by turning options, filings, and macro evidence into a disciplined market read. "
-                    "Deterministic guardrails cross-check microstructure, executive behavior, and event evidence, so if the case is weak I will refuse to force a trade."
+                    "I gather options, filing, news, and macro evidence, then translate it into clear market signals for decision support. "
+                    "This is an informational market read, not trade execution or investment advice."
                 ),
             }
         ]

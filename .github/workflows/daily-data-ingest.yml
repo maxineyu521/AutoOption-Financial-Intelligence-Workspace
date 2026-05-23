@@ -1,0 +1,110 @@
+name: Daily data ingest
+
+on:
+  workflow_dispatch:
+    inputs:
+      qdrant_full_refresh:
+        description: "Re-embed all Gold files instead of only latest watermarks"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+  schedule:
+    # Weekdays after the US cash-market close.
+    - cron: "5 17 * * 1-5"
+      timezone: "America/New_York"
+
+concurrency:
+  group: daily-data-ingest
+  cancel-in-progress: false
+
+jobs:
+  collect-and-qdrant-ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    env:
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+      QDRANT_HOST: ${{ secrets.QDRANT_HOST }}
+      QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+      OLLAMA_HOST: ${{ secrets.OLLAMA_HOST }}
+      OLLAMA_BASE_URL: ${{ secrets.OLLAMA_HOST }}
+      INGESTION_LLM_PROVIDER: ${{ vars.INGESTION_LLM_PROVIDER || 'openai' }}
+      OPENAI_INGESTION_MODEL: ${{ vars.OPENAI_INGESTION_MODEL || 'gpt-4o-mini' }}
+      OLLAMA_INGESTION_MODEL: ${{ vars.OLLAMA_INGESTION_MODEL || 'llama3:latest' }}
+      EMBEDDING_PROVIDER: ${{ vars.EMBEDDING_PROVIDER || 'huggingface' }}
+      EMBEDDING_MODEL_NAME: ${{ vars.EMBEDDING_MODEL_NAME || 'BAAI/bge-large-en-v1.5' }}
+      EMBEDDING_DEVICE: cpu
+      RETRIEVER_DEVICE: cpu
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore runtime state
+        uses: actions/cache@v4
+        with:
+          path: config/runtime
+          key: runtime-state-${{ github.ref_name }}-${{ github.run_number }}
+          restore-keys: |
+            runtime-state-${{ github.ref_name }}-
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          test -n "$FRED_API_KEY"
+          test -n "$SEC_USER_AGENT"
+          test -n "$QDRANT_HOST"
+          test -n "$QDRANT_API_KEY"
+          if [ "$INGESTION_LLM_PROVIDER" = "ollama" ]; then
+            test -n "$OLLAMA_HOST"
+          else
+            test -n "$OPENAI_API_KEY"
+          fi
+
+      - name: Collect data and ingest latest Gold files into Qdrant
+        shell: bash
+        run: |
+          EXTRA_ARGS=()
+          if [ "${{ github.event.inputs.qdrant_full_refresh }}" = "true" ]; then
+            EXTRA_ARGS+=(--qdrant-full-refresh)
+          fi
+          python -m Scripts ingest \
+            --with-qdrant \
+            --report-dir logs/github-actions \
+            "${EXTRA_ARGS[@]}"
+
+      - name: Publish dashboard summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f logs/github-actions/ingest_report.md ]; then
+            cat logs/github-actions/ingest_report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload ingest dashboard artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ingest-dashboard
+          path: |
+            logs/github-actions/ingest_report.json
+            logs/github-actions/ingest_report.md
+            logs/github-actions/ingest_dashboard.html
+            logs/runs/**
+            logs/*/ingestion.log
+          if-no-files-found: warn

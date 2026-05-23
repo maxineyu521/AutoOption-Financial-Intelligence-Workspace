@@ -282,9 +282,6 @@ Any retriever that omits these is a regression.
 | `Time_Adapter.md` | Time-window compilation logic (`TimeWindow -> TimePredicate`) and widening behavior | Retrieval/orchestration engineers | Any change to `compile_predicate`, widening policy, or source predicate wiring |
 | `Time_Schema_Audit.md` | Physical source-of-truth for time columns/keys/units across Silver and Gold datasets | Data platform and retrieval engineers | Any schema/cadence/time-key change in ingestion or storage layers |
 
-### 7.2 Should they live in different docs folders?
+- `Time_Adapter.md` in `docs/Query_retrieval_docs/` because it documents retrieval-time query compilation behavior.
+- `Time_Schema_Audit.md` to `docs/Data_source_docs/` when you want clear ownership separation between retrieval logic and physical data contracts.
 
-Recommended operating model:
-- Keep `Time_Adapter.md` in `docs/Query_retrieval_docs/` because it documents retrieval-time query compilation behavior.
-- Move `Time_Schema_Audit.md` to `docs/Data_source_docs/` when you want clear ownership separation between retrieval logic and physical data contracts.
-- If you do not want to move files right now, keep both in the current folder but add explicit cross-links and owner notes (this document now includes that boundary).
