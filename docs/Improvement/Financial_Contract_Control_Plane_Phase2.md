@@ -205,15 +205,6 @@ These are acceptable as documented limits unless a concrete failure appears:
 - PCR, IV rank, skew, liquidity tier, and market-impact thresholds are deterministic and hard-coded by design.
 - Large module size increases maintenance cost, but refactoring should wait until ownership boundaries are fully documented.
 
-## Suggested GitHub Handling
-
-Do not open a severe P0-style issue for this entire set.
-
-Preferred handling:
-1. Keep this markdown as the Phase 2 roadmap.
-2. Open focused GitHub issues only when a workstream is ready to implement.
-3. Use neutral labels such as `improvement`, `technical-debt`, or `contract-hardening`.
-4. Avoid incident-style language unless a reproducible behavioral bug is found.
 
 Suggested future issue titles:
 - `Add regression tests for posture activation and mode ceilings`
