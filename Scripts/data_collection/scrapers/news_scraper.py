@@ -38,22 +38,21 @@ if _INGESTION_LLM_PROVIDER not in {"openai", "ollama"}:
     _INGESTION_LLM_PROVIDER = "openai"
 
 _OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-if _INGESTION_LLM_PROVIDER == "openai" and not _OPENAI_API_KEY:
-    print(
-        "OPENAI_API_KEY is missing for news ingestion; "
-        f"falling back to local Ollama model {_INGESTION_MODEL}."
-    )
-    _INGESTION_LLM_PROVIDER = "ollama"
 
-if _INGESTION_LLM_PROVIDER == "ollama":
+
+def _build_ollama_llm():
     print(f"Initializing local {_INGESTION_MODEL} as the data cleaning engine...")
-    llm = ChatOllama(
+    return ChatOllama(
         model=_INGESTION_MODEL,
         temperature=0,
         base_url=os.getenv("OLLAMA_HOST", "http://localhost:11434"),
         keep_alive=os.getenv("OLLAMA_KEEP_ALIVE", "30m"),
     )
-else:
+
+
+def _build_openai_llm():
+    if not _OPENAI_API_KEY:
+        raise ValueError("OPENAI_API_KEY is missing for news ingestion.")
     print(f"Initializing {_OPENAI_INGESTION_MODEL} as the data cleaning engine...")
     _openai_kwargs = {
         "model": _OPENAI_INGESTION_MODEL,
@@ -64,7 +63,48 @@ else:
     _openai_base_url = os.getenv("OPENAI_BASE_URL", "").strip()
     if _openai_base_url:
         _openai_kwargs["base_url"] = _openai_base_url
-    llm = ChatOpenAI(**_openai_kwargs)
+    return ChatOpenAI(**_openai_kwargs)
+
+
+def _is_openai_auth_error(exc):
+    if getattr(exc, "status_code", None) == 401:
+        return True
+    response = getattr(exc, "response", None)
+    if getattr(response, "status_code", None) == 401:
+        return True
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error", {})
+        message = str(error.get("message", ""))
+        return "API key" in message or "Authorization" in message
+    return False
+
+
+def _switch_to_ollama_after_auth_failure(exc):
+    global llm, _INGESTION_LLM_PROVIDER
+    if _INGESTION_LLM_PROVIDER != "openai" or not _is_openai_auth_error(exc):
+        return False
+    log_print(
+        "OpenAI authentication failed during news ingestion; "
+        f"switching this run to local Ollama model {_INGESTION_MODEL}."
+    )
+    llm = _build_ollama_llm()
+    _INGESTION_LLM_PROVIDER = "ollama"
+    return True
+
+
+if _INGESTION_LLM_PROVIDER == "openai":
+    if _OPENAI_API_KEY:
+        llm = _build_openai_llm()
+    else:
+        print(
+            "OPENAI_API_KEY is missing for news ingestion; "
+            f"falling back to local Ollama model {_INGESTION_MODEL}."
+        )
+        _INGESTION_LLM_PROVIDER = "ollama"
+        llm = _build_ollama_llm()
+else:
+    llm = _build_ollama_llm()
 
 # 1. Get current system date (Format: YYYY-MM-DD)
 current_date = datetime.now().strftime("%Y-%m-%d")
@@ -219,6 +259,12 @@ def llm_extract_and_score(full_text, original_title):
     try:
         return llm.invoke(prompt).content.strip()
     except Exception as e:
+        if _switch_to_ollama_after_auth_failure(e):
+            try:
+                return llm.invoke(prompt).content.strip()
+            except Exception as fallback_error:
+                log_print(f"LLM Error after Ollama fallback: {fallback_error}")
+                return "INVALID_CONTENT"
         log_print(f"LLM Error: {e}")
         return "INVALID_CONTENT"
 
