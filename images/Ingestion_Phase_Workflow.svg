@@ -79,7 +79,7 @@
   <text x="70" y="600" font-size="15" font-weight="800" fill="#d97706">Gold Layer: Semantic Artifacts &amp; Narratives</text>
   
   <rect x="65" y="615" width="430" height="65" rx="6" fill="#fffbeb" stroke="#fde68a" />
-  <text x="75" y="632" font-size="11" font-weight="700" fill="#b45309">⭐ News LLM Enrichment (Llama 3 JSONL):</text>
+  <text x="75" y="632" font-size="11" font-weight="700" fill="#b45309">⭐ News LLM Enrichment (gpt-4o-mini JSONL):</text>
   <text x="75" y="647" font-size="10" fill="#78350f">Generates dense summaries, extracts entities, assesses volatility implications, and</text>
   <text x="75" y="661" font-size="10" fill="#78350f">assigns a quantitative `tone_score` (-5 Bearish to +5 Bullish).</text>
 
@@ -149,8 +149,8 @@
 
   <rect x="960" y="530" width="310" height="55" rx="6" fill="#fffbeb" stroke="#fde68a" />
   <text x="975" y="545" font-size="12" font-weight="700" fill="#b45309">⭐ Strategy: Deterministic ID</text>
-  <text x="975" y="560" font-size="11" fill="#78350f">Assigns a UUIDv5 hash (e.g., from SEC</text>
-  <text x="975" y="575" font-size="11" fill="#78350f">accession_no) to guarantee replay-safety.</text>
+  <text x="975" y="560" font-size="11" fill="#78350f">SEC seed: uuid5(SYSTEM_NAMESPACE, accession_no)</text>
+  <text x="975" y="575" font-size="11" fill="#78350f">News/GPR: native data.id; uuid4 only if missing</text>
 
   <path d="M 950 600 L 950 635" stroke="#10b981" stroke-width="2" marker-end="url(#arrow-green)" />
 
@@ -160,12 +160,12 @@
 
   <rect x="630" y="700" width="310" height="55" rx="6" fill="#ecfdf5" stroke="#6ee7b7" />
   <text x="645" y="715" font-size="12" font-weight="700" fill="#047857">Dense Semantic Vector</text>
-  <text x="645" y="730" font-size="11" fill="#065f46">Model: `bge-base-en-v1.5`</text>
+  <text x="645" y="730" font-size="11" fill="#065f46">Model: `BAAI/bge-base-en-v1.5`</text>
   <text x="645" y="745" font-size="11" fill="#065f46">Captures broad conceptual proximity</text>
 
   <rect x="960" y="700" width="310" height="55" rx="6" fill="#ecfdf5" stroke="#6ee7b7" />
   <text x="975" y="715" font-size="12" font-weight="700" fill="#047857">Sparse Lexical Vector</text>
-  <text x="975" y="730" font-size="11" fill="#065f46">Model: `SPLADE ONNX`</text>
+  <text x="975" y="730" font-size="11" fill="#065f46">Model: `prithivida/Splade_PP_en_v1`</text>
   <text x="975" y="745" font-size="11" fill="#065f46">Tracks exact terms, acronyms, and tickers</text>
 
   <path d="M 785 770 L 950 805" stroke="#10b981" stroke-width="2" marker-end="url(#arrow-green)" />
@@ -182,9 +182,9 @@
   <text x="645" y="923" font-size="12" font-weight="700" fill="#047857">2. Execute Batch Upsert</text>
   <text x="790" y="923" font-size="11" fill="#065f46">Writes to `financial_rag_gold`</text>
 
-  <rect x="960" y="905" width="310" height="40" rx="6" fill="#fffbeb" stroke="#fde68a" />
-  <text x="975" y="923" font-size="12" font-weight="700" fill="#b45309">⭐ 3. Audit Observability</text>
-  <text x="1120" y="923" font-size="11" fill="#78350f">Logs to `ingestion.log`</text>
+  <rect x="960" y="905" width="310" height="40" rx="6" fill="#ecfdf5" stroke="#6ee7b7" />
+  <text x="975" y="923" font-size="12" font-weight="700" fill="#047857">⭐ 3. Audit Observability</text>
+  <text x="1120" y="923" font-size="11" fill="#065f46">Logs to `ingestion.log`</text>
 
   <path d="M 950 960 L 950 985" stroke="#047857" stroke-width="3" marker-end="url(#arrow-green)" />
 

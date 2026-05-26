@@ -1,0 +1,249 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1450 1680" style="background-color: #f8fafc; font-family: 'Segoe UI', system-ui, sans-serif;">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b" />
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3b82f6" />
+    </marker>
+    <marker id="arrow-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9333ea" />
+    </marker>
+    <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f97316" />
+    </marker>
+
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-opacity="0.05" />
+    </filter>
+    <filter id="shadow-heavy" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-opacity="0.1" />
+    </filter>
+
+    <linearGradient id="lane-blue" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#eff6ff" />
+      <stop offset="100%" stop-color="#dbeafe" />
+    </linearGradient>
+    <linearGradient id="lane-purple" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#faf5ff" />
+      <stop offset="100%" stop-color="#f3e8ff" />
+    </linearGradient>
+    <linearGradient id="lane-orange" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#fff7ed" />
+      <stop offset="100%" stop-color="#ffedd5" />
+    </linearGradient>
+    <linearGradient id="lane-cyan" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ecfeff" />
+      <stop offset="100%" stop-color="#cffafe" />
+    </linearGradient>
+
+    <style>
+      .title { font-size: 32px; font-weight: 800; fill: #0f172a; }
+      .subtitle { font-size: 16px; font-weight: 500; fill: #64748b; }
+      .section-title { font-size: 20px; font-weight: 800; }
+      .section-subtitle { font-size: 12px; font-weight: 700; }
+      .card-title { font-size: 14px; font-weight: 800; fill: #1e293b; }
+      .body { font-size: 11px; font-weight: 500; fill: #475569; }
+      .body-strong { font-size: 11px; font-weight: 800; fill: #334155; }
+      .small { font-size: 10px; font-weight: 600; fill: #64748b; }
+      .arrow-label { font-size: 11px; font-weight: 800; fill: #64748b; }
+      .pill { font-size: 10px; font-weight: 800; fill: #334155; }
+    </style>
+  </defs>
+
+  <g id="header">
+    <text x="725" y="45" class="title" text-anchor="middle">Financial Contracts Control Plane</text>
+    <text x="725" y="72" class="subtitle" text-anchor="middle">High-summary contracts govern scope, evidence permission, domain reads, and final rendering boundaries</text>
+  </g>
+
+  <g id="lane-1">
+    <rect x="50" y="110" width="1350" height="255" rx="16" fill="url(#lane-blue)" stroke="#bfdbfe" stroke-width="2" filter="url(#shadow)" />
+    <text x="80" y="145" class="section-title" fill="#1e3a8a">I. Intent And Scope</text>
+    <text x="80" y="165" class="section-subtitle" fill="#3b82f6">Decides what the user is asking and what the answer is allowed to cover</text>
+
+    <rect x="80" y="190" width="285" height="135" rx="8" fill="#ffffff" stroke="#e2e8f0" filter="url(#shadow)" />
+    <text x="100" y="215" class="card-title">User Question</text>
+    <text x="100" y="240" class="body">• Captures asset and time window</text>
+    <text x="100" y="260" class="body">• Keeps original wording for audit</text>
+    <text x="100" y="280" class="body">• Does not assume a trade</text>
+    <text x="100" y="305" class="small">Input remains traceable.</text>
+
+    <rect x="405" y="190" width="285" height="135" rx="8" fill="#ffffff" stroke="#93c5fd" stroke-width="2" filter="url(#shadow)" />
+    <text x="425" y="215" class="card-title">Intent Normalizer</text>
+    <text x="425" y="240" class="body">• Detects the analysis lane</text>
+    <text x="425" y="260" class="body">• Extracts assets and sources</text>
+    <text x="425" y="280" class="body">• Builds semantic search hints</text>
+    <text x="425" y="305" class="small">Routing stays separate from prose.</text>
+
+    <rect x="730" y="190" width="285" height="135" rx="8" fill="#ffffff" stroke="#60a5fa" stroke-width="2" filter="url(#shadow)" />
+    <text x="750" y="215" class="card-title">Scope Boundary</text>
+    <text x="750" y="240" class="body">• Marks required vs supportive data</text>
+    <text x="750" y="260" class="body">• Sets source and time limits</text>
+    <text x="750" y="280" class="body">• Blocks unsupported structures</text>
+    <text x="750" y="305" class="small">Scope gives permission to answer.</text>
+
+    <rect x="1055" y="190" width="305" height="135" rx="8" fill="#ffffff" stroke="#3b82f6" stroke-width="2" filter="url(#shadow)" />
+    <text x="1075" y="215" class="card-title">Modes Involved</text>
+    <text x="1075" y="240" class="body">• Options posture • SEC risk</text>
+    <text x="1075" y="260" class="body">• Macro/news • Geopolitics</text>
+    <text x="1075" y="280" class="body">• Cross-asset regime</text>
+    <text x="1075" y="305" class="small">Named by business purpose.</text>
+
+    <path d="M 365 258 L 398 258" stroke="#3b82f6" stroke-width="2.5" marker-end="url(#arrow-blue)" />
+    <path d="M 690 258 L 723 258" stroke="#3b82f6" stroke-width="2.5" marker-end="url(#arrow-blue)" />
+    <path d="M 1015 258 L 1048 258" stroke="#3b82f6" stroke-width="2.5" marker-end="url(#arrow-blue)" />
+  </g>
+
+  <g id="flow-1">
+    <path d="M 725 365 L 725 415" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)" />
+    <text x="746" y="395" class="arrow-label">scope selects evidence rules</text>
+  </g>
+
+  <g id="lane-2">
+    <rect x="50" y="420" width="1350" height="315" rx="16" fill="url(#lane-purple)" stroke="#d8b4fe" stroke-width="2" filter="url(#shadow)" />
+    <text x="80" y="455" class="section-title" fill="#581c87">II. Evidence Contracts</text>
+    <text x="80" y="475" class="section-subtitle" fill="#9333ea">Decides which facts are strong enough to support each claim</text>
+
+    <rect x="80" y="505" width="245" height="150" rx="8" fill="#ffffff" stroke="#d8b4fe" stroke-width="2" filter="url(#shadow)" />
+    <text x="100" y="530" class="card-title">Financial Ontology</text>
+    <text x="100" y="555" class="body">• Maps signals to datasets</text>
+    <text x="100" y="575" class="body">• Keeps metric meaning stable</text>
+    <text x="100" y="595" class="body">• Separates valid but unavailable</text>
+    <text x="100" y="620" class="small">Prevents invented metrics.</text>
+
+    <rect x="360" y="505" width="245" height="150" rx="8" fill="#ffffff" stroke="#c084fc" stroke-width="2" filter="url(#shadow)" />
+    <text x="380" y="530" class="card-title">Slot Evidence</text>
+    <text x="380" y="555" class="body">• Lists facts each slot needs</text>
+    <text x="380" y="575" class="body">• Allows disclose-if-missing</text>
+    <text x="380" y="595" class="body">• Protects available analysis</text>
+    <text x="380" y="620" class="small">Missing facts become notes.</text>
+
+    <rect x="640" y="505" width="245" height="150" rx="8" fill="#ffffff" stroke="#c084fc" stroke-width="2" filter="url(#shadow)" />
+    <text x="660" y="530" class="card-title">Retrieval Status</text>
+    <text x="660" y="555" class="body">• Records what was found</text>
+    <text x="660" y="575" class="body">• Records what is missing</text>
+    <text x="660" y="595" class="body">• Tracks news, SEC, options</text>
+    <text x="660" y="620" class="small">Status is not opinion.</text>
+
+    <rect x="920" y="505" width="245" height="150" rx="8" fill="#ffffff" stroke="#a78bfa" stroke-width="2" filter="url(#shadow)" />
+    <text x="940" y="530" class="card-title">Capability Gate</text>
+    <text x="940" y="555" class="body">• Controls answer specificity</text>
+    <text x="940" y="575" class="body">• Blocks strike precision gaps</text>
+    <text x="940" y="595" class="body">• Lowers weak cases safely</text>
+    <text x="940" y="620" class="small">Specificity follows evidence.</text>
+
+    <rect x="1200" y="505" width="160" height="150" rx="8" fill="#ffffff" stroke="#7c3aed" stroke-width="2" filter="url(#shadow)" />
+    <text x="1220" y="530" class="card-title">Citation Gate</text>
+    <text x="1220" y="555" class="body">• Exposes safe refs</text>
+    <text x="1220" y="575" class="body">• Hides audit IDs</text>
+    <text x="1220" y="595" class="body">• Keeps lineage</text>
+    <text x="1220" y="620" class="small">Reader refs only.</text>
+
+    <path d="M 325 580 L 353 580" stroke="#9333ea" stroke-width="2.5" marker-end="url(#arrow-purple)" />
+    <path d="M 605 580 L 633 580" stroke="#9333ea" stroke-width="2.5" marker-end="url(#arrow-purple)" />
+    <path d="M 885 580 L 913 580" stroke="#9333ea" stroke-width="2.5" marker-end="url(#arrow-purple)" />
+    <path d="M 1165 580 L 1193 580" stroke="#9333ea" stroke-width="2.5" marker-end="url(#arrow-purple)" />
+
+    <rect x="360" y="668" width="725" height="48" rx="8" fill="#ffffff" stroke="#d8b4fe" />
+    <text x="722" y="689" class="body-strong" text-anchor="middle">Relationship: Section II does not write the answer.</text>
+    <text x="722" y="706" class="body-strong" text-anchor="middle">It decides what Section III may interpret.</text>
+  </g>
+
+  <g id="flow-2">
+    <path d="M 725 735 L 725 785" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)" />
+    <text x="746" y="765" class="arrow-label">supported evidence enters domain interpretation</text>
+  </g>
+
+  <g id="lane-3">
+    <rect x="50" y="790" width="1350" height="315" rx="16" fill="url(#lane-orange)" stroke="#fdba74" stroke-width="2" filter="url(#shadow)" />
+    <text x="80" y="825" class="section-title" fill="#9a3412">III. Domain Interpretation Contracts</text>
+    <text x="80" y="845" class="section-subtitle" fill="#f97316">Parallel expert lenses consume the evidence contract and produce grounded reads</text>
+
+    <rect x="80" y="875" width="285" height="160" rx="8" fill="#ffffff" stroke="#fdba74" stroke-width="2" filter="url(#shadow)" />
+    <text x="100" y="900" class="card-title">Options Posture</text>
+    <text x="100" y="925" class="body">• Reads IV, skew, put/call</text>
+    <text x="100" y="945" class="body">• Adds liquidity friction</text>
+    <text x="100" y="965" class="body">• Explains current posture</text>
+    <text x="100" y="985" class="body">• Names transition risk</text>
+    <text x="100" y="1010" class="small">Only for options evidence.</text>
+
+    <rect x="405" y="875" width="285" height="160" rx="8" fill="#ffffff" stroke="#fdba74" stroke-width="2" filter="url(#shadow)" />
+    <text x="425" y="900" class="card-title">Macro / News Narrative</text>
+    <text x="425" y="925" class="body">• Summarizes news driver</text>
+    <text x="425" y="945" class="body">• Explains macro transmission</text>
+    <text x="425" y="965" class="body">• Links asset reaction</text>
+    <text x="425" y="985" class="body">• States what changes the view</text>
+    <text x="425" y="1010" class="small">Owns narrative synthesis.</text>
+
+    <rect x="730" y="875" width="285" height="160" rx="8" fill="#ffffff" stroke="#fb923c" stroke-width="2" filter="url(#shadow)" />
+    <text x="750" y="900" class="card-title">SEC Filing Read</text>
+    <text x="750" y="925" class="body">• Separates Form 4 and 8-K</text>
+    <text x="750" y="945" class="body">• Reads selling and buying flow</text>
+    <text x="750" y="965" class="body">• Detects planned or vesting trades</text>
+    <text x="750" y="985" class="body">• Flags issuer event pressure</text>
+    <text x="750" y="1010" class="small">Filing type controls meaning.</text>
+
+    <rect x="1055" y="875" width="305" height="160" rx="8" fill="#ffffff" stroke="#fb923c" stroke-width="2" filter="url(#shadow)" />
+    <text x="1075" y="900" class="card-title">Liquidity Policy</text>
+    <text x="1075" y="925" class="body">• Selects the best ticker bundle</text>
+    <text x="1075" y="945" class="body">• Classifies execution friction</text>
+    <text x="1075" y="965" class="body">• Blocks unsupported healthy claims</text>
+    <text x="1075" y="985" class="body">• Discloses unknown risk</text>
+    <text x="1075" y="1010" class="small">Unknown means do not infer.</text>
+
+    <rect x="360" y="1048" width="725" height="48" rx="8" fill="#ffffff" stroke="#fdba74" />
+    <text x="722" y="1069" class="body-strong" text-anchor="middle">Relationship: Section III is interpretation.</text>
+    <text x="722" y="1086" class="body-strong" text-anchor="middle">It cannot expand beyond Section II’s evidence permissions.</text>
+  </g>
+
+  <g id="flow-3">
+    <path d="M 725 1105 L 725 1155" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)" />
+    <text x="746" y="1135" class="arrow-label">domain reads move into review and final rendering</text>
+  </g>
+
+  <g id="lane-4">
+    <rect x="50" y="1160" width="1350" height="270" rx="16" fill="url(#lane-cyan)" stroke="#67e8f9" stroke-width="2" filter="url(#shadow)" />
+    <text x="80" y="1195" class="section-title" fill="#0e7490">IV. Governance And Final Rendering</text>
+    <text x="80" y="1215" class="section-subtitle" fill="#0891b2">Reviews truth, sets answer strength, and renders the reader-facing market read</text>
+
+    <rect x="100" y="1245" width="280" height="125" rx="8" fill="#ffffff" stroke="#67e8f9" stroke-width="2" filter="url(#shadow)" />
+    <text x="120" y="1270" class="card-title">Checker</text>
+    <text x="120" y="1295" class="body">• Audits numbers and citations</text>
+    <text x="120" y="1315" class="body">• Rejects unsupported lineage</text>
+    <text x="120" y="1335" class="body">• Forces factual revision</text>
+    <text x="120" y="1355" class="small">Truth check only.</text>
+
+    <rect x="430" y="1245" width="280" height="125" rx="8" fill="#ffffff" stroke="#67e8f9" stroke-width="2" filter="url(#shadow)" />
+    <text x="450" y="1270" class="card-title">Critic</text>
+    <text x="450" y="1295" class="body">• Challenges logic and risk</text>
+    <text x="450" y="1315" class="body">• Sets answer strength</text>
+    <text x="450" y="1335" class="body">• Blocks false actionability</text>
+    <text x="450" y="1355" class="small">Judgment boundary.</text>
+
+    <rect x="760" y="1245" width="280" height="125" rx="8" fill="#ffffff" stroke="#67e8f9" stroke-width="2" filter="url(#shadow)" />
+    <text x="780" y="1270" class="card-title">Finalizer</text>
+    <text x="780" y="1295" class="body">• Merges approved reads</text>
+    <text x="780" y="1315" class="body">• Renders sections cleanly</text>
+    <text x="780" y="1335" class="body">• Keeps missing info separate</text>
+    <text x="780" y="1355" class="small">No new reasoning.</text>
+
+    <rect x="1090" y="1245" width="250" height="125" rx="8" fill="#ffffff" stroke="#67e8f9" stroke-width="2" filter="url(#shadow)" />
+    <text x="1110" y="1270" class="card-title">Reader Output</text>
+    <text x="1110" y="1295" class="body">• Quick Take</text>
+    <text x="1110" y="1315" class="body">• Macro and asset read</text>
+    <text x="1110" y="1335" class="body">• Risks and missing info</text>
+    <text x="1110" y="1355" class="small">Decision support only.</text>
+
+    <path d="M 380 1308 L 423 1308" stroke="#0891b2" stroke-width="2.5" marker-end="url(#arrow)" />
+    <path d="M 710 1308 L 753 1308" stroke="#0891b2" stroke-width="2.5" marker-end="url(#arrow)" />
+    <path d="M 1040 1308 L 1083 1308" stroke="#0891b2" stroke-width="2.5" marker-end="url(#arrow)" />
+  </g>
+
+  <g id="bottom-summary">
+    <text x="110" y="1505" font-size="18" font-weight="800" fill="#0f172a">High-Level Contract Workflow</text>
+    <text x="110" y="1538" font-size="13" font-weight="700" fill="#334155">I. Scope contracts define the problem boundary, source limits, and answer ceiling.</text>
+    <text x="110" y="1564" font-size="13" font-weight="700" fill="#334155">II. Evidence contracts convert retrieval into permission: supported, disclosed, or blocked.</text>
+    <text x="110" y="1590" font-size="13" font-weight="700" fill="#334155">III. Domain contracts interpret only permitted evidence through options, SEC, liquidity, and narrative lenses.</text>
+    <text x="110" y="1616" font-size="13" font-weight="700" fill="#334155">IV. Governance contracts audit truth, set actionability, and render the final answer without new reasoning.</text>
+  </g>
+</svg>
