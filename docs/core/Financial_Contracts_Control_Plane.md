@@ -2,778 +2,491 @@
 
 ## Executive Summary
 
-This document defines the financial contracts that govern the pipeline across retrieval, analysis, critique, and final rendering.
+This document is the high-level institutional reference for the financial RAG contract control plane. It defines how user intent becomes a scoped financial problem, how evidence requirements are compiled, how deterministic financial interpretation is derived, and how final output actionability is governed.
 
-The most important design principle is that **not all "modes" live at the same layer**. The system uses several contract layers:
+The system is built around one central principle:
 
-- **problem classification contracts** decide what kind of question this is
-- **evidence and coverage contracts** decide what data is required to answer it
-- **output governance contracts** decide how far the answer may go
-- **posture synthesis contracts** decide how current market posture and transition risk are described
+**Not all modes live at the same layer.**
 
-Treating these layers separately keeps the workflow deterministic, auditable, and cleanly owned by each node.
+Different contract layers answer different questions:
 
-## Contract Topology
+| Layer | Question Answered | Primary Owner |
+|---|---|---|
+| Intent and scope | What kind of problem is this? | Query transform and retrieval |
+| Ontology and capability | What can the system support with current data? | Core ontology and reasoning contracts |
+| Evidence and coverage | What evidence is required, found, missing, or disclosable? | Retrieval, Checker, Critic |
+| SEC analysis | What do SEC filings actually imply by subtype? | SEC contract and SEC analysis helpers |
+| Posture and liquidity | What is the current market state and next adverse transition? | Analyst with deterministic core helpers |
+| Narrative synthesis | What macro/news transmission can be rendered safely? | Narrative contract and Analyst |
+| Governance and finalization | How actionable may the answer be, and where does each section belong? | Critic and Finalizer |
 
-### Layer 1: Query Classification
+This separation keeps the workflow deterministic, auditable, and stable across revisions.
 
-These contracts describe **what kind of problem is being solved**.
+![Financial Contracts Control Plane](../../images/Financial_Contracts_Control_Plane.svg)
 
-- `query_family`
-- `analysis_mode`
-- `market_analysis_only`
-- `coverage_basis`
+## Contract Layering Model
 
-These are established upstream in retrieval and scope construction, then passed forward through `scope_contract`.
+The control plane is best understood as a narrowing pipeline. Early contracts classify and bound the question. Middle contracts determine evidence and interpretation. Late contracts govern output strength and rendering.
 
-### Layer 2: Evidence Sufficiency
+| Layer | Representative Contracts | Purpose | Output |
+|---|---|---|---|
+| Intent extraction | `MetadataExtraction` | Convert user language into structured financial intent | tickers, metrics, sources, surfaces, `read_profile` |
+| Scope construction | `ScopeContract` | Compile answerability, source strictness, ceilings, and slot requirements | `query_family`, `coverage_basis`, `query_slots`, ceilings |
+| Ontology mapping | `financial_ontology.py` | Map business metrics to physical data support | allowed metrics, unavailable metrics, column mappings |
+| Silver context normalization | `effective_silver_context` | Expose canonical structured values without mutating provenance | effective Silver view |
+| SEC contract | `SECAnalysisBundle` | Separate Form 4 and 8-K evidence semantics | coverage, features, filing analysis, disclosures |
+| Evidence sufficiency | slot evidence contracts | Define required evidence groups per query family | slot status and coverage constraints |
+| Data capability | `DataCapabilityProfile` | Determine how much structure/actionability data can support | concrete structure gate |
+| Posture and liquidity | `derive_posture_contract`, liquidity policy | Derive market posture, execution risk, and transition risk | posture label, trace, base read, escalation risk |
+| Narrative contract | `NewsSemanticProfile`, `NarrativeBrief` | Produce deterministic macro/news render fields | narrative fields |
+| Governance | `recommendation_mode`, `revision_constraints` | Enforce actionability and section ownership | finalizer-safe constraints |
+| Final rendering | `finalizer_input_card` | Render controlled answer without new financial reasoning | final strategy |
 
-These contracts describe **what evidence is needed** and whether the answer is sufficiently grounded.
+## End-To-End Workflow
 
-- slot-level evidence contracts
-- requested vs available metrics
-- requested vs strict vs soft sources
-- evidence coverage severity
-
-These contracts are defined in core modules and carried through retrieval and critique.
-
-### Layer 3: Output Governance
-
-These contracts describe **how actionable the answer may be**.
-
-- `recommendation_mode`
-- `actionability_mode`
-- `structure_visibility_mode`
-- `section_ownership`
-
-These are set in the Critic layer and consumed by the Finalizer.
-
-### Layer 4: Posture Interpretation
-
-These contracts describe **what the current market posture is** and **what its next adverse transition would be**.
-
-- `posture_label`
-- `posture_takeaway`
-- `posture_rationale`
-- `base_regime_read`
-- `escalation_risk_archetype`
-- `escalation_risk_read`
-
-These are activated only for valid read-style posture outputs.
-
-## Canonical Mode Inventory
-
-### 1. `query_family`
-
-**Where it lives**
-
-- `Scripts/core/financial_ontology.py`
-- carried in `scope_contract`
-
-**What it means**
-
-`query_family` is the top-level problem family. It determines the financial domain, expected signal types, and downstream reasoning path.
-
-**Current canonical families**
-
-- `insider_flow_driven`
-- `single_name_options`
-- `options_microstructure`
-- `cross_asset_regime`
-- `macro_regime`
-- `geopolitical_commodity`
-
-**What it controls**
-
-- which slot/evidence contracts are built
-- whether the query is posture-capable
-- what kind of analyst synthesis is expected
-
-### 2. `analysis_mode`
-
-**Where it lives**
-
-- carried in `scope_contract`
-- used downstream in render and compliance logic
-
-**What it means**
-
-`analysis_mode` describes the answer pattern, not the final recommendation level.
-
-**Current values**
-
-- `default_read`
-- `data_backed_read`
-
-**How to read it**
-
-- `default_read`: standard answer path
-- `data_backed_read`: answer must be grounded in retrieved evidence and handled as a data-backed read
-
-### 3. `market_analysis_only`
-
-**Where it lives**
-
-- carried in `scope_contract`
-- consumed by posture and governance logic
-
-**What it means**
-
-This is the authoritative contract for whether the query may end as a **read-only market answer** without needing a promotable strike-level options structure.
-
-It is the key activation signal for posture synthesis.
-
-**What it controls**
-
-- whether read-only posture output is a valid end state
-- whether posture synthesis should activate
-- whether a concrete options structure is required
-
-### 4. `coverage_basis`
-
-**Where it lives**
-
-- carried in `scope_contract`
-- produced by source-requirement normalization
-
-**What it means**
-
-`coverage_basis` describes the truthness basis of the answer, not the retrieval route by itself.
-
-**Current values**
-
-- `silver_only`
-- `silver_primary_with_soft_gold`
-- `hybrid_required`
-
-**How to read it**
-
-- `silver_only`: the answer can be grounded entirely in structured Silver evidence
-- `silver_primary_with_soft_gold`: Silver is primary; Gold may enrich but is not hard-required
-- `hybrid_required`: both structured and unstructured evidence are part of the strict answer contract
-
-### 5. `recommendation_mode`
-
-**Where it lives**
-
-- `Scripts/agents/state.py`
-- set by Critic and merged into `finalizer_input_card`
-
-**What it means**
-
-This is the main downstream output mode. It controls how far the answer is allowed to go.
-
-**Current values**
-
-- `actionable_options`
-- `directional_watchlist`
-- `informational_only`
-
-**How to read it**
-
-- `actionable_options`: concrete options structure discussion is allowed
-- `directional_watchlist`: directional or watchlist-grade output is allowed, but not a concrete promoted structure
-- `informational_only`: the answer remains read-only or contextual
-
-### 6. `actionability_mode`
-
-**Where it lives**
-
-- `Scripts/agents/state.py`
-- set by Critic
-
-**What it means**
-
-This mirrors the current actionability ceiling for the answer. In the present code path it shares the same value space as `recommendation_mode`, but it exists as a separate governance surface so actionability can remain explicit even if recommendation language later evolves.
-
-**Current values**
-
-- `actionable_options`
-- `directional_watchlist`
-- `informational_only`
-
-### 7. `structure_visibility_mode`
-
-**Where it lives**
-
-- `Scripts/agents/state.py`
-- set by Critic
-
-**What it means**
-
-This controls how much options structure detail may be displayed.
-
-**Current values**
-
-- `recommended_structure`
-- `illustrative_structure`
-- `no_structure`
-
-**How to read it**
-
-- `recommended_structure`: a concrete structure may be shown as an actual recommendation
-- `illustrative_structure`: a structure may appear only as an illustration, not as a promoted trade
-- `no_structure`: no structure should be shown
-
-### 8. `evidence_coverage_severity`
-
-**Where it lives**
-
-- `Scripts/agents/state.py`
-- carried inside `revision_constraints`
-
-**What it means**
-
-This contract separates evidence coverage disclosure from market risk.
-
-**Current values**
-
-- `none`
-- `soft_note`
-- `hard_gap`
-
-**How to read it**
-
-- `none`: required evidence is present
-- `soft_note`: the read still stands, but a minor coverage note may be disclosed
-- `hard_gap`: required evidence is missing, and the read is materially impaired or degraded
-
-This contract must not be confused with the `Risks` section, which is reserved for market and invalidation risk.
-
-### 9. `posture_label`
-
-**Where it lives**
-
-- `Scripts/core/posture_contract.py`
-
-**What it means**
-
-`posture_label` is the canonical financial-state label for read-only posture outputs.
-
-**Current values**
-
-- `constructive`
-- `neutral`
-- `neutral_to_defensive`
-- `defensive`
-- `stressed`
-
-**Activation rule**
-
-Posture synthesis activates only when all three conditions hold:
-
-1. `market_analysis_only = true`
-2. `query_family` is in `READ_STYLE_POSTURE_FAMILIES`
-3. `recommendation_mode != actionable_options`
-
-This means posture synthesis is bound to the scope contract, not to query phrasing.
-
-### 10. `escalation_risk_archetype`
-
-**Where it lives**
-
-- `Scripts/core/posture_contract.py`
-
-**What it means**
-
-This is the canonical transition-risk type for posture reads. It does not describe generic caveats. It describes the most likely **next adverse evolution** from the current posture.
-
-**Current values**
-
-- `defensive_flow_acceleration`
-- `vol_spike_repricing`
-- `premium_compression`
-- `execution_fragility`
-- `regime_reversal`
-
-**How to read it**
-
-- `defensive_flow_acceleration`: defensive positioning is already present and may intensify into more aggressive downside hedging
-- `vol_spike_repricing`: volatility may reprice sharply higher and make hedges much more expensive
-- `premium_compression`: already-rich protection may mean-revert, exposing overpayment risk
-- `execution_fragility`: implementation cost and slippage are the dominant risk
-- `regime_reversal`: the current signal may fade or reverse
-
-## Financial State Contracts
-
-### Posture State Machine
-
-The posture contract does not generate prose directly from raw numbers. It first derives normalized financial states.
-
-**Current intermediate states**
-
-- `pcr_state`
-  - `protection_heavy`
-  - `neutral_flow`
-  - `call_skewed`
-  - `unknown`
-- `iv_regime_state`
-  - `LOW`
-  - `NORMAL`
-  - `HIGH`
-  - `UNKNOWN`
-- `iv_richness_state`
-  - `cheap`
-  - `mid_range`
-  - `firm`
-  - `rich`
-  - `unknown`
-- `skew_state`
-  - `positive_put_premium`
-  - `flat`
-  - `negative_call_premium`
-  - `unknown`
-- `skew_intensity`
-  - `modest`
-  - `strong`
-  - `flat`
-  - `unknown`
-- `liquidity_state`
-  - `healthy`
-  - `fragile`
-  - `unknown`
-- `market_impact_risk`
-  - `Low`
-  - `Medium`
-  - `High`
-  - `Unknown`
-- `posture_transition_risk`
-  - same archetype space as `escalation_risk_archetype`
-
-These states are carried in `posture_reasoning_trace`, which makes the reasoning path explicit and auditable.
-
-### Liquidity and Execution Contracts
-
-**Where they live**
-
-- `Scripts/core/liquidity_policy.py`
-
-**Canonical modes**
-
-- `LiquidityTier`
-  - `tier1`
-  - `tier2`
-  - `tier3`
-  - `unknown`
-- `MarketImpactRisk`
-  - `Low`
-  - `Medium`
-  - `High`
-  - `Unknown`
-
-**What they control**
-
-- ticker-level execution quality
-- whether the dominant risk should be execution fragility
-- whether posture is still practically implementable
-
-## Evidence Sufficiency Contracts
-
-### Slot Evidence Contract
-
-**Where it lives**
-
-- `Scripts/core/evidence_contracts.py`
-
-**What it means**
-
-The slot evidence contract defines what evidence is needed to satisfy each requested financial question.
-
-Each slot contract includes:
-
-- `slot_name`
-- `slot_label`
-- `satisfaction_mode`
-- `required_disclosures`
-- `min_groups_required`
-- `evidence_groups`
-
-**Typical satisfaction modes**
-
-- `evidence_required`
-- `evidence_or_disclose`
-
-This is the bridge between query semantics and evidence sufficiency.
-
-### Data Capability Profile
-
-**Where it lives**
-
-- `Scripts/core/financial_reasoning_contract.py`
-
-**What it means**
-
-The data capability profile describes what the system can actually support for the current query.
-
-Representative fields include:
-
-- `requested_metrics`
-- `requested_sources`
-- `requested_time_window`
-- `available_metrics`
-- `unavailable_metrics`
-- `has_options_source`
-- `has_options_chain_support`
-- `has_iv_signal`
-- `has_liquidity_signal`
-- `has_strike_support`
-- `has_dte_support`
-- `has_price_signal`
-- `has_gold_evidence`
-- `can_support_concrete_option_structure`
-
-This contract feeds Critic-side governance and recommendation-mode selection.
-
-## Node Ownership Model
-
-### Retrieval and Scope
-
-**Primary file**
-
-- `Scripts/agents/router.py`
-
-**Node**
-
-- `master_retrieval_node`
-
-**Owns**
-
-- `metadata`
-- `gold_context`
-- `silver_context`
-- `silver_context_frozen`
-- `scope_contract`
-- `retrieval_outcome`
-- `time_range`
-- `hyde_anticipation`
-
-**Sets or resets**
-
-- `recommendation_mode = None`
-- `actionability_mode = None`
-- `structure_visibility_mode = None`
-- `revision_constraints = None`
-- `finalizer_input_card = None`
-- `iv_regime_pinned = None`
-
-This node decides whether the request is in scope and what the upstream financial contract looks like. It does **not** decide posture labels or final recommendation level.
-
-### Analyst
-
-**Primary files**
-
-- `Scripts/agents/router.py`
-- `Scripts/agents/state.py`
-- `Scripts/core/posture_contract.py`
-
-**Node**
-
-- `analyst_node`
-
-**Owns**
-
-- first-pass draft synthesis
-- `iv_regime_pinned` on the first valid pass
-- posture synthesis when the posture contract is active
-- assembly of `finalizer_input_card`
-
-**Posture-specific outputs**
-
-- `posture_label`
-- `posture_takeaway`
-- `posture_rationale`
-- `base_regime_read`
-- `posture_reasoning_trace`
-
-Analyst owns the **current-state interpretation**. It does not own the final `Risks` section semantics.
-
-### Checker
-
-**Primary files**
-
-- `Scripts/agents/router.py`
-- `Scripts/agents/state.py`
-
-**Node**
-
-- `checker_node`
-
-**Owns**
-
-- factual audit
-- lineage audit
-- deterministic numeric checking
-- fatal/minor audit feedback
-
-Checker does not define financial modes. It validates whether the current draft is compliant with evidence and lineage.
-
-### Critic
-
-**Primary files**
-
-- `Scripts/agents/router.py`
-- `Scripts/agents/state.py`
-- `Scripts/core/posture_contract.py`
-- `Scripts/core/financial_reasoning_contract.py`
-
-**Node**
-
-- `critic_node`
-
-**Owns**
-
-- `recommendation_mode`
-- `actionability_mode`
-- `structure_visibility_mode`
-- `revision_constraints`
-- `critic_reasoning_profile`
-
-**Posture-specific ownership**
-
-When the posture contract is active, Critic consumes:
-
-- `posture_label`
-- `posture_reasoning_trace`
-- `escalation_risk_archetype`
-- `escalation_risk_read`
-
-Critic then:
-
-- checks consistency between posture, evidence, and recommendation level
-- sets `true_risk_text` from the contract-driven transition-risk read
-- enforces output governance
-
-Critic owns **risk governance**, but not the original financial ontology of posture or transition risk.
-
-### Finalizer
-
-**Primary files**
-
-- `Scripts/agents/router.py`
-- `Scripts/agents/state.py`
-
-**Node**
-
-- `finalizer_node`
-
-**Owns**
-
-- final section placement
-- final structured output assembly
-
-**Consumes**
-
-- `recommendation_mode`
-- `actionability_mode`
-- `structure_visibility_mode`
-- `revision_constraints`
-- `posture_takeaway`
-- `posture_rationale`
-- `base_regime_read`
-- `escalation_risk_read`
-
-Finalizer does not derive new financial logic. It only renders structured upstream outputs into the correct sections.
-
-## Cross-Node Handoff Surface
-
-### `scope_contract`
-
-The central upstream control surface. It carries:
-
-- problem family
-- answer pattern
-- source strictness basis
-- posture eligibility
-- coverage basis
-
-This is the handoff from retrieval into the analytical path.
-
-### `iv_regime_pinned`
-
-Pinned by Analyst on the first pass and then reused verbatim across revisions so the regime interpretation does not drift mid-pipeline.
-
-### `revision_constraints`
-
-The main Critic-to-Finalizer governance bundle. It may carry:
-
-- `mode_boundary_text`
-- `illustrative_structure_text`
-- `true_risk_text`
-- `evidence_coverage_note`
-- `evidence_coverage_severity`
-- `read_valid_despite_coverage_gap`
-- `section_ownership`
-
-### `finalizer_input_card`
-
-The single structured Finalizer handoff.
-
-**Analyst contributes**
-
-- evidence synthesis
-- posture synthesis
-- structure hints
-
-**Critic contributes**
-
-- governance constraints
-- output mode
-- render ownership
-- risk channel
-
-**Finalizer consumes**
-
-- the merged card only
-
-## Workflow and Mode Transitions
+The workflow is intentionally staged. Downstream nodes may consume upstream contracts, but they should not take over upstream ownership.
 
 ```mermaid
 flowchart TD
-    A["Original Query"] --> B["master_retrieval_node<br/>Build metadata, retrieval_outcome, scope_contract"]
-    B --> C{"scope_contract.scope_status"}
-    C -- "out_of_scope" --> H["finalizer_node<br/>Degraded or scope-limited output"]
-    C -- "in_scope" --> D["analyst_node<br/>Draft, pin iv_regime, build finalizer_input_card"]
-    D --> E["checker_node<br/>Fact, lineage, numeric audit"]
-    E --> F{"checker_verdict"}
-    F -- "fatal" --> D
-    F -- "pass/minor" --> G["critic_node<br/>Set recommendation_mode, actionability_mode, structure_visibility_mode, revision_constraints"]
-    G --> I{"critic_verdict"}
-    I -- "fatal" --> D
-    I -- "pass/minor" --> H["finalizer_node<br/>Render final_strategy from finalizer_input_card"]
+    A["User Intent"] --> B["MetadataExtraction"]
+    B --> C["ScopeContract"]
+    C --> D["Ontology + DataCapabilityProfile"]
+    C --> E["Slot Evidence Contracts"]
+    C --> F["SEC / Narrative / Silver Contracts"]
+    D --> G["RetrievalOutcome"]
+    E --> G
+    F --> G
+    G --> H["Analyst: Draft + Posture/Narrative Synthesis"]
+    H --> I["Checker: Fact, Lineage, Numeric Audit"]
+    I --> J{"Checker Verdict"}
+    J -- "fatal" --> H
+    J -- "pass/minor" --> K["Critic: Governance + Mode Selection"]
+    K --> L{"Critic Verdict"}
+    L -- "fatal" --> H
+    L -- "pass/minor" --> M["FinalizerInputCard"]
+    M --> N["Finalizer: Controlled Render"]
+    N --> O["Final Answer"]
 ```
 
-## Mode Determination Sequence
+## Primary Contract Surfaces
 
-### Stage 1: Retrieval establishes upstream contracts
+### `MetadataExtraction`
 
-In `Scripts/agents/router.py`, `master_retrieval_node` writes:
+`MetadataExtraction` is the structured intent payload. It answers what the user appears to be asking for before retrieval begins.
 
-- `scope_contract`
-- `retrieval_outcome`
-- `silver_context`
-- `gold_context`
+| Field | Meaning |
+|---|---|
+| `tickers` | Primary symbols extracted from the query |
+| `metrics` | Requested business metrics such as IV, PCR, GPR, or insider activity |
+| `source_types` | Requested source families such as `sec`, `news`, `gpr`, `options` |
+| `primary_theme` | Main theme: `insider`, `geopolitics`, `cross_asset`, `options` |
+| `primary_surface` | Main analytical surface: `options_surface` or `macro_news_surface` |
+| `asset_scope` | `single_name`, `benchmark`, `basket`, or `unspecified` |
+| `read_profile` | `board_state`, `posture_read`, `event_risk`, or `structure_request` |
+| `time_window` | Normalized retrieval horizon |
 
-At this point the system knows:
+### `ScopeContract`
 
-- the problem family
-- the evidence basis
-- whether the query is in scope
-- whether the answer may be a read-only market output
+`ScopeContract` is the central upstream control surface. It is compiled by retrieval and consumed by all downstream nodes.
 
-### Stage 2: Analyst activates posture synthesis if eligible
+| Field | Meaning |
+|---|---|
+| `query_family` | Canonical financial problem family |
+| `strict_sources` | Required evidence sources |
+| `soft_context_sources` | Optional enrichment sources |
+| `allowed_metrics` | Supported requested metrics |
+| `unavailable_metrics` | Valid intent metrics not supported by current data |
+| `query_slots` | Semantic slots for the family |
+| `slot_evidence_contracts` | Evidence requirements per slot |
+| `analysis_mode` | Answer workflow pattern |
+| `coverage_basis` | Truth basis for the answer |
+| `market_analysis_only` | Whether a read-only market answer is valid |
+| `output_mode_ceiling` | Maximum permitted actionability |
+| `specificity_ceiling` | Maximum permitted options-structure specificity |
+| `scope_status` | `in_scope` or `out_of_scope` |
 
-Analyst reads:
+Current canonical `query_family` values:
 
-- `scope_contract`
-- `silver_context`
-- `iv_regime_pinned`
-- current recommendation constraints from state, if present
+| Family | Purpose |
+|---|---|
+| `options_microstructure` | Options board, IV, skew, PCR, liquidity, and executable structure context |
+| `insider_flow_driven` | SEC Form 4 / insider-flow-driven reads with optional options posture |
+| `cross_asset_regime` | Macro, volatility, and cross-asset regime reads |
+| `geopolitical_macro_read` | GPR/news/impact-basket geopolitical macro reads |
+| `geopolitical_options_read` | Geopolitical risk connected to options volatility posture |
 
-Analyst activates posture synthesis only when:
+Compatibility aliases exist for older taxonomy names, including `macro_regime -> cross_asset_regime`, `macro_geopolitics_risk -> geopolitical_macro_read`, and `geopolitical_commodity -> geopolitical_options_read`.
 
-- `market_analysis_only = true`
-- `query_family` is posture-capable
-- `recommendation_mode != actionable_options`
+### Ontology And Data Capability
 
-The posture contract then derives:
+The ontology maps financial intent to available physical data.
 
-- financial interpretation states
-- `posture_label`
-- `posture_takeaway`
-- `posture_rationale`
-- `base_regime_read`
-- `escalation_risk_archetype`
-- `escalation_risk_read`
+| Contract | Role |
+|---|---|
+| `ALLOWED_METRICS` | Defines business metrics the extractor may emit |
+| `METRIC_TO_COLUMN_MAPPING` | Maps metrics to physical or derived data support |
+| `DATASET_PHYSICAL_SCHEMA` | Defines the authoritative physical schema surface |
+| `QUERY_FAMILY_SLOTS` | Defines semantic slots per family |
+| `DataCapabilityProfile` | Describes what the current run can actually support |
 
-### Stage 3: Checker validates the draft
+An empty metric mapping `[]` means the metric is recognized as a valid business intent but has no current physical support. Examples include reserved or unsupported metrics such as Greeks, yield spreads, or institutional flows.
 
-Checker does not decide modes. It decides whether the current draft is factually and evidentially admissible.
+`DataCapabilityProfile` includes:
 
-### Stage 4: Critic sets governance modes
+| Field | Meaning |
+|---|---|
+| `available_metrics` | Requested metrics supported by ontology and data |
+| `unavailable_metrics` | Requested metrics not supported by current data |
+| `has_options_source` | Whether options evidence is requested |
+| `has_options_chain_support` | Whether options-board evidence exists |
+| `has_iv_signal` | Whether IV, IV rank, skew, or implied-volatility support exists |
+| `has_liquidity_signal` | Whether liquidity, spread, OI, volume, or impact support exists |
+| `has_strike_support` | Whether strike, moneyness, or underlying-price support exists |
+| `has_dte_support` | Whether expiration or DTE support exists |
+| `has_gold_evidence` | Whether Gold context exists |
+| `can_support_concrete_option_structure` | Whether strike-level options structure is supportable |
 
-Critic decides:
+Key rule: Gold/news/SEC evidence may support direction, catalyst, or macro narrative, but it cannot create strike-level options precision without Silver options support.
 
-- `recommendation_mode`
-- `actionability_mode`
-- `structure_visibility_mode`
-- `revision_constraints`
+### Silver Context Contract
 
-When posture synthesis is active, Critic uses the posture contract outputs to keep:
+`silver_context` carries structured values, lineage anchors, citation contracts, and citation anchor maps. `silver_context_frozen` is the immutable audit baseline written by retrieval.
 
-- current-state interpretation
-- transition-risk interpretation
-- render governance
+The helper `effective_silver_context` exposes nested compensation evidence into the agent-facing view without mutating retrieval provenance.
 
-aligned with one another.
+| Silver Surface | Purpose |
+|---|---|
+| `values` | Structured numeric and categorical evidence |
+| `lineage_anchors` | Audit provenance refs |
+| `citation_contract` | Raw Silver citation payload |
+| `citation_anchor_map` | Metric-to-anchor compatibility shim |
+| `compensation` | Supplemental nested evidence lane |
+| `silver_context_frozen` | Stable truth snapshot across revisions |
 
-### Stage 5: Finalizer renders the controlled answer
+### SEC Contracts
 
-Finalizer receives the merged `finalizer_input_card` and places content by section:
+SEC contracts prevent Form 4 insider activity and 8-K event filing evidence from being conflated.
 
-- `Direct Conclusion`
-  - posture takeaway
-  - strict evidence
-- `Asset / Options Read`
-  - posture rationale
-  - base regime interpretation
-  - supporting metrics
-- `Recommendation Mode`
-  - actionability boundary only
-- `Risks / What Would Change the View`
-  - transition-risk read only
+| Contract | Role |
+|---|---|
+| `SECRequestedForms` | Records requested SEC forms |
+| `SECExistenceResult` | Records retrieved forms and payload chunks |
+| `SECCoverageContract` | Computes `full`, `partial`, or `none` coverage |
+| `Form4Feature` | Normalizes insider transaction evidence |
+| `Form8KFeature` | Normalizes event filing evidence |
+| `Form4AnalysisContract` | Summarizes insider selling, buying, vesting, planning, and clustering |
+| `Form8KAnalysisContract` | Summarizes tone, event pressure, categories, and repeat pattern |
+| `SECMissingDisclosure` | Carries missing SEC form and slot disclosures |
+| `SECAnalysisBundle` | Aggregates SEC coverage, features, analysis, and disclosure |
 
-## Practical Interpretation Rules
+SEC modes:
 
-### Not all modes are peers
+| Mode | Values |
+|---|---|
+| `SECFormType` | `4`, `8-K` |
+| `SECCoverageMode` | `full`, `partial`, `none` |
+| `SECTone` | `negative`, `neutral`, `positive` |
+| Form 4 `directional_read` | `selling_pressure`, `buying_support`, `compensation_vesting`, `mixed` |
+| 8-K `event_pressure` | `elevated`, `contained`, `constructive`, `mixed` |
 
-The most common mistake is to treat all control fields as if they are parallel modes. They are not.
+Key rule: Form 4 insider transactions and 8-K event filings are not interchangeable evidence.
 
-Use this mental model instead:
+### Evidence Sufficiency Contracts
 
-- `query_family` = what kind of question this is
-- `analysis_mode` = what kind of answer workflow this requires
-- `market_analysis_only` = whether a read-only answer is valid
-- `coverage_basis` = what evidence basis makes the answer true enough
-- `recommendation_mode` = how far the answer may go
-- `structure_visibility_mode` = how much structure detail may be shown
-- `posture_label` = what the current market posture is
-- `escalation_risk_archetype` = what the next adverse transition would be
+Slot evidence contracts define what evidence is needed to satisfy each requested financial question.
 
-### Current state and risk must not be conflated
+Each slot contract includes:
 
-The posture contract deliberately separates:
+| Field | Meaning |
+|---|---|
+| `slot_name` | Canonical slot identifier |
+| `slot_label` | Human-readable label |
+| `satisfaction_mode` | Evidence satisfaction mode |
+| `required_disclosures` | Disclosure targets when evidence is absent |
+| `min_groups_required` | Minimum required evidence groups |
+| `evidence_groups` | Acceptable evidence token groups |
 
-- `base_regime_read`
-  - the current priced state
-- `escalation_risk_read`
-  - the next deterioration path
+Satisfaction modes:
 
-This prevents the common failure mode where Asset Read and Risks appear to contradict each other even though they are meant to describe different time horizons.
+| Mode | Meaning |
+|---|---|
+| `evidence_required` | Evidence must be present |
+| `evidence_or_disclose` | Missing evidence can be handled only with explicit disclosure |
+| `optional_evidence` | Evidence enriches the read but does not gate it |
 
-## File Map
+Representative slot inventory:
 
-- `Scripts/core/financial_ontology.py`
-  - family taxonomy and semantic mapping
-- `Scripts/core/evidence_contracts.py`
-  - slot-level evidence sufficiency contracts
-- `Scripts/core/financial_reasoning_contract.py`
-  - capability profile and structure-governance support logic
-- `Scripts/core/liquidity_policy.py`
-  - liquidity tiers and market-impact interpretation
-- `Scripts/core/posture_contract.py`
-  - posture labels, posture reasoning trace, current-state interpretation, transition-risk interpretation
-- `Scripts/agents/state.py`
-  - global state schema and handoff contracts
-- `Scripts/agents/router.py`
-  - node-level workflow, mode resets, and cross-node handoff assembly
+| Query Family | Representative Slots |
+|---|---|
+| `insider_flow_driven` | `sec_insider_signal`, `sec_event_signal`, `options_liquidity_posture` |
+| `options_microstructure` | `pcr_signal`, `atm_iv_signal`, `iv_skew_signal`, `iv_or_skew_signal`, `liquidity_signal` |
+| `cross_asset_regime` | `equity_vol_signal`, `macro_vol_signal`, `supporting_context` |
+| `geopolitical_macro_read` | `latest_geopolitical_risk_anchor`, `geopolitical_news_signal`, `impact_basket_context` |
+| `geopolitical_options_read` | `geopolitical_risk_signal`, `options_vol_signal` |
+
+Evidence coverage severity is carried separately from market risk:
+
+| Severity | Meaning |
+|---|---|
+| `none` | Required evidence is present |
+| `soft_note` | Read stands, but a minor coverage note may be disclosed |
+| `hard_gap` | Required evidence is missing and materially constrains the answer |
+
+### Posture And Liquidity Contracts
+
+Posture contracts derive current market state and next adverse transition risk from validated financial states.
+
+Current implementation activates posture synthesis when:
+
+1. `read_profile == "posture_read"`;
+2. `query_family` is one of `options_microstructure`, `cross_asset_regime`, `geopolitical_macro_read`, or `geopolitical_options_read`;
+3. `recommendation_mode != "actionable_options"`.
+
+`market_analysis_only` remains an answerability signal, but it is not the sole posture activation trigger in current code.
+
+Posture intermediate states:
+
+| State | Values |
+|---|---|
+| `pcr_state` | `protection_heavy`, `neutral_flow`, `call_skewed`, `unknown` |
+| `iv_regime_state` | `LOW`, `NORMAL`, `HIGH`, `UNKNOWN` |
+| `iv_richness_state` | `cheap`, `mid_range`, `firm`, `rich`, `unknown` |
+| `skew_state` | `positive_put_premium`, `flat`, `negative_call_premium`, `unknown` |
+| `skew_intensity` | `modest`, `strong`, `flat`, `unknown` |
+| `liquidity_state` | `healthy`, `fragile`, `unknown` |
+| `market_impact_risk` | `Low`, `Medium`, `High`, `Unknown` |
+
+Posture labels:
+
+| Label | Meaning |
+|---|---|
+| `constructive` | Protection demand is light relative to premium regime |
+| `neutral` | Flow and volatility are balanced |
+| `neutral_to_defensive` | Baseline downside protection is present but not stressed |
+| `defensive` | Protection demand is clearly elevated |
+| `stressed` | Protection demand and premium regime indicate stress |
+
+Transition risk archetypes:
+
+| Archetype | Meaning |
+|---|---|
+| `defensive_flow_acceleration` | Defensive positioning may intensify into heavier downside hedging |
+| `vol_spike_repricing` | Volatility may reprice sharply higher |
+| `premium_compression` | Already-rich protection may mean-revert |
+| `execution_fragility` | Slippage and implementation cost dominate |
+| `regime_reversal` | Current signal may fade or reverse |
+
+Liquidity modes:
+
+| Contract | Values |
+|---|---|
+| `LiquidityTier` | `tier1`, `tier2`, `tier3`, `unknown` |
+| `MarketImpactRisk` | `Low`, `Medium`, `High`, `Unknown` |
+
+### Narrative Contracts
+
+Narrative contracts create deterministic macro/news render fields. They are used for geopolitical, macro, metals, dollar/yield, and cross-asset narratives.
+
+| Contract | Purpose |
+|---|---|
+| `NewsSemanticProfile` | Defines tickers, topics, search terms, impacted aliases, and impact basket |
+| `NarrativeBrief` | Defines frontend-safe narrative fields for rendering |
+
+`NarrativeBrief` fields:
+
+| Field | Render Role |
+|---|---|
+| `headline_read` | Direct narrative conclusion |
+| `news_driver` | Primary retrieved news driver |
+| `macro_transmission` | Rates, dollar, volatility, growth, or geopolitical channel |
+| `asset_reaction` | Asset or basket response anchored to retrieved evidence |
+| `game_theory_read` | Strategic interaction or policy-path framing |
+| `volatility_setup` | Options-volatility setup when supported |
+| `risk_read` | Narrative risk statement |
+| `risk_trigger` | Concrete trigger that changes the read |
+| `what_would_change` | Evidence or market condition that would revise the view |
+
+Key rule: Narrative fields are deterministic render inputs, not permission for unrestricted Finalizer reasoning.
+
+### Governance And Finalizer Contracts
+
+Critic governs how far the answer may go. Finalizer renders the controlled answer.
+
+Recommendation modes:
+
+| Mode | Meaning |
+|---|---|
+| `actionable_options` | Concrete options structure discussion is allowed |
+| `directional_watchlist` | Directional/watchlist-grade output is allowed, but not a live promoted structure |
+| `informational_only` | The answer remains read-only or contextual |
+
+Structure visibility modes:
+
+| Mode | Meaning |
+|---|---|
+| `recommended_structure` | A concrete structure may be shown as an actual recommendation |
+| `illustrative_structure` | A structure may appear only as a non-live illustration |
+| `no_structure` | No options structure should be shown |
+
+`revision_constraints` may carry:
+
+| Field | Meaning |
+|---|---|
+| `mode_boundary_text` | Required actionability boundary language |
+| `illustrative_structure_text` | Non-live structure language when allowed |
+| `true_risk_text` | Contract-owned market risk text |
+| `evidence_coverage_note` | Coverage limitation note |
+| `evidence_coverage_severity` | `none`, `soft_note`, or `hard_gap` |
+| `read_valid_despite_coverage_gap` | Whether the read can stand despite a gap |
+| `section_ownership` | Finalizer section ownership policy |
+
+`finalizer_input_card` is the single preferred handoff to final rendering. Analyst contributes evidence, posture, narrative, and render-safe seeds. Critic contributes governance, output mode, risk channel, and section ownership.
+
+## Mode Ownership Matrix
+
+| Mode | Layer | Meaning | Must Not Be Used For |
+|---|---|---|---|
+| `query_family` | Scope | Top-level problem family | Final recommendation strength |
+| `analysis_mode` | Scope | Answer workflow pattern | Evidence completeness by itself |
+| `coverage_basis` | Scope | Truth basis for the answer | Retrieval route alone |
+| `read_profile` | Scope | Answer-shaping profile | Final actionability by itself |
+| `market_analysis_only` | Scope | Read-only market output is valid | Sole posture activation trigger |
+| `recommendation_mode` | Governance | How actionable the answer may be | Problem classification |
+| `actionability_mode` | Governance | Explicit actionability ceiling | Query family routing |
+| `structure_visibility_mode` | Governance | How much options structure may be shown | Evidence sufficiency |
+| `posture_label` | Interpretation | Current market posture | Recommendation level |
+| `escalation_risk_archetype` | Interpretation | Next adverse transition path | Generic caveat bucket |
+
+## Node Ownership Model
+
+| Node | Owns | Must Not Own |
+|---|---|---|
+| Retrieval | `metadata`, `scope_contract`, `retrieval_outcome`, Silver/Gold context, time range | Final recommendation mode |
+| Analyst | First-pass synthesis, `iv_regime_pinned`, posture synthesis, narrative synthesis, initial `finalizer_input_card` | Final actionability governance |
+| Checker | Factual audit, lineage audit, numeric validation, fatal/minor audit feedback | Financial modes or recommendation strength |
+| Critic | `recommendation_mode`, `actionability_mode`, `structure_visibility_mode`, `revision_constraints`, risk governance | Raw fact validation |
+| Finalizer | Section placement and final structured output assembly | New financial reasoning |
+
+## Section Ownership In Final Output
+
+| Final Section | Allowed Content |
+|---|---|
+| Direct Conclusion | Evidence-backed answer, posture takeaway, strict evidence summary |
+| Asset / Options Read | Posture rationale, base regime read, supporting metrics |
+| Recommendation Mode | Actionability boundary and why the answer is or is not actionable |
+| Risks / What Would Change The View | Transition-risk read and true market invalidation risk |
+
+Evidence coverage notes are not market risks. They should remain in boundary or coverage language, not be rendered as thesis invalidation risk.
+
+## Detailed Handoff Sequence
+
+### Stage 1: Intent Extraction
+
+The query transform resolves tickers, metrics, source types, surfaces, themes, time window, and `read_profile`. This stage captures intent but does not decide whether a final trade is allowed.
+
+### Stage 2: Scope Construction
+
+Master retrieval compiles `ScopeContract`, source requirements, query slots, output ceilings, and specificity ceilings. It also identifies unsupported metrics and out-of-scope symbols.
+
+### Stage 3: Evidence Retrieval And Normalization
+
+The retrieval layer populates:
+
+- `gold_context`,
+- `supplemental_news_context`,
+- `silver_context`,
+- `silver_context_frozen`,
+- `retrieval_outcome`,
+- SEC analysis bundle fields when SEC is requested.
+
+`effective_silver_context` exposes compensation-lane Silver evidence to agents without mutating provenance.
+
+### Stage 4: Evidence Sufficiency And Capability
+
+Slot evidence contracts determine which evidence groups are required or disclosable. `DataCapabilityProfile` determines whether the retrieved evidence can support concrete options structures or only directional/contextual output.
+
+### Stage 5: Analyst Interpretation
+
+Analyst synthesizes the first draft and derives deterministic helper outputs:
+
+- `iv_regime_pinned`,
+- posture contract outputs when eligible,
+- narrative brief fields for macro/news reads,
+- render-safe seeds for the Finalizer.
+
+### Stage 6: Checker Audit
+
+Checker validates factual consistency, citations, lineage, numeric precision, and contract compliance. Checker does not set financial modes.
+
+### Stage 7: Critic Governance
+
+Critic determines:
+
+- `recommendation_mode`,
+- `actionability_mode`,
+- `structure_visibility_mode`,
+- `revision_constraints`,
+- `critic_reasoning_profile`.
+
+Critic also aligns posture transition risk, evidence coverage severity, and final section ownership.
+
+### Stage 8: Finalizer Rendering
+
+Finalizer consumes `finalizer_input_card` and `revision_constraints`. It renders already-defined content into the correct sections and enforces mode boundaries. It should not derive new financial logic from raw evidence.
+
+## Current State Versus Transition Risk
+
+The posture system deliberately separates:
+
+| Field | Meaning |
+|---|---|
+| `base_regime_read` | The current priced market state |
+| `escalation_risk_read` | The next adverse transition path |
+
+This prevents the Asset / Options Read and Risks section from appearing contradictory. A market can be currently neutral-to-defensive while still having a volatility spike as the next adverse transition.
+
+## Documentation Map
+
+The detailed module documents live under `docs/core/contracts/`.
+
+| Document | Focus |
+|---|---|
+| [Intent And Scope Contracts](contracts/Intent_and_Scope_Contracts.md) | Intent extraction, `ScopeContract`, mode ceilings |
+| [Ontology And Data Capability Contracts](contracts/Ontology_and_Data_Capability_Contracts.md) | Metric ontology and support profile |
+| [Evidence And Coverage Contracts](contracts/Evidence_and_Coverage_Contracts.md) | Slot evidence contracts and coverage audit |
+| [SEC Contracts](contracts/SEC_Contracts.md) | Form 4, 8-K, and SEC coverage semantics |
+| [Posture And Liquidity Contracts](contracts/Posture_and_Liquidity_Contracts.md) | Market posture, transition risk, execution risk |
+| [Narrative Contracts](contracts/Narrative_Contracts.md) | Macro/news narrative profiles and render fields |
+| [Governance And Finalizer Contracts](contracts/Governance_and_Finalizer_Contracts.md) | Actionability, structure visibility, final rendering |
+
+## Source Of Truth
+
+| File | Responsibility |
+|---|---|
+| `Scripts/core/silver_context.py` | Effective Silver view and frozen Silver preference |
+| `Scripts/core/sec_contract.py` | SEC Pydantic contracts and SEC bundle shape |
+| `Scripts/core/sec_analysis.py` | SEC existence, coverage, feature extraction, and analysis composition |
+| `Scripts/core/posture_contract.py` | Posture labels, reasoning trace, base read, escalation risk |
+| `Scripts/core/liquidity_policy.py` | Liquidity tiers, ticker metric resolution, market impact risk |
+| `Scripts/core/financial_reasoning_contract.py` | Data capability profile and strategy governance rules |
+| `Scripts/core/financial_ontology.py` | Query family taxonomy, metric mapping, source aliases, topic taxonomy |
+| `Scripts/core/financial_narrative_contract.py` | News semantic profile and narrative brief |
+| `Scripts/core/evidence_contracts.py` | Slot evidence contracts, citation registries, semantic coverage evaluation |
+| `Scripts/retrieval/schema.py` | Retrieval schemas, `ScopeContract`, `RetrievalOutcome`, time and source coverage contracts |
+| `Scripts/agents/state.py` | Global agent state and cross-node handoff schema |
+| `Scripts/agents/critic.py` | Recommendation mode, structure visibility, revision constraints |
+| `Scripts/agents/finalizer.py` | Final report rendering and mode enforcement |
 
 ## Closing Principle
 
-The control plane is cleanest when each layer owns exactly one kind of decision:
+The system is safest when each layer owns exactly one class of decision:
 
-- retrieval decides **what kind of problem and evidence basis exists**
-- Analyst decides **what the current market state means**
-- Critic decides **how far the answer may go and what risk framing is valid**
-- Finalizer decides **where each already-defined output belongs**
+- Retrieval decides the problem boundary and evidence basis.
+- Core contracts define what data means and what evidence is required.
+- Analyst interprets current state from validated evidence.
+- Checker validates facts, lineage, and numeric correctness.
+- Critic determines actionability and risk governance.
+- Finalizer renders the controlled answer.
 
-That separation is what keeps the system deterministic, interpretable, and stable across revisions.
+This ownership model is the control plane. It is what prevents the RAG system from drifting from evidence-backed financial analysis into unsupported recommendation generation.
+
