@@ -1,4 +1,4 @@
-# Time Adapter - Source-Aligned Time Predicate Standard
+# Time Adapter — Source-Aligned Per-Predicate Temporal Execution Engine
 
 ## 1. Goal and Temporal Integrity Requirement
 
@@ -16,6 +16,12 @@ This prevents temporal mismatches caused by mixed data cadences (event-level, da
            -> TimePredicate(start/end date + epoch + reason)
       -> compile_all()
            -> one predicate per registered source
+      -> predicates_from_serialised()
+           -> round-trip deserialization from state["time_range"]["source_predicates"]
+           -> used by rescue paths and Checker re-audit
+      -> union_epoch_range(predicates)
+           -> merges min(start) / max(end) across a predicate list
+           -> consumed by qdrant_retriever.py for mixed-source epoch filters
       -> serialized payload consumed by MasterRetriever / Gold / Silver
 ```
 
@@ -44,6 +50,17 @@ Policy strategy:
 - Event sources enforce minimum lookback to avoid empty windows around weekends.
 - Predicates are compiled once and reused, preventing cross-retry drift.
 
+**Two-stage widening logic inside `compile_predicate`:**
+
+Stage A — DAILY sources with a non-business anchor date: `end` is snapped to `previous_business_day(anchor)` before `start` is computed. This prevents weekend gaps from producing a zero-length window.
+
+Stage B — `min_lookback_days` floor: if the computed window is shorter than the source's minimum lookback, the window is widened:
+- MONTHLY: `start` snaps to first of the anchor month.
+- DAILY (non-`yesterday` labels): `start` floors to `min_lookback_days` calendar days back from `end`.
+- EVENT: `start` floors to `min_lookback_days` calendar days back from `end`.
+
+When widening is applied, `widened=True` and `widen_reason` carries a deterministic reason string for audit.
+
 ## 4. Output Data Schema and Paths
 
 ### 4.1 Source specification schema
@@ -53,6 +70,19 @@ Policy strategy:
 | `SourceTimeKey` | Enum | Stable key namespace (`gold.news`, `silver.options`, etc.) | `Scripts/retrieval/time_adapter.py` |
 | `SourceTimeSpec` | Dataclass | Physical contract (granularity, keys, units, lookback floor) | `Scripts/retrieval/time_adapter.py` |
 | `SOURCE_SPECS` | Dict | Authoritative registry for all retrieval sources | `Scripts/retrieval/time_adapter.py` |
+
+**`SOURCE_SPECS` registry — authoritative per-source physical contracts:**
+
+| Source key | Granularity | Example time keys | min_lookback_days |
+|---|---|---|---|
+| `gold.news` | EVENT | `unified_timestamp`, `publish_timestamp` | 1 |
+| `gold.sec` | EVENT | `filed_at_epoch_s`, `transaction_date_epoch_s`, `filed_at` (ISO), `transaction_date` (ISO) | 3 |
+| `gold.gpr` | MONTHLY | `unified_timestamp`, `publish_timestamp` | 35 |
+| `silver.options` | DAILY | `snapshot_date` | 3 |
+| `silver.macro` | DAILY | `observation_date`, `retrieval_date` | 3 |
+| `silver.gpr` | MONTHLY | `date`, `month` (ts_ns) | 35 |
+
+Gold sources use epoch-second keys for Qdrant range filters; Silver sources use date-style keys for DuckDB SQL `BETWEEN` clauses. The `key_units` field in `TimePredicate` distinguishes `epoch_s` (Gold) from `date` (Silver) so each consumer can bind the correct predicate field.
 
 ### 4.2 Compiled predicate schema
 
@@ -104,9 +134,4 @@ Validation focus:
 - [Qdrant Retriever Docs](./Qdrant_retriever_docs.md)
 - [Silver SQL Tools](./Silver_SQL_Tools.md)
 
-### 6.3 One-line setup command
-
-```bash
-pip install -r requirements.txt
-```
 
