@@ -1,4 +1,4 @@
-# Query Intent and Transformation - Institutional Control Spec
+# Query Intent and Transformation — Two-Stage LLM Extraction and Guardrail Contract
 
 ## 1. Goal and Reliability Scope
 
@@ -44,11 +44,38 @@ flowchart TD
 
 Model and fallback policy:
 
-| Step | Primary | Fallback | Failure behavior |
-|---|---|---|---|
-| Route classification | Ollama `llama3:latest` | `gpt-4o-mini` | Defaults to `hybrid_both` if both fail |
-| Stage 1 metadata extraction | `gpt-4o-mini` structured output | regex extraction | Keeps pipeline alive with minimal typed metadata |
-| Stage 2 HyDE generation | `gpt-4o-mini` structured output | deterministic text synthesis | Guarantees non-empty dense retrieval text |
+| Step | Model | Env var | Fallback | Failure behavior |
+|---|---|---|---|---|
+| Stage 1 metadata extraction | `gpt-4o-mini` | `TRANSFORM_EXTRACTOR_MODEL` | regex-based deterministic extraction | Keeps pipeline alive with minimal typed metadata |
+| Stage 2 HyDE generation | `gpt-4o-mini` | `TRANSFORM_HYDE_MODEL` | deterministic text synthesis from query + metadata | Guarantees non-empty dense retrieval text |
+
+Route classification is performed by the Router node (`MasterRetriever._classify_intent`), not by `QueryTransformer`. The Router uses its own model configuration and defaults to `hybrid_both` if classification fails.
+
+### 3.1 `BuilderQueryContract` merge path
+
+When a UI builder contract is present in the query context, its fields — `tickers`, `signals`, `metrics`, `sources`, `forms`, and `time_window` — are merged into `MetadataExtraction` *before* the five production guardrails run. This ensures that structured UI inputs override or constrain the LLM extraction result, and that guardrails apply uniformly to the merged output regardless of input source.
+
+### 3.2 Five Production Guardrails
+
+Applied in sequence after Stage 1 LLM extraction (and after any `BuilderQueryContract` merge):
+
+| Guardrail | Trigger | Action |
+|---|---|---|
+| 1. Ticker allowlist | LLM proposes a ticker not in the ontology whitelist | Remove the ticker; results are split into `in_scope` (options-covered) and `out_of_scope` lists |
+| 2. Default time window | `time_window` is empty, null, or an invalid value | Normalize to `PAST_SIX_MONTHS` |
+| 3. Ticker explosion cap | Ticker count exceeds `TICKER_EXPLOSION_CAP` env var | Keep only the first `TICKER_EXPLOSION_KEEP` tickers; log dropped tickers |
+| 4. Empty HyDE paragraph | Stage 2 returns an empty `hyde_paragraph` | Synthesize a deterministic fallback from the original query text + extracted metadata |
+| 5. News rerank override | Stage 1 failed or the rerank query is shorter than 3 words | Inject `expanded_news_rerank_query` from `financial_narrative_contract` |
+
+### 3.3 Deterministic post-processing layer
+
+After Stage 1 LLM extraction, a Python normalization layer applies the following transformations — all ontology-bound and output-deterministic regardless of LLM phrasing variation:
+
+- **Canonical news topic mapping:** raw topic strings normalized to the ontology's canonical topic set.
+- **News topic expansion:** canonical topics expanded via `NEWS_TOPIC_EXPANSIONS` adjacency map to include semantically adjacent topics.
+- **News semantic profile:** structured `financial_narrative_contract` assembled from expanded topics (includes `dense_news_semantic_query`, `sparse_news_keyword_query`, `expanded_news_rerank_query`).
+- **Narrative option posture metrics:** for metals and macro query families, option posture metrics are derived from the narrative profile rather than relying solely on LLM-extracted metric names.
+- **Primary theme / surface / asset scope / read profile resolution:** canonical classification fields resolved from ontology maps and used downstream by `scope_contract` to set answer ceilings.
 
 ## 4. Output Data Schema and Paths
 

@@ -1,4 +1,4 @@
-# Qdrant Retriever (Gold Layer) - Semantic Retrieval Contract
+# Qdrant Retriever — Asymmetric Hybrid Gold Retrieval Engine
 
 ## 1. Retrieval Mandate and Control Goals
 
@@ -76,6 +76,10 @@ Implementation-aligned details:
 - cross-encoder scores overwrite the initial Qdrant point score,
 - final output keeps chunks with `score > 0.01`.
 
+**News-only query path:** When `source_types == {news}`, the retriever substitutes alternative query fields sourced from `financial_narrative_contract`:
+- Dense input: `dense_news_semantic_query` (richer topical framing than the generic HyDE paragraph)
+- Sparse input: `sparse_news_keyword_query` (keyword-focused, avoids HyDE hallucination on news terms)
+
 ### 3.3 Filter Semantics
 
 The filter builder accepts three ticker modes:
@@ -97,6 +101,8 @@ Other filter dimensions:
 | News sentiment | `tone_score` | `< 0` for negative, `> 0` for positive |
 | Time barrier | `unified_timestamp`, `publish_timestamp`, SEC event timestamps | OR-style compatibility layer across range-capable timestamp keys |
 
+**`_NEWS_TOPIC_INDEXED_TICKERS`:** `{SPY, QQQ, IWM, GLD, SLV}`. For these ETFs, news is indexed by topic rather than direct ticker tag. The filter builder uses topic-based `should` clauses instead of hard ticker matching to avoid missing topically relevant but not ticker-tagged news chunks.
+
 ### 3.4 Time Filter Semantics
 
 Time filtering follows a two-path design:
@@ -113,14 +119,36 @@ When predicates are present:
 
 ### 3.5 Fallback Cascade
 
-Fallback tiers are explicit and auditable:
+Fallback tiers are explicit, branched by query type, and surfaced in the retrieval audit payload. The tier should be treated as part of the evidence quality signal, not just debugging metadata.
 
-1. `strict`
-2. `soft_ticker_180d`
-3. `drop_ticker_180d`
-4. `error`
+**Branch A — news-only queries** (`source_types == {news}`):
 
-The tier is surfaced in the retrieval audit payload and should be treated as part of the evidence quality signal, not just debugging metadata.
+| Tier | Name | Strategy |
+|---|---|---|
+| 1 | `news_soft_tight` | soft ticker + per-source time predicates |
+| 2 | `news_drop_ticker_180d` | drop ticker entirely + 180-day fallback window |
+
+**Branch B — SEC / GPR / mixed queries**:
+
+| Tier | Name | Strategy |
+|---|---|---|
+| 1 | `strict` | hard ticker match + per-source time predicates |
+| 2 | `soft_ticker_180d` | soft ticker + 180-day fallback window |
+| 3 | `drop_ticker_180d` | drop ticker entirely + 180-day fallback window |
+| 4 (SEC only) | `sec_iso_date_postfilter` | ignore time filter entirely; post-filter by ISO `filed_at` / `transaction_date` fields |
+
+### 3.6 SEC Payload-First Path
+
+When the query requests specific SEC forms (`8-K`, `4`), the retriever executes a **scroll-based payload lookup** per form type against Qdrant *before* the vector search path. If matching payloads are found, the function returns early with `fallback_tier="sec_payload_existence"`, bypassing the hybrid search pipeline entirely. This ensures high-precision SEC document retrieval without relying on embedding similarity for form-type targeting.
+
+### 3.7 Supplemental News Retrieval
+
+`retrieve_supplemental_news_async()` is a separate retrieval path invoked by `MasterRetriever` to supplement non-news queries with thematic context:
+
+- Forces `source_types=[NEWS]` and drops all ticker filters.
+- Scores results using `structured_news_relevance_score` (no hard score cutoff applied).
+- Uses an independent timeout and is appended to the Gold context, not replacing the primary Gold result.
+- Activated when Gold news coverage is assessed as insufficient for the query's thematic requirements.
 
 ## 4. Output Data Schema and Audit Surface
 

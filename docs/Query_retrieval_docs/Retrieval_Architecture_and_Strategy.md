@@ -1,4 +1,4 @@
-# Retrieval Architecture and Strategy - Production Retrieval Control Plane
+# Retrieval Architecture and Strategy — Production Evidence Envelope Compiler
 
 ## 1. Retrieval Mandate and Design Goals
 
@@ -22,12 +22,15 @@ flowchart TD
     E -->|sql_only| F[Silver SQL Retrieval]
     E -->|vector_only| G[Gold Qdrant Retrieval]
     E -->|hybrid_both| H[Gold + Silver in Parallel]
+    G --> G2{Gold news coverage sufficient?}
+    G2 -->|no| G3[Supplemental News Retrieval<br/>retrieve_supplemental_news_async]
+    G2 -->|yes| M
+    G3 --> M
     C --> I[HyDE Entity Extraction]
     I --> J{Novel whitelisted tickers?}
     J -->|yes| K[Silver Compensation Queries]
     J -->|no| L[Skip Compensation]
     F --> M[Context Assembly]
-    G --> M
     H --> M
     K --> M
     L --> M
@@ -45,10 +48,10 @@ Strategy highlights:
   - `sql_only`: Silver is primary; Gold still runs as a small semantic hedge.
   - `vector_only`: Gold is primary; Silver can still run through HyDE-driven compensation or explicit user tickers.
   - `hybrid_both`: Gold and Silver run in parallel, with optional HyDE compensation.
-- Gold and Silver run with independent timeout budgets and exception isolation.
+- **Independent failure budgets:** Gold and Silver (and optional supplemental news) execute under `asyncio.gather(..., return_exceptions=True)` so a timeout or exception in one lane does not block the other. `GOLD_TIMEOUT` and `SILVER_TIMEOUT` are the per-lane ceiling env vars; a lane that exceeds its budget returns a degraded-context result rather than blocking the pipeline.
 - One canonical `time_range` is compiled per query, then expanded into source-specific `TimePredicate` objects so daily, event, and monthly datasets do not share the wrong physical window.
 - HyDE-derived novel tickers are isolated under `silver_context.compensation`; they never overwrite primary numeric truth.
-- Macro and GPR patches are injected after the primary route completes so the downstream agents always have stable regime context and citation anchors.
+- **Macro / GPR patch injection:** After the primary route completes, `MACRO_CHAIN_DIRECTIVE` triggers a post-hoc macro series patch and a GPR index patch, each emitting typed lineage anchors (`MACRO_*`, `GPR_*`). This ensures stable regime context even when macro or GPR series were not in the primary Silver result set.
 - `silver_context_frozen` snapshots the fully patched Silver truth before any downstream rescue logic can mutate live context.
 - Final payloads carry explicit runtime ceilings through `scope_contract`:
   - `output_mode_ceiling`: `actionable_options`, `directional_watchlist`, or `informational_only`
@@ -144,34 +147,7 @@ HyDE compensation lives under `silver_context.compensation` and adds:
 - nested `time_contract`,
 - nested `source_coverage`.
 
-## 5. Validation and Test Procedure
-
-```bash
-python Scripts/tests/test_router_e2e.py
-python -m Scripts warmup
-python -m Scripts query "Past month AAPL Form-4 selling signal and put positioning?"
-```
-
-Validation focus:
-
-- each route (`sql_only`, `vector_only`, `hybrid_both`) produces the expected top-level payload shape,
-- `time_range.source_predicates` is populated and serializes stable source keys,
-- `silver_context.compensation` appears only when HyDE introduces novel whitelisted tickers,
-- `scope_contract` and `retrieval_outcome` reflect the real retrieval outcome rather than prompt assumptions,
-- partial failures degrade with explicit `status` and preserved audit surfaces.
-
-## 6. Dependency Files, Linked Docs, and One-Line Commands
-
-### 6.1 Retrieval dependency files
-
-- `Scripts/retrieval/master_retriever.py`
-- `Scripts/retrieval/query_transform.py`
-- `Scripts/retrieval/qdrant_retriever.py`
-- `Scripts/retrieval/sql_tools.py`
-- `Scripts/retrieval/time_adapter.py`
-- `Scripts/retrieval/schema.py`
-
-### 6.2 Linked documentation
+## 5. Linked documentation
 
 - [Query Intent and Transformation](./Query_intent_docs.md)
 - [Qdrant Retriever Docs](./Qdrant_retriever_docs.md)
