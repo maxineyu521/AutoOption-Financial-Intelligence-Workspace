@@ -12,9 +12,9 @@ on:
           - "false"
           - "true"
   schedule:
-    # Weekdays after the US cash-market close.
-    - cron: "5 17 * * 1-5"
-      timezone: "America/New_York"
+    # GitHub cron is UTC. 21:05 UTC runs daily after the US cash-market close
+    # on trading days; trading-day cadence is handled inside the pipeline.
+    - cron: "5 21 * * *"
 
 concurrency:
   group: daily-data-ingest
@@ -38,7 +38,7 @@ jobs:
       OPENAI_INGESTION_MODEL: ${{ vars.OPENAI_INGESTION_MODEL || 'gpt-4o-mini' }}
       OLLAMA_INGESTION_MODEL: ${{ vars.OLLAMA_INGESTION_MODEL || 'llama3:latest' }}
       EMBEDDING_PROVIDER: ${{ vars.EMBEDDING_PROVIDER || 'huggingface' }}
-      EMBEDDING_MODEL_NAME: ${{ vars.EMBEDDING_MODEL_NAME || 'BAAI/bge-large-en-v1.5' }}
+      EMBEDDING_MODEL_NAME: ${{ vars.EMBEDDING_MODEL_NAME || 'BAAI/bge-base-en-v1.5' }}
       EMBEDDING_DEVICE: cpu
       RETRIEVER_DEVICE: cpu
 
@@ -124,4 +124,21 @@ jobs:
             logs/github-actions/ingest_dashboard.html
             logs/runs/**
             logs/*/ingestion.log
+            config/runtime/collect_data_state.json
           if-no-files-found: warn
+
+      - name: Upload collected data artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: collected-data
+          path: |
+            Data/2_Silver_Processed/Options_Market_Data/**
+            Data/2_Silver_Processed/Macro_History/**
+            Data/3_Gold_Semantic/News_Qdrant/**
+            Data/3_Gold_Semantic/Macro_Narratives/**
+            Data/3_Gold_Semantic/GPR_index/**
+            Data/3_Gold_Semantic/SEC_Insider_Trades/**
+            Data/Agent_Context/**
+          if-no-files-found: warn
+          retention-days: 14
