@@ -107,6 +107,12 @@ Checker audits numeric truth and citation anchors. Critic sets `recommendation_m
 
 ![Financial Contracts Control Plane](images/Financial_Contracts_Control_Plane.svg)
 
+### Live Demo
+
+Watch the full end-to-end query flow — options chain read, macro backdrop, IV regime detection, and governed report rendering.
+
+[Watch demo on Google Drive](https://drive.google.com/file/d/15w92FwAJPmnfo-6oIbWJyY-Fhh_tCRia/view?usp=drive_link)
+
 ---
 
 ## 3. Core Outcomes — System Capabilities at a Glance
@@ -241,15 +247,15 @@ The `finalizer_input_card` is the preferred handoff into final rendering. It pac
 
 ### 7.2 Model Deployment
 
-| Node | Primary model | Fallback model | Ollama alternative |
-|---|---|---|---|
-| Router | `gpt-4o-mini` | `gpt-4o-mini` | `llama3:latest` |
-| Analyst | `gpt-4o` | `gpt-4o-mini` | `options-expert-v1:latest` |
-| Checker | `gpt-4o-mini` | `gpt-4o-mini` | `llama3:latest` |
-| Critic | `gpt-4o-mini` | `gpt-4o-mini` | `options-expert-v1:latest` |
-| Finalizer | `gpt-4o` | `gpt-4o-mini` | `options-expert-v1:latest` |
+| Node | Primary model | Ollama alternative |
+|---|---|---|
+| Router | `gpt-4o-mini` | `llama3:latest` |
+| Analyst | `gpt-4o` | `options-expert-v1:latest` |
+| Checker | `gpt-4o-mini` | `llama3:latest` |
+| Critic | `gpt-4o-mini` | `options-expert-v1:latest` |
+| Finalizer | `gpt-4o` | `options-expert-v1:latest` |
 
-Provider and model are independently configurable per role via `<NODE>_PROVIDER` and `<NODE>_MODEL` in `.env`. Ollama path activates under `docker compose --profile ollama up` and is disabled by default when the primary provider is OpenAI.
+Provider and model are independently configurable per role via `<NODE>_PROVIDER` and `<NODE>_MODEL` in `.env`. Ollama path activates under `docker compose --profile ollama up`.
 
 ### 7.3 Contract and Governance Layer
 - Role prompt contracts enforce hard operating boundaries: Checker is explicitly forbidden from strategy evaluation; Finalizer is explicitly forbidden from new financial reasoning.
