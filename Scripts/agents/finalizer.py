@@ -30,7 +30,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
 import requests
-from pydantic import BaseModel, Field, PrivateAttr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
 from langchain_openai import ChatOpenAI
 
 from Scripts.agents.prompts import get_finalizer_prompt
@@ -1602,6 +1602,166 @@ def _illustrative_structure_text(
     return f"Illustrative only: {hint} is a non-actionable example only, not a current or live recommendation."
 
 
+# ==========================================
+# Structure Visibility Enforcement (Workstream C fix)
+# ==========================================
+
+class FinalizerRenderGuard(BaseModel):
+    """Typed, validated render-input schema that enforces structure_visibility_mode.
+
+    This closes the two-directional leak documented in Phase 2 Item 4 / Workstream C:
+    - no_structure: no trade structures may render
+    - illustrative_structure: examples preserved but labeled non-live
+    - recommended_structure: pass through unchanged
+
+    The Risks section is sourced from true_risk_text when provided.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    structure_visibility_mode: Literal[
+        "recommended_structure", "illustrative_structure", "no_structure"
+    ] = "no_structure"
+    recommendation_mode: str = "informational_only"
+    allow_illustrative_structure: bool = False
+    illustrative_structure_hint: str = ""
+    illustrative_structure_text: str = ""
+    true_risk_text: str = ""
+    forbid_actionable_recommendation: bool = True
+
+    def resolved_illustrative_text(
+        self,
+        *,
+        captured_trade_ideas: List["TradeIdea"],
+    ) -> str:
+        """Deterministically build illustrative framing text.
+
+        Uses the critic-provided text first, then falls back to building
+        from captured trade ideas. This ensures illustrative structure
+        survives even when the upstream hint extraction fails.
+        """
+        if self.structure_visibility_mode != "illustrative_structure":
+            return ""
+        if self.illustrative_structure_text:
+            return self.illustrative_structure_text
+        hint = self.illustrative_structure_hint.strip()
+        if not hint and captured_trade_ideas:
+            lead = captured_trade_ideas[0]
+            parts = []
+            if lead.option_strategy:
+                parts.append(lead.option_strategy)
+            if lead.ticker:
+                parts.append(f"on {lead.ticker}")
+            if lead.strike_details:
+                parts.append(f"around {lead.strike_details}")
+            if lead.expiration_date:
+                parts.append(f"expiry {lead.expiration_date}")
+            hint = " ".join(parts).strip()
+        if not hint:
+            hint = "the structure from the analyst draft"
+        if self.recommendation_mode == "directional_watchlist":
+            return (
+                f"Illustrative only: {hint} is the cleaner template to watch "
+                "if conditions improve, but it is not a live recommendation."
+            )
+        return (
+            f"Illustrative only: {hint} is a non-actionable example only, "
+            "not a current or live recommendation."
+        )
+
+
+def _build_render_guard(state: Dict[str, Any], recommendation_mode: str) -> FinalizerRenderGuard:
+    """Build a FinalizerRenderGuard from the current state."""
+    constraints = _revision_constraints(state)
+    return FinalizerRenderGuard(
+        structure_visibility_mode=constraints.get("structure_visibility_mode", "no_structure"),
+        recommendation_mode=recommendation_mode,
+        allow_illustrative_structure=bool(constraints.get("allow_illustrative_structure")),
+        illustrative_structure_hint=str(constraints.get("illustrative_structure_hint") or "").strip(),
+        illustrative_structure_text=str(constraints.get("illustrative_structure_text") or "").strip(),
+        true_risk_text=str(constraints.get("true_risk_text") or "").strip(),
+        forbid_actionable_recommendation=bool(constraints.get("forbid_actionable_recommendation", True)),
+    )
+
+
+_NO_STRUCTURE_STRIP_PATTERNS = [
+    re.compile(r"\b(?:long|short)\s+(?:call|put)\b", re.IGNORECASE),
+    re.compile(r"\b(?:bull|bear)\s+(?:call|put)\s+spread\b", re.IGNORECASE),
+    re.compile(r"\b(?:iron\s+condor|straddle|strangle|credit\s+spread|debit\s+spread)\b", re.IGNORECASE),
+    re.compile(r"\bstrike\s+\d", re.IGNORECASE),
+    re.compile(r"\b\d+[CP]\b"),
+    re.compile(r"\bbuy\s+the\s+\d", re.IGNORECASE),
+    re.compile(r"\bsell\s+the\s+\d", re.IGNORECASE),
+]
+
+
+def _strip_concrete_structure_text(text: str) -> str:
+    """Remove concrete options structure references from text.
+
+    Used when structure_visibility_mode is no_structure to ensure
+    no trade ideas leak through text fields.
+    """
+    result = text
+    for pattern in _NO_STRUCTURE_STRIP_PATTERNS:
+        result = pattern.sub("", result)
+    return re.sub(r"\s{2,}", " ", result).strip()
+
+
+def _enforce_structure_visibility_mode(
+    report: FinalReport,
+    *,
+    state: Dict[str, Any],
+    recommendation_mode: str,
+    captured_trade_ideas: List[TradeIdea],
+) -> None:
+    """Deterministic post-render enforcement of structure_visibility_mode.
+
+    This is the Phase 2 Workstream C fix. It runs AFTER _enforce_recommendation_mode
+    and _apply_render_safety_contract to provide a final deterministic gate:
+
+    - no_structure: strips trade_ideas, clears illustrative text, removes
+      concrete structure patterns from text fields.
+    - illustrative_structure: ensures trade_ideas are cleared BUT illustrative
+      framing text survives with proper non-live labeling.
+    - recommended_structure: passes through unchanged.
+    """
+    guard = _build_render_guard(state, recommendation_mode)
+    mode = guard.structure_visibility_mode
+
+    if mode == "recommended_structure":
+        # Actionable mode — pass through, no enforcement needed.
+        return
+
+    if mode == "no_structure":
+        # Hard gate: no trade structures may render.
+        report.trade_ideas = []
+        report._render_illustrative_structure_text = ""
+        # Strip any concrete structure patterns that leaked through text fields.
+        if report.conversation_reply:
+            report.conversation_reply = _strip_concrete_structure_text(report.conversation_reply)
+        logger.debug("FinalizerRenderGuard: no_structure enforced — trade ideas and structure text stripped.")
+        return
+
+    if mode == "illustrative_structure":
+        # Preserve illustrative framing but ensure trade_ideas are cleared.
+        report.trade_ideas = []
+        # Build illustrative text from captured trade ideas if upstream didn't provide it.
+        illustrative_text = guard.resolved_illustrative_text(
+            captured_trade_ideas=captured_trade_ideas,
+        )
+        if illustrative_text:
+            report._render_illustrative_structure_text = illustrative_text
+        # If true_risk_text is provided, use it as the source for the Risks section.
+        if guard.true_risk_text:
+            report.key_risks_and_hedges = [guard.true_risk_text]
+        logger.debug(
+            "FinalizerRenderGuard: illustrative_structure enforced — "
+            "trade ideas cleared, illustrative text=%s",
+            bool(illustrative_text),
+        )
+        return
+
+
 def _build_non_actionable_risk_sentence(report: FinalReport, *, state: Dict[str, Any]) -> str:
     why_not_now = _why_not_now_sentence(state)
     summary_caveat = _summary_caveat_seed(state)
@@ -2099,6 +2259,13 @@ class FinalizerAgent:
                 degraded_reason=degraded_reason,
                 recommendation_mode="informational_only",
             )
+            # Phase 2 Workstream C: deterministic structure visibility enforcement.
+            _enforce_structure_visibility_mode(
+                report,
+                state=state,
+                recommendation_mode="informational_only",
+                captured_trade_ideas=[],
+            )
             _enforce_deterministic_report_date(report, state)
             output: Dict[str, Any] = {
                 "status": "degraded",
@@ -2169,6 +2336,10 @@ class FinalizerAgent:
             _reconcile_citation_source_types(report, evidence_pool)
             report.confidence_score = retrieval_confidence
 
+            # Capture LLM-generated trade ideas BEFORE _enforce_recommendation_mode
+            # clears them — needed for illustrative structure preservation.
+            captured_trade_ideas = list(report.trade_ideas) if report.trade_ideas else []
+
             effective_mode = (
                 "directional_watchlist"
                 if recommendation_mode == "actionable_options" and not report.trade_ideas
@@ -2189,6 +2360,13 @@ class FinalizerAgent:
                 degraded=degraded,
                 degraded_reason=degraded_reason,
                 recommendation_mode=effective_mode,
+            )
+            # Phase 2 Workstream C: deterministic structure visibility enforcement.
+            _enforce_structure_visibility_mode(
+                report,
+                state=state,
+                recommendation_mode=effective_mode,
+                captured_trade_ideas=captured_trade_ideas,
             )
 
         except Exception as e:
@@ -2243,6 +2421,8 @@ class FinalizerAgent:
                     _enforce_deterministic_report_date(report, state)
                     _reconcile_citation_source_types(report, evidence_pool)
                     report.confidence_score = retrieval_confidence
+                    # Capture LLM-generated trade ideas before mode enforcement clears them.
+                    captured_trade_ideas = list(report.trade_ideas) if report.trade_ideas else []
                     effective_mode = (
                         "directional_watchlist"
                         if recommendation_mode == "actionable_options" and not report.trade_ideas
@@ -2263,6 +2443,13 @@ class FinalizerAgent:
                         degraded=degraded,
                         degraded_reason=degraded_reason,
                         recommendation_mode=effective_mode,
+                    )
+                    # Phase 2 Workstream C: deterministic structure visibility enforcement.
+                    _enforce_structure_visibility_mode(
+                        report,
+                        state=state,
+                        recommendation_mode=effective_mode,
+                        captured_trade_ideas=captured_trade_ideas,
                     )
                 except Exception as fallback_err:
                     logger.exception(f"FinalizerAgent: fallback LLM call failed: {fallback_err}")

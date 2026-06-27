@@ -9,6 +9,22 @@ AutoOptions is a contract-governed multi-agent RAG platform that fuses options c
 > The raw information exists. The translation layer does not.
 > AutoOptions is that layer.
 
+## Recent Improvements
+
+### Finalizer Structure Visibility Enforcement (In-Event)
+
+**Branch**: `improvement-in-event` | **Baseline**: `baseline-pre-event` at `76fb0a9`
+
+Fixed a two-directional leak in the Finalizer's `structure_visibility_mode` enforcement (Phase 2 Item 4 / Workstream C):
+
+- **Problem**: The Finalizer dropped legally-allowed illustrative structure (rate: 0.429) and could promote structure when the mode forbade it.
+- **Fix**: Added `FinalizerRenderGuard` — a deterministic, post-LLM enforcement gate in `Scripts/agents/finalizer.py` that enforces three modes: `no_structure` strips all trade ideas, `illustrative_structure` preserves examples labeled non-live, `recommended_structure` passes through.
+- **Verification**: 15 drift-guard regression tests in `Scripts/tests/test_finalizer_structure_guard.py` (no LLM required).
+- **Eval cases**: Expanded from 5 → 12 cases in `Scripts/tests/router_e2e_queries.json` with structure visibility scenarios.
+- **Skill**: `.agents/skills/finalizer-render-guard/SKILL.md`
+- **ADLC Worksheet**: `docs/adlc_worksheet.md`
+
+
 ## Table of Contents
 - [1. Financial Logic and Problem Framing](#1-financial-logic-and-problem-framing)
   - [1.1 The Information Gap](#11-the-information-gap)
