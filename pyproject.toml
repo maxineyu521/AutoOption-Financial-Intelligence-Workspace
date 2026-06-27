@@ -1,0 +1,69 @@
+[project]
+name = "autooptions"
+version = "1.0.0"
+description = "Contract-governed multi-agent RAG platform for financial intelligence"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    # Core
+    "fastembed",
+    "qdrant-client",
+    "ollama",
+    "python-dotenv",
+    "pydantic",
+
+    # Data Acquisition & Financials
+    "yfinance",
+    "fredapi",
+    "requests",
+    "newspaper3k",
+    "duckduckgo-search",
+
+    # Data Processing & Storage
+    "pandas",
+    "numpy",
+    "duckdb",
+    "fastparquet",
+    "xlrd",
+    "pyarrow",
+    "tqdm",
+    "et-xmlfile",
+    "openpyxl",
+    "lxml-html-clean",
+
+    # AI & LLM Integration
+    "langchain-ollama",
+    "langchain-openai",
+    "openai",
+    "langchain-core",
+    "langchain-community",
+    "langchain-huggingface",
+    "langgraph",
+    "sentence-transformers",
+
+    # Environment & Utilities
+    "beautifulsoup4",
+    "markdownify",
+    "rich",
+    "nltk",
+    "setuptools",
+    "wheel",
+    "streamlit",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "skills-ref",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["Scripts"]
+
+[tool.pytest.ini_options]
+testpaths = ["Scripts/tests"]
