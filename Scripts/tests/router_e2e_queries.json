@@ -37,6 +37,55 @@
       "expected_sources": ["options"],
       "expected_time_window": "today",
       "notes": "Exercises Silver options dispatcher for PCR + IV Skew + liquidity scan on a fully-covered Nasdaq-100 single-name. Route should resolve to hybrid_both (PCR primary)."
+    },
+    {
+      "name": "Structure Guard - Illustrative Watchlist",
+      "query": "Past month AAPL options flow direction and best protective strategy?",
+      "expected_sources": ["options", "sec"],
+      "expected_time_window": "past_month",
+      "notes": "Should trigger directional_watchlist with structure_visibility_mode=illustrative_structure. Tests that the Finalizer preserves the illustrative structure label (Workstream C fix)."
+    },
+    {
+      "name": "Structure Guard - No Structure Informational",
+      "query": "What is the current VIX regime and what does it mean for portfolio hedging?",
+      "expected_sources": ["macro_history"],
+      "expected_time_window": "past_week",
+      "notes": "Pure macro informational query. Should trigger informational_only with structure_visibility_mode=no_structure. Tests that no concrete options structure leaks through."
+    },
+    {
+      "name": "Structure Guard - Geopolitical No Structure",
+      "query": "Past month how has the GPR index moved and what are the geopolitical risks?",
+      "expected_sources": ["news", "macro_history"],
+      "expected_time_window": "past_month",
+      "notes": "Geopolitical macro read. Should trigger no_structure mode. Tests that geopolitical queries don't produce concrete options structures."
+    },
+    {
+      "name": "Structure Guard - Cross Asset Illustrative",
+      "query": "Past month SPY versus GLD relative IV and best hedge direction?",
+      "expected_sources": ["options", "macro_history"],
+      "expected_time_window": "past_month",
+      "notes": "Cross-asset regime query with concrete structure in draft. Should trigger illustrative_structure. Tests preservation of illustrative framing across cross-asset queries."
+    },
+    {
+      "name": "Structure Guard - Missing Data Boundary",
+      "query": "Past week TSLA insider selling and put spread setup?",
+      "expected_sources": ["sec", "options"],
+      "expected_time_window": "past_week",
+      "notes": "TSLA is not in the covered universe for SEC. Tests the allow_illustrative_structure=False gate when is_missing_hard_data=True despite structure_visibility_mode=illustrative_structure."
+    },
+    {
+      "name": "Structure Guard - Actionable Pass Through",
+      "query": "Today QQQ ATM IV rank and best near-term put spread for protection?",
+      "expected_sources": ["options"],
+      "expected_time_window": "today",
+      "notes": "Full evidence available. Should trigger actionable_options with structure_visibility_mode=recommended_structure. Tests that actionable mode passes trade ideas through unchanged."
+    },
+    {
+      "name": "Structure Guard - Degraded Informational",
+      "query": "Past week global macro outlook and Treasury yield impact on equity options?",
+      "expected_sources": ["news", "macro_history", "options"],
+      "expected_time_window": "past_week",
+      "notes": "Broad macro query that may hit revision cap or retrieval fallback. Tests that degraded path enforces no_structure/informational_only correctly."
     }
   ]
 }
